@@ -42,11 +42,26 @@ privileges WSL2 cannot give. That assumption was wrong. WSL2 provides
 a 6.6 GB VHDX there in 299 seconds. The build VM is deleted from the plan; only
 the *target* is a VM now.
 
-**Bare metal is reached by USB SSD, not dual-boot.** `bootc-image-builder`
-produces an installer; it installs to an external SSD; the laptop boots from it
-via the firmware boot menu. Windows is never repartitioned and never at risk.
-This is what makes "I need a VM" and "I need real NVIDIA hardware" both true at
-once without buying a second machine.
+**Bare metal is reached by USB, not dual-boot.** Windows is never repartitioned
+and never at risk. This is what makes "I need a VM" and "I need real NVIDIA
+hardware" both true at once without buying a second machine.
+
+There are two ways to get there, and the second is preferred:
+
+| Route | How | Trade-off |
+|-------|-----|-----------|
+| Installer ISO | `make-installer.sh anaconda-iso`, boot it, install to the USB device | Anaconda asks which disk to install to, *next to the Windows drive*. The one destructive step in the project |
+| **Raw image** | `make-installer.sh raw`, write it to the USB device with Rufus in DD mode | No installer at all. The device is chosen once, on Windows, where names and sizes are visible. Preferred |
+
+**A plain USB stick is enough to start; an SSD is a later requirement.** M1 only
+asks whether gamescope can take DRM master on the NVIDIA driver, and a slow
+device answers that as well as a fast one. M2 is where it changes: a 15-second
+boot budget measured on flash memory is meaningless, so the timed and filmed
+gates need a real USB 3.x SSD.
+
+Size the device from the raw image (~15 GB), not the root filesystem. A nominal
+16 GB stick usually formats to less than that, so **32 GB is the practical
+minimum**.
 
 **Acceptance gates are bare-metal only.** A gate passed in the VM is a smoke
 test, not a pass. The M2 camera test in particular means the TV over HDMI.

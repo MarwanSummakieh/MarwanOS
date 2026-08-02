@@ -274,17 +274,35 @@ a disk you have not booted yet buys nothing and gets in the way of swapping it.
 
 ## 5. Bare-metal target
 
-The Predator, booted from an external USB SSD. Windows is never repartitioned.
-Use a real USB 3.x SSD — a flash stick will make boot times meaningless and M2
-has a 15-second budget.
+The Predator, booted from USB. Windows is never repartitioned and never at risk.
+
+**Preferred: write the disk image straight to the USB device.** No installer, so
+there is no moment where you pick a disk blind alongside the Windows drive:
+
+```bash
+OUT_DIR=/var/tmp/usb-out SSH_KEY_FILE=/mnt/c/Users/brain/.ssh/id_marwanos.pub ./scripts/make-installer.sh raw
+```
+
+Copy the result to Windows renamed `.img` — Rufus and Etcher recognise that
+extension and write raw; they do not recognise `.raw`. Then write it with Rufus
+(DD mode) or balenaEtcher. Both list only removable devices by default, which is
+most of what keeps your system disk safe.
+
+**Device sizing:** the image is ~15 GB, so a nominal 16 GB stick is too small in
+practice. Use **32 GB or larger**. A plain stick is fine for M1 — it only asks
+whether gamescope can take DRM master, and a slow device answers that as well as
+a fast one. M2 is different: a 15-second boot budget measured on flash memory is
+meaningless, so the timed and filmed gates want a real USB 3.x SSD.
+
+The alternative is an installer ISO, kept for the case where you want Anaconda to
+partition a device rather than accept the image's fixed layout:
 
 ```bash
 ./scripts/make-installer.sh anaconda-iso
 ```
 
-Write `out/*.iso` to a USB stick, boot the Predator from it, and install **to the
-external SSD** — check the target disk twice, this is the one destructive step in
-the whole setup.
+If you use it, **check the target disk twice** — that installer runs next to a
+954 GB NVMe with Windows on it, and it is the one destructive step in the project.
 
 In the Predator's firmware:
 - **Secure Boot: off** (D7)
