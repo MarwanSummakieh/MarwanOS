@@ -103,6 +103,20 @@ RUN set -euxo pipefail; \
         "${MARWANOS_VERSION}" "${MARWANOS_COMMIT}" "${MARWANOS_BUILD_DATE}" \
         > /usr/share/marwanos/build-info
 
+# Identity. The login banner, hostname and os-release all said "Fedora", which
+# during bring-up made a genuine MarwanOS boot indistinguishable from stale
+# leftovers of previous Fedora/Bazzite installs on the same machine. NAME and
+# PRETTY_NAME are ours; ID stays fedora deliberately -- tooling that keys off
+# ID (packagekit, third-party scripts) keeps working, ID_LIKE would be the
+# next step if that ever changes.
+RUN set -euxo pipefail; \
+    sed -i \
+        -e 's/^NAME=.*/NAME="MarwanOS"/' \
+        -e "s/^PRETTY_NAME=.*/PRETTY_NAME=\"MarwanOS (Phase 0, ${MARWANOS_VERSION})\"/" \
+        /usr/lib/os-release; \
+    printf 'MarwanOS (Phase 0) \\n \\l\n' > /etc/issue; \
+    printf 'marwanos\n' > /etc/hostname
+
 # In bootc, /var is machine-local state that is populated once at install and
 # then never updated by an image upgrade. Anything we leave there becomes a
 # first-boot-only default that silently drifts from the image forever, so the
