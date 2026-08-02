@@ -87,8 +87,11 @@ Still to do, in order:
 - [x] **Kernel args verified end-to-end on the running target.** `/proc/cmdline` carries all four: `nvidia-drm.modeset=1 nvidia_drm.fbdev=1 rd.driver.blacklist=nouveau modprobe.blacklist=nouveau` — baked in the image, never set by hand. M0's karg mechanism is proven
 - [x] Target state confirmed: `systemctl is-system-running` = **running**, zero failed units, SELinux **Enforcing**, root on **xfs** per our `root-fs-type`, persistent journal live (12.1 MB)
 - [x] `bootc status` tracks `ghcr.io/marwansummakieh/marwanos:latest`; target has DNS and HTTPS egress to ghcr.io
-- [ ] **Push to GHCR.** `bootc upgrade --check` returns 403 — the image has never been pushed, so the ref the target tracks does not exist remotely. Preferred route is `.github/workflows/build.yml`: GitHub's runners build and push, which avoids a ~7 GB upload from a home connection and needs no personal access token (`GITHUB_TOKEN` is injected per run). `scripts/build-push.sh` with a `write:packages` PAT remains the manual fallback
-- [ ] `bootc upgrade` → `bootc rollback`. Note `rollback: null` today: a fresh install has only one deployment, so rollback only becomes testable *after* a successful upgrade. Both halves depend on the push
+- [x] **Pushed to GHCR via GitHub Actions.** Runners build and push, so the ~7 GB never crosses a home connection and no PAT exists to leak — `GITHUB_TOKEN` is injected per run and dies with the job. `scripts/build-push.sh` remains the manual fallback
+- [x] **`bootc upgrade` verified.** `1.2.0-journal` (local) → `0.0.202608021759` / commit `efc77ba` (CI). Digest `cf30658…` → `1d791d2…`
+- [x] **`bootc rollback` verified.** Back to `1.2.0-journal`, digest `cf30658…`. `systemctl is-system-running` = running and SELinux Enforcing at every step
+
+**M0 COMPLETE (2026-08-02).** The factory works: source in git, image built by CI, deployed by `bootc upgrade`, and a bad build undone by `bootc rollback`.
 - [ ] Kernel args verified on the target with `cat /proc/cmdline` (baked in the image, never set by hand)
 - [ ] `make-installer.sh anaconda-iso` → USB SSD install on the Predator
 - [ ] Verify `bootc rollback` boots the previous image
@@ -133,6 +136,7 @@ Still to do, in order:
 
 ### M4 — guardrails + exit run (~a few days)
 
+- [ ] **Decide the automatic-update policy, and mask the timer if the answer is no.** The base image ships an update timer that is *on*: during M0 it fetched and staged a CI build with nothing asked of it, and the next reboot silently changed the running OS. For an appliance that is meant to boot into a game, an unattended OS swap between sessions is a behaviour to choose deliberately, not inherit. `systemctl mask bootc-fetch-apply-updates.timer` in the image if updates should only ever be operator-initiated
 - [ ] `/var/marwanos/devmode` flag: gates sshd and the tty2 getty; absent by default in a fresh image
 - [ ] Audit the image for accidental escape hatches: no display manager, no desktop session files, no VT-switch into a getty that shouldn't exist
 - [ ] `systemd-analyze` boot-time budget recorded; obvious offenders (NetworkManager-wait-online and friends) deferred out of the boot path
@@ -153,6 +157,7 @@ Still to do, in order:
 | Hybrid graphics on the laptop makes M1 measure the Intel iGPU | False green on the project's central question | Drive the TV over HDMI (dGPU-routed on this chassis) and verify with `drm_info`/`nvidia-smi` before recording any M1 result. [ADR 0003](adr/0003-test-targets.md) |
 | Base/akmods tag drift (`43` vs `main-43`) | Builds clean, boots black | `bump-base.sh` hard-fails on a mismatched pair; base bumps go to the VM target before bare metal |
 | Regenerating the initramfs drops the `ostree` dracut module | **Hit on the first boot attempt.** Dracut emergency mode; lint and image build both pass | `--add ostree` plus a build-time `lsinitrd` assertion in the Containerfile. General lesson: a green build says nothing about a bootable image — boot the VM target after any initramfs change |
+| First boot after an upgrade wedges in early userspace | **Seen once during M0.** Hung just after `modprobe@loop.service`, with no "A start job is running" line — so not a unit timeout. A hard power-cycle booted the same deployment cleanly with SELinux still Enforcing | Unexplained and unreproduced; recorded rather than diagnosed. If it recurs, capture it properly — the working theory that it was SELinux labelling from the non-SELinux CI runner was **disproved**, since the CI image boots Enforcing without `enforcing=0`. Matters far more on bare metal, where a wedged boot has no `vmconnect` to inspect it |
 | Plymouth→compositor handoff flashes text/black | Fails the silent-boot gate | Known-fiddly; budgeted in M2; camera test is the arbiter, not eyeballs |
 | Godot Wayland quirks under gamescope/cage (focus, scaling, gamepad) | Shell unusable in session though fine on desktop | Test the Godot export inside the real session in M1 week 1, before building UI on top |
 | ublue base image churn breaks a build | Deploy loop breaks randomly | Pin by digest; bump deliberately, never track `latest` |
