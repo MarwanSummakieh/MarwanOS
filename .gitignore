@@ -1,0 +1,17 @@
+# Build outputs — never commit disk images or exported binaries (M3 exports the
+# Godot shell during the image build, it does not live in git).
+/out/
+*.qcow2
+*.raw
+*.vhdx
+*.iso
+
+# Secrets. The GHCR token lives in ~/.config/marwanos/ghcr-token on the build
+# host, never in the repo.
+*.token
+.env
+.env.*
+
+# Editor / OS noise
+.DS_Store
+*.swp

@@ -1,0 +1,83 @@
+# Build the MarwanOS image on GitHub's runners and push it to GHCR.
+#
+# Why this exists: the image is ~7 GB. Pushing that from a home connection is
+# slow and has to happen on every canonical build. Here the push is GitHub ->
+# GitHub, and the only thing leaving your machine is a few hundred KB of source.
+# It also removes the personal access token entirely -- GITHUB_TOKEN is injected
+# per-run and expires with the job.
+#
+# This does NOT replace the local loop. A warm local build is ~70 seconds; a CI
+# build is cold every time and takes far longer. Iterate locally with
+# `./scripts/build-push.sh --no-push`, and let this produce the images the target
+# actually consumes.
+
+name: build
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "os/**"
+      - ".github/workflows/build.yml"
+  workflow_dispatch:
+
+env:
+  IMAGE_NAME: marwanos
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # A hosted runner has roughly 25 GB free. Base layers plus akmods plus the
+      # finished image comfortably exceed that during the build, and running out
+      # of space surfaces as a confusing mid-layer error rather than "disk full".
+      - name: Reclaim runner disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+                      /opt/hostedtoolcache/CodeQL /usr/local/share/boost
+          sudo docker image prune --all --force || true
+          df -h /
+
+      # GHCR namespaces must be lowercase, but github.repository_owner preserves
+      # the account's capitalisation (MarwanSummakieh). Pushing with capitals is
+      # rejected, so normalise it rather than hardcoding the name.
+      - name: Compute image reference
+        id: ref
+        run: |
+          owner="$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')"
+          echo "image=ghcr.io/${owner}/${IMAGE_NAME}" >> "$GITHUB_OUTPUT"
+          echo "version=0.0.$(date -u +%Y%m%d%H%M)" >> "$GITHUB_OUTPUT"
+
+      - name: Build
+        run: |
+          podman build \
+            --file os/Containerfile \
+            --tag "${{ steps.ref.outputs.image }}:latest" \
+            --build-arg "MARWANOS_VERSION=${{ steps.ref.outputs.version }}" \
+            --build-arg "MARWANOS_COMMIT=$(git rev-parse --short HEAD)" \
+            --build-arg "MARWANOS_BUILD_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            os/
+
+      - name: Log in to GHCR
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" \
+            | podman login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Push
+        run: |
+          podman push "${{ steps.ref.outputs.image }}:latest"
+          podman push "${{ steps.ref.outputs.image }}:latest" \
+            "${{ steps.ref.outputs.image }}:${{ steps.ref.outputs.version }}"
+
+      - name: Summary
+        run: |
+          echo "Pushed ${{ steps.ref.outputs.image }}:latest" >> "$GITHUB_STEP_SUMMARY"
+          echo "Version ${{ steps.ref.outputs.version }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "On the target: \`bootc upgrade && systemctl reboot\`" >> "$GITHUB_STEP_SUMMARY"

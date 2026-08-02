@@ -1,0 +1,126 @@
+# syntax=docker/dockerfile:1
+#
+# MarwanOS — Phase 0 / M0: the factory.
+#
+# This image deliberately does almost nothing. Its whole job is to prove the
+# build -> push -> `bootc upgrade` -> rollback loop works. Session bring-up,
+# silent boot and the shell arrive in M1-M3.
+#
+# Base pair, and why it is a pair:
+#   ghcr.io/ublue-os/base-nvidia is dead (last real tags are from 2023). The
+#   supported Universal Blue path for a custom NVIDIA image is now a minimal
+#   base plus prebuilt akmods RPMs copied from a sidecar image. We still never
+#   compile an NVIDIA module ourselves, which was the point of D1.
+#
+# The akmods tag MUST match the base's Fedora major and kernel flavour
+# (base-main:43 -> akmods-nvidia-open:main-43). Mismatched pairs produce an
+# image that builds fine and then boots to a black screen. scripts/bump-base.sh
+# re-resolves both digests together so they can never drift apart.
+
+ARG BASE_IMAGE="ghcr.io/ublue-os/base-main"
+ARG BASE_TAG="43"
+ARG BASE_DIGEST="sha256:0a7036f6c63744e974f022125e67fb03f892cd543ba54ec589cb38932a768997"
+
+ARG AKMODS_IMAGE="ghcr.io/ublue-os/akmods-nvidia-open"
+ARG AKMODS_TAG="main-43"
+ARG AKMODS_DIGEST="sha256:b73a194f8d9d74bc2bca763be2dedde193b77956f4c83cb5eb3978150ff1f11f"
+
+
+FROM ${AKMODS_IMAGE}:${AKMODS_TAG}@${AKMODS_DIGEST} AS akmods
+
+
+FROM ${BASE_IMAGE}:${BASE_TAG}@${BASE_DIGEST}
+
+# nvidia-open requires Turing (RTX 20 / GTX 16) or newer: the open modules lean
+# on the GSP coprocessor, which does not exist on Pascal and older. NVIDIA's 590
+# branch dropped Maxwell/Pascal/Volta entirely, so this is now the floor for any
+# machine that expects current drivers. See docs/adr/0002.
+COPY --from=akmods /rpms/ /tmp/rpms/
+
+# Fail loudly and early if the akmods layout ever changes upstream, rather than
+# letting a glob silently match nothing and shipping an image with no driver.
+RUN set -euxo pipefail; \
+    ls -1 /tmp/rpms/ublue-os/ublue-os-nvidia*.rpm >/dev/null; \
+    ls -1 /tmp/rpms/kmods/kmod-nvidia*.rpm >/dev/null
+
+RUN --mount=type=cache,dst=/var/cache/libdnf5,sharing=locked \
+    set -euxo pipefail; \
+    dnf -y install \
+        /tmp/rpms/ublue-os/ublue-os-nvidia*.rpm \
+        /tmp/rpms/kmods/kmod-nvidia*.rpm; \
+    rm -rf /tmp/rpms; \
+    dnf clean all
+
+# The nvidia kmod is built against the base's kernel but the initramfs shipped
+# in the base predates it. Without this regen, plymouth has no NVIDIA driver to
+# draw on in early boot -- which is exactly the M2 flash we are trying to avoid.
+# --add ostree is load-bearing and was learned the hard way: without it this
+# image boots straight into dracut emergency mode.
+#
+# The ostree dracut module is what reads the ostree= kernel argument and
+# assembles /sysroot for the booted deployment. Its check() probes for a live
+# ostree deployment, which does not exist inside a container build, so a plain
+# `dracut` run silently omits it -- producing an initramfs that is byte-for-byte
+# reasonable, passes every lint, and cannot mount root. Diffing our module list
+# against the base's showed ostree as the single difference.
+#
+# The two greps below are the regression guard. A broken initramfs is invisible
+# until boot, so the build has to be the thing that refuses.
+#
+# They read from files rather than pipes on purpose. `lsinitrd | grep -q` makes
+# grep exit on the first match, lsinitrd then dies of SIGPIPE, and `set -o
+# pipefail` turns that into exit 141 -- a guard that fails precisely when it
+# should pass. Do not turn these back into pipelines.
+RUN set -euxo pipefail; \
+    KERNEL_VERSION="$(rpm -q --qf '%{VERSION}-%{RELEASE}.%{ARCH}\n' kernel-core | tail -1)"; \
+    dracut --force --no-hostonly --kver "${KERNEL_VERSION}" \
+        --add ostree \
+        --add-drivers " nvidia nvidia-modeset nvidia-drm nvidia-uvm " \
+        "/lib/modules/${KERNEL_VERSION}/initramfs.img"; \
+    lsinitrd --mod "/lib/modules/${KERNEL_VERSION}/initramfs.img" > /tmp/ir-mods.txt; \
+    lsinitrd "/lib/modules/${KERNEL_VERSION}/initramfs.img" > /tmp/ir-files.txt; \
+    grep -qx ostree /tmp/ir-mods.txt; \
+    grep -q 'nvidia\.ko' /tmp/ir-files.txt; \
+    rm -f /tmp/ir-mods.txt /tmp/ir-files.txt
+
+COPY files/ /
+
+# These ARGs are declared here, not at the top, and the placement is load-bearing.
+# A changed ARG invalidates every layer after its declaration. MARWANOS_VERSION
+# is timestamped, so it changes on every single build -- declared at the top it
+# re-ran the dnf install and the dracut regen every time, which measured at 4 of
+# 12 steps cached and blew most of M0's 15-minute loop budget on work whose
+# inputs had not changed. Down here, only the three cheap layers below rebuild.
+ARG MARWANOS_VERSION="0.0.0-dev"
+ARG MARWANOS_COMMIT="unknown"
+ARG MARWANOS_BUILD_DATE="unknown"
+
+# M0's acceptance gate needs something trivial to change and observe on the
+# target. This is that something: bump the version, rebuild, upgrade, `cat` it.
+RUN set -euxo pipefail; \
+    install -d /usr/share/marwanos; \
+    printf 'MARWANOS_VERSION=%s\nMARWANOS_COMMIT=%s\nMARWANOS_BUILD_DATE=%s\n' \
+        "${MARWANOS_VERSION}" "${MARWANOS_COMMIT}" "${MARWANOS_BUILD_DATE}" \
+        > /usr/share/marwanos/build-info
+
+# In bootc, /var is machine-local state that is populated once at install and
+# then never updated by an image upgrade. Anything we leave there becomes a
+# first-boot-only default that silently drifts from the image forever, so the
+# build's own droppings have to come out. /run must simply be empty.
+#
+# Note the /run paths are named individually rather than globbed: podman
+# bind-mounts /run/secrets and /run/systemd during the build, so `rm -rf /run/*`
+# fails on a busy mount. Those mounts are not part of the committed layer
+# anyway; only what dnf and the selinux policy scriptlets left behind is.
+RUN set -euxo pipefail; \
+    rm -rf \
+        /var/lib/dnf \
+        /var/log/* \
+        /var/cache/* \
+        /var/tmp/* \
+        /tmp/* \
+        /run/dnf \
+        /run/selinux-policy; \
+    mkdir -p /var/log /var/cache /var/tmp
+
+RUN bootc container lint

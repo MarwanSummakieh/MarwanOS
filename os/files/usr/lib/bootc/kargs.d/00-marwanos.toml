@@ -1,0 +1,23 @@
+# Kernel arguments, baked into the image rather than set by hand on the target.
+# Changing this file and running `bootc upgrade` is the only way kargs should
+# ever move -- that is the mechanism M0 exists to verify.
+#
+# M0 keeps this list to what the NVIDIA stack actually needs. The silent-boot
+# arguments (quiet, splash, vt.global_cursor_default=0, loglevel suppression)
+# land in M2, where a camera test can actually judge whether they worked.
+#
+# ublue-os-nvidia may already set some of these. Duplicate kargs are harmless,
+# but verify with `cat /proc/cmdline` on the target rather than assuming.
+
+kargs = [
+    # Required for any Wayland compositor on NVIDIA, gamescope included.
+    "nvidia-drm.modeset=1",
+    # Gives the NVIDIA driver a real framebuffer console, so early boot draws on
+    # the actual display instead of going dark until the compositor starts.
+    "nvidia_drm.fbdev=1",
+    # nouveau and the proprietary stack cannot both claim the card.
+    "rd.driver.blacklist=nouveau",
+    "modprobe.blacklist=nouveau",
+]
+
+match-architectures = ["x86_64"]

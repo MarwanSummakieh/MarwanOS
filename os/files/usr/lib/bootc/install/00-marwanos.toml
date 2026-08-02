@@ -1,0 +1,12 @@
+# Root filesystem type, declared by the image rather than passed at install time.
+#
+# Without this, `bootc install print-configuration` reports root-fs-type as null
+# and bootc-image-builder fails with "missing required info: DefaultRootFs".
+# The ublue base does not set it -- CentOS bootc images do, which is why most
+# examples work without it and ours did not.
+#
+# xfs is the Fedora bootc/CoreOS convention. We do not need btrfs snapshots:
+# rollback is bootc's job and operates on the image, not the filesystem.
+
+[install]
+root-fs-type = "xfs"
