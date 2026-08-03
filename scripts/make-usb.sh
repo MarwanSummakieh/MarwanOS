@@ -49,6 +49,7 @@ OUT_DIR="${OUT_DIR:-${REPO_ROOT}/out}"
 # wrong filesystem.
 ESP_PART="${ESP_PART:-2}"
 BOOT_PART="${BOOT_PART:-3}"
+ROOT_PART="${ROOT_PART:-4}"
 
 UKIFY="${UKIFY:-/usr/lib/systemd/ukify}"
 STUB="${STUB:-/usr/lib/systemd/boot/efi/linuxx64.efi.stub}"
@@ -73,6 +74,8 @@ Environment:
   OUT_DIR     where to look for the image   (default: <repo>/out)
   ESP_PART    ESP partition number          (default: 2)
   BOOT_PART   boot partition number         (default: 3)
+  ROOT_PART   root partition number         (default: 4; read only, for the
+              image's os-release so the UKI identifies as MarwanOS)
   UKIFY       path to ukify                 (default: /usr/lib/systemd/ukify)
   STUB        systemd-boot EFI stub         (default:
               /usr/lib/systemd/boot/efi/linuxx64.efi.stub)
@@ -118,14 +121,17 @@ for arg in "$@"; do
 done
 
 if [[ -z "$IMAGE" ]]; then
+    # bib nests its output (OUT_DIR/image/disk.raw), so look one level down too.
+    # Found the hard way: the first real run of this script missed the image it
+    # was standing next to.
     shopt -s nullglob
-    CANDIDATES=("${OUT_DIR}"/*.raw)
+    CANDIDATES=("${OUT_DIR}"/*.raw "${OUT_DIR}"/*/*.raw)
     shopt -u nullglob
     case "${#CANDIDATES[@]}" in
         1) IMAGE="${CANDIDATES[0]}" ;;
-        0) die "no *.raw in ${OUT_DIR}. Build one first:
+        0) die "no *.raw in ${OUT_DIR} (or one level below). Build one first:
     ./scripts/make-installer.sh raw" ;;
-        *) die "more than one *.raw in ${OUT_DIR}; name the one you mean:
+        *) die "more than one *.raw under ${OUT_DIR}; name the one you mean:
 $(printf '    %s\n' "${CANDIDATES[@]}")" ;;
     esac
 fi
@@ -284,6 +290,31 @@ echo "    cmdline   ${BLS_CMDLINE}"
 # 2. Build the UKI
 # ---------------------------------------------------------------------------
 
+# Brand the UKI itself. The systemd-boot stub embeds an os-release section
+# (.osrel) that firmware boot managers and the stub's own console output
+# display; without this, ukify falls back to the BUILD HOST's os-release and
+# the boot binary introduces itself as the builder's Fedora rather than
+# MarwanOS. The image's own identity lives on its root partition, so borrow it
+# from there. Best-effort: a UKI with the wrong nameplate still boots.
+ROOT_DEV="${LOOP}p${ROOT_PART}"
+OSREL=""
+if wait_for_part "$ROOT_DEV"; then
+    ROOT_MNT="$(mktemp -d)"
+    if $SUDO mount -o ro "$ROOT_DEV" "$ROOT_MNT" 2>/dev/null; then
+        shopt -s nullglob
+        DEPLOYS=("$ROOT_MNT"/ostree/deploy/*/deploy/*.0/usr/lib/os-release)
+        shopt -u nullglob
+        if (( ${#DEPLOYS[@]} > 0 )) && [[ -r "${DEPLOYS[0]}" ]]; then
+            cp "${DEPLOYS[0]}" "${WORK_DIR}/os-release"
+            OSREL="${WORK_DIR}/os-release"
+            echo "    identity  $(grep '^PRETTY_NAME=' "$OSREL" | cut -d= -f2- | tr -d '"')"
+        fi
+        $SUDO umount "$ROOT_MNT"
+    fi
+    rmdir "$ROOT_MNT" 2>/dev/null || true
+fi
+[[ -n "$OSREL" ]] || echo "    identity  WARNING: could not read the image's os-release; the UKI will carry the build host's"
+
 # EXTRA_KARGS exists for per-stick kernel arguments that belong to the hardware
 # rather than the image -- the founding example being a stick whose UAS
 # implementation is broken and needs usb-storage.quirks=<VID>:<PID>:u to force
@@ -307,6 +338,7 @@ UKIFY_ARGS=(build --linux="$KERNEL" "${INITRD_ARGS[@]}"
     --stub="$STUB"
     --output="$UKI")
 [[ -n "$BLS_VERSION" ]] && UKIFY_ARGS+=(--uname="$BLS_VERSION")
+[[ -n "$OSREL" ]] && UKIFY_ARGS+=(--os-release="@${OSREL}")
 
 echo "==> Building the UKI with ${UKIFY}"
 "$UKIFY" "${UKIFY_ARGS[@]}"
