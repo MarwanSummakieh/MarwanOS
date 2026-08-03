@@ -162,12 +162,18 @@ RUN set -euxo pipefail; \
 # file does not re-run dnf, and after COPY because every line acts on something
 # COPY put there.
 #
-# The chmod is not belt and braces. This repo is authored on Windows with
-# core.filemode false -- every blob in the index is 0644, scripts/*.sh included
-# -- so an executable bit cannot survive a checkout here and has to be applied
-# where the file is consumed. Without it greetd's `exec` of the session fails
-# with EACCES on tty1, where nothing can report it. Same family of problem as
-# the line endings .gitattributes exists to fix.
+# The find normalises everything COPY brought in to 0644 first. Checked out on
+# Windows and read through the drvfs bridge, every file under os/files arrives
+# in the build context as 0777 -- executable, world-writable config. systemd
+# warns about it on every boot ("marked executable... marked world-writable...
+# Proceeding anyway") and stricter parsers refuse outright. Fixed here, at the
+# one place the real modes are decided.
+#
+# The chmod after it is not belt and braces. This repo is authored on Windows
+# with core.filemode false -- an executable bit cannot survive a checkout here
+# and has to be applied where the file is consumed. Without it greetd's `exec`
+# of the session fails with EACCES on tty1, where nothing can report it. Same
+# family of problem as the line endings .gitattributes exists to fix.
 #
 # systemd-sysusers is run against our file rather than bare, so this step
 # creates exactly the account 50-marwanos.conf declares and cannot quietly
@@ -198,6 +204,10 @@ RUN set -euxo pipefail; \
 # separately because autovt@.service is its own alias of getty@.service and is
 # what logind starts on VT activation, so masking one does not mask the other.
 RUN set -euxo pipefail; \
+    find /etc/greetd /usr/lib/marwanos /usr/lib/sysusers.d /usr/lib/tmpfiles.d \
+         /usr/lib/dracut/dracut.conf.d /usr/lib/bootc \
+         /usr/lib/systemd/journald.conf.d /usr/lib/systemd/system-preset \
+         -type f -exec chmod 0644 {} +; \
     chmod 0755 /usr/lib/marwanos/session/marwanos-session; \
     systemd-sysusers /usr/lib/sysusers.d/50-marwanos.conf; \
     systemctl --no-reload preset greetd.service; \
