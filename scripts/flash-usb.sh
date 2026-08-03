@@ -8,11 +8,31 @@
 # undersized. UEFI firmware and Windows tolerate that; GRUB and the Linux
 # kernel reject the partition table outright -- so the machine boots from a
 # stick it then cannot see, and dracut times out on a root UUID that is
-# genuinely present. Windows then "helpfully" rewrites the GPT header on next
-# insertion and corrupts the main partition table CRC, making the rejection
-# permanent. Rufus writes the bytes fine; everything after the write is the
-# problem. `sgdisk -e` after writing fixes all of it, so this script does the
-# write and the repair as one operation, from Linux, and proves the result.
+# genuinely present. Rufus writes the bytes fine; everything after the write is
+# the problem. `sgdisk -e` after writing fixes all of it, so this script does
+# the write and the repair as one operation, from Linux, and proves the result.
+#
+# THE PART THAT BITES AFTER THIS SCRIPT SUCCEEDS. Windows rewrites the GPT of
+# every removable disk it enumerates, to move the partition entry array from
+# LBA 2 (where sgdisk puts it) to LBA 2016 (where Windows wants it, so the
+# first usable LBA is 2048). That is TWO writes: the header at LBA 1, then the
+# array at LBA 2016. Pull the stick between them -- or detach it back to
+# Windows and yank it before the cache flushes -- and you are left with a
+# header pointing at LBA 2016, nothing but zeros at LBA 2016, and the only
+# valid array orphaned back at LBA 2. Main partition table CRC invalid, kernel
+# enumerates ZERO partitions, /dev/disk/by-uuid/<root> never appears, dracut
+# sits for 213s and drops to emergency. The filesystems are perfect the whole
+# time; nothing is wrong except six bytes in the header.
+#
+# So: once this script says VERIFIED, do not let Windows see the stick again.
+# Unplug it physically while it is still attached to WSL. `usbipd detach`
+# hands it straight back to Windows and restarts the race.
+#
+# To re-check a stick that Windows may have touched, before trusting it:
+#   VERIFY_ONLY=yes ./scripts/flash-usb.sh <image> <device>
+# and if it comes back corrupt, `sgdisk -e <device>` repairs it in place --
+# both copies of the entry array survive, so no data is lost and no reflash
+# is needed.
 #
 # Prerequisites (Windows side, elevated, once per stick):
 #   winget install --exact dorssel.usbipd-win
@@ -59,8 +79,12 @@ DEV_BYTES=$(blockdev --getsize64 "$DEV")
 MODEL="$(cat "/sys/block/$BASE/device/model" 2>/dev/null | tr -s ' ' || echo unknown)"
 echo "==> Target: $DEV  model='${MODEL}'  $(( DEV_BYTES / 1024 / 1024 / 1024 )) GiB (usb)"
 echo "==> Image : $IMG  $(( IMG_BYTES / 1024 / 1024 )) MiB"
-echo "==> EVERYTHING ON $DEV WILL BE DESTROYED."
-[[ "${FLASH_CONFIRM:-}" == "yes" ]] || die "set FLASH_CONFIRM=yes to proceed"
+if [[ "${VERIFY_ONLY:-}" == "yes" ]]; then
+    echo "==> VERIFY_ONLY: checking the stick as-is, writing nothing."
+else
+    echo "==> EVERYTHING ON $DEV WILL BE DESTROYED."
+    [[ "${FLASH_CONFIRM:-}" == "yes" ]] || die "set FLASH_CONFIRM=yes to proceed"
+fi
 
 # --- expected identity, read from the image itself ---------------------------
 
@@ -78,19 +102,32 @@ echo "==> Expect boot=$EXP_BOOT root=$EXP_ROOT"
 
 # --- write, repair, verify ---------------------------------------------------
 
-echo "==> Writing (this is the slow part)"
-dd if="$IMG" of="$DEV" bs=4M conv=fsync status=progress
-sync
+if [[ "${VERIFY_ONLY:-}" != "yes" ]]; then
+    echo "==> Writing (this is the slow part)"
+    dd if="$IMG" of="$DEV" bs=4M conv=fsync status=progress
+    sync
 
-echo "==> Repairing GPT for the device's real size (backup header + protective MBR)"
-sgdisk -e "$DEV" >/dev/null
-sync
-blockdev --rereadpt "$DEV" 2>/dev/null || true
-sleep 2
+    echo "==> Repairing GPT for the device's real size (backup header + protective MBR)"
+    sgdisk -e "$DEV" >/dev/null
+    sync
+    blockdev --rereadpt "$DEV" 2>/dev/null || true
+    sleep 2
+fi
 
 echo "==> Verifying"
+
+# The CRC check has to come first and has to be fatal. A corrupt main table is
+# the one failure that every check below silently tolerates: sfdisk, blkid and
+# sgdisk all fall back to the backup table and report a perfect stick, while
+# the kernel -- the only reader that matters at boot -- refuses to enumerate
+# anything at all. Catch it here, or find out 213s into a boot.
+if ! sgdisk -v "$DEV" 2>&1 | grep -q "No problems found"; then
+    sgdisk -v "$DEV" 2>&1 | sed 's/^/    /' >&2
+    die "GPT is corrupt (almost certainly Windows caught mid-rewrite). Repair with: sgdisk -e $DEV"
+fi
+
 PARTS=$(lsblk -nro NAME "$DEV" | grep -c "^${BASE}[0-9]" || true)
-[[ "$PARTS" -eq 4 ]] || die "expected 4 partitions after write, kernel sees $PARTS -- do not boot this"
+[[ "$PARTS" -eq 4 ]] || die "expected 4 partitions, kernel sees $PARTS -- do not boot this"
 
 GOT_BOOT=$(blkid -o value -s UUID "${DEV}3" | head -1)
 GOT_ROOT=$(blkid -o value -s UUID "${DEV}4" | head -1)
@@ -113,12 +150,19 @@ umount "$IMG_MNT"; rmdir "$IMG_MNT"; losetup -d "$LOOP"
 cat <<EOF
 
 ==> VERIFIED. The stick is bootable-by-construction:
+    GPT        : main + backup tables both intact
     partitions : 4/4 visible to the Linux kernel
     boot UUID  : $GOT_BOOT
     root UUID  : $GOT_ROOT
     BOOTX64.EFI: checksum-identical to the image
 
-    Detach (Windows, elevated):
-      & "C:\\Program Files\\usbipd-win\\usbipd.exe" detach --hardware-id <VID:PID>
-    or just unplug. Then boot: F12 -> EFI USB Device.
+    NOW UNPLUG IT PHYSICALLY, while it is still attached to WSL.
+    Do NOT run 'usbipd detach' -- that hands the stick back to Windows, which
+    rewrites the GPT on sight and leaves it corrupt if it loses the race.
+    Windows never has to see this stick again.
+
+    Then boot: F12 -> EFI USB Device.
+
+    If Windows did get hold of it, re-check before booting:
+      VERIFY_ONLY=yes $0 $IMG $DEV
 EOF
