@@ -1,0 +1,8 @@
+[Plymouth Theme]
+Name=MarwanOS
+Description=MarwanOS loading screen: the wordmark held from early boot until the session takes the display
+ModuleName=script
+
+[script]
+ImageDir=/usr/share/plymouth/themes/marwanos
+ScriptFile=/usr/share/plymouth/themes/marwanos/marwanos.script

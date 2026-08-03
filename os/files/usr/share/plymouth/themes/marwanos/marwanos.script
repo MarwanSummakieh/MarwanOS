@@ -1,0 +1,18 @@
+// MarwanOS boot splash. Deliberately static: a held wordmark reads as "loading"
+// without inventing progress that nothing measures yet. M2 owns the polish
+// (handoff sequencing, maybe motion); this owns "no scrolling text".
+
+Window.SetBackgroundTopColor(0, 0, 0);
+Window.SetBackgroundBottomColor(0, 0, 0);
+
+logo.image = Image("splash.png");
+
+// Scale to a third of the screen width so the same asset works on the laptop
+// panel and a 4K TV without pixelation mattering from couch distance.
+scale = Window.GetWidth() / 3 / logo.image.GetWidth();
+logo.scaled = logo.image.Scale(logo.image.GetWidth() * scale,
+                               logo.image.GetHeight() * scale);
+
+logo.sprite = Sprite(logo.scaled);
+logo.sprite.SetX(Window.GetWidth() / 2 - logo.scaled.GetWidth() / 2);
+logo.sprite.SetY(Window.GetHeight() / 2 - logo.scaled.GetHeight() / 2);
