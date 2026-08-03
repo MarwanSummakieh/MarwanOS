@@ -245,12 +245,16 @@ RUN set -euxo pipefail; \
 # PRETTY_NAME are ours; ID stays fedora deliberately -- tooling that keys off
 # ID (packagekit, third-party scripts) keeps working, ID_LIKE would be the
 # next step if that ever changes.
+#
+# /etc/issue ships as a file from os/files (the block-letter banner). It uses
+# only full-block glyphs on purpose: agetty treats backslashes in issue as
+# escape sequences, so figlet-style art made of slashes renders as garbage.
 RUN set -euxo pipefail; \
     sed -i \
         -e 's/^NAME=.*/NAME="MarwanOS"/' \
         -e "s/^PRETTY_NAME=.*/PRETTY_NAME=\"MarwanOS (Phase 0, ${MARWANOS_VERSION})\"/" \
         /usr/lib/os-release; \
-    printf 'MarwanOS (Phase 0) on \\n\nKernel \\r (\\l)\n\n' > /etc/issue; \
+    grep -q 'MarwanOS' /etc/issue; \
     printf 'marwanos\n' > /etc/hostname
 
 # In bootc, /var is machine-local state that is populated once at install and
