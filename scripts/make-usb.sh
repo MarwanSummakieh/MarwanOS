@@ -54,6 +54,12 @@ ROOT_PART="${ROOT_PART:-4}"
 UKIFY="${UKIFY:-/usr/lib/systemd/ukify}"
 STUB="${STUB:-/usr/lib/systemd/boot/efi/linuxx64.efi.stub}"
 
+# The stub paints this the moment the firmware hands it control -- the earliest
+# brandable pixel that exists, well before the kernel or plymouth. BMP because
+# that is the one format the stub's parser speaks. Absence is not an error:
+# the machine boots identically, it just introduces itself with less flair.
+SPLASH="${SPLASH:-${REPO_ROOT}/os/branding/splash.bmp}"
+
 # Slack on the ESP so a copy cannot fill it to the last byte.
 ESP_SLACK_BYTES=$((4 * 1024 * 1024))
 
@@ -76,6 +82,8 @@ Environment:
   BOOT_PART   boot partition number         (default: 3)
   ROOT_PART   root partition number         (default: 4; read only, for the
               image's os-release so the UKI identifies as MarwanOS)
+  SPLASH      BMP the boot stub paints at power-on
+              (default: <repo>/os/branding/splash.bmp; skipped if absent)
   UKIFY       path to ukify                 (default: /usr/lib/systemd/ukify)
   STUB        systemd-boot EFI stub         (default:
               /usr/lib/systemd/boot/efi/linuxx64.efi.stub)
@@ -339,6 +347,7 @@ UKIFY_ARGS=(build --linux="$KERNEL" "${INITRD_ARGS[@]}"
     --output="$UKI")
 [[ -n "$BLS_VERSION" ]] && UKIFY_ARGS+=(--uname="$BLS_VERSION")
 [[ -n "$OSREL" ]] && UKIFY_ARGS+=(--os-release="@${OSREL}")
+[[ -r "$SPLASH" ]] && UKIFY_ARGS+=(--splash="$SPLASH")
 
 echo "==> Building the UKI with ${UKIFY}"
 "$UKIFY" "${UKIFY_ARGS[@]}"

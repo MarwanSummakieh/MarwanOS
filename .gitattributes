@@ -17,8 +17,10 @@
 *.yml       text eol=lf
 Containerfile text eol=lf
 
-# Disk images and archives must never be touched.
+# Disk images, archives and artwork must never be touched.
 *.vhdx      binary
 *.qcow2     binary
 *.raw       binary
 *.iso       binary
+*.bmp       binary
+*.png       binary
