@@ -145,6 +145,27 @@ then verify partitions, UUIDs and the boot binary checksum before any reboot.
 The dracut drop-in and the `EXTRA_KARGS` quirk plumbing remain — insurance and
 a lever, not fixes for this symptom.
 
+**Third finding: a verified stick can still be dead on arrival, because the
+host corrupts it after verification.** The same timeout recurred on a stick
+`flash-usb.sh` had just passed, with the geometry repair intact. Cause: Windows
+rewrites the GPT of every removable disk it enumerates, relocating the entry
+array from LBA 2 to LBA 2016 in *two* writes (header, then array). Unplugging
+between them leaves a header pointing at zeros and the only valid array
+orphaned at LBA 2 — CRC invalid, zero partitions, same symptom, filesystems
+untouched. Verified by experiment: given time to flush, Windows completes both
+writes and the table stays valid; the corruption is strictly the interrupted
+case.
+
+The architectural lesson is the one this ADR keeps relearning: **verification is
+only valid if nothing touches the artefact between the check and the boot.** A
+flash pipeline that ends at "VERIFIED" and then hands the device back to the
+host OS has not proven anything. So the stick is now unplugged physically while
+still attached to WSL, never `usbipd detach`-ed, and `flash-usb.sh` gained a
+`VERIFY_ONLY=yes` mode for re-checking a stick immediately before a boot plus a
+hard `sgdisk -v` CRC gate — because `sfdisk`, `blkid` and `lsblk` all silently
+fall back to the backup table and report success on a stick the kernel will
+refuse.
+
 **QEMU testing of USB images, calibrated by what each mode can prove:**
 
 - `usb-storage` attachment (bulk-only) is the end-to-end rig — firmware → UKI →
