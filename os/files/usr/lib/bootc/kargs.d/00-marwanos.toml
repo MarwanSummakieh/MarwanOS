@@ -18,6 +18,20 @@ kargs = [
     # nouveau and the proprietary stack cannot both claim the card.
     "rd.driver.blacklist=nouveau",
     "modprobe.blacklist=nouveau",
+    # The loading screen instead of scrolling text: kernel messages suppressed,
+    # plymouth holds the MarwanOS splash. Pulled forward from M2 the day the
+    # first bare-metal boot made the scrolling visible; M2 still owns the
+    # camera-verified flash hunt and the handoff polish.
+    "quiet",
+    "splash",
+    "loglevel=3",
+    "rd.udev.log_level=3",
+    "systemd.show_status=false",
+    # Without this, the console=ttyS0 debugging arg makes plymouth fall back to
+    # its serial/details mode and the graphical splash never appears.
+    "plymouth.ignore-serial-consoles",
+    # No blinking cursor frames (an M2 exit criterion, cheap to mean now).
+    "vt.global_cursor_default=0",
 ]
 
 match-architectures = ["x86_64"]

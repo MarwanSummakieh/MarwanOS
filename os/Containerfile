@@ -99,7 +99,8 @@ RUN --mount=type=cache,dst=/var/cache/libdnf5,sharing=locked \
         gamescope \
         cage \
         vulkan-tools \
-        egl-wayland; \
+        egl-wayland \
+        plymouth-plugin-script; \
     dnf clean all
 
 # Everything under os/files lands in the image here, and the position is
@@ -145,7 +146,12 @@ COPY files/ /
 #
 # The .ko patterns are deliberately unanchored at the end: Fedora ships
 # compressed modules, so the file in the initramfs is uas.ko.xz, not uas.ko.
+# plymouth-set-default-theme runs before dracut because the plymouth dracut
+# module bundles the CURRENT default theme into the initramfs -- set after the
+# regen, the splash a user sees would be whatever bgrt showed (the vendor's
+# firmware logo), not ours. The splash.png grep proves the bundling happened.
 RUN set -euxo pipefail; \
+    plymouth-set-default-theme marwanos; \
     KERNEL_VERSION="$(rpm -q --qf '%{VERSION}-%{RELEASE}.%{ARCH}\n' kernel-core | tail -1)"; \
     dracut --force --no-hostonly --kver "${KERNEL_VERSION}" \
         --add ostree \
@@ -156,6 +162,7 @@ RUN set -euxo pipefail; \
     grep -qx ostree /tmp/ir-mods.txt; \
     grep -q 'nvidia\.ko' /tmp/ir-files.txt; \
     grep -q '/uas\.ko' /tmp/ir-files.txt; \
+    grep -q 'themes/marwanos/splash\.png' /tmp/ir-files.txt; \
     rm -f /tmp/ir-mods.txt /tmp/ir-files.txt
 
 # Session wiring. Separate from the package install so that editing a session
@@ -204,9 +211,10 @@ RUN set -euxo pipefail; \
 # separately because autovt@.service is its own alias of getty@.service and is
 # what logind starts on VT activation, so masking one does not mask the other.
 RUN set -euxo pipefail; \
-    find /etc/greetd /usr/lib/marwanos /usr/lib/sysusers.d /usr/lib/tmpfiles.d \
-         /usr/lib/dracut/dracut.conf.d /usr/lib/bootc \
+    find /etc/greetd /etc/issue /usr/lib/marwanos /usr/lib/sysusers.d \
+         /usr/lib/tmpfiles.d /usr/lib/dracut/dracut.conf.d /usr/lib/bootc \
          /usr/lib/systemd/journald.conf.d /usr/lib/systemd/system-preset \
+         /usr/share/plymouth/themes/marwanos \
          -type f -exec chmod 0644 {} +; \
     chmod 0755 /usr/lib/marwanos/session/marwanos-session; \
     systemd-sysusers /usr/lib/sysusers.d/50-marwanos.conf; \
