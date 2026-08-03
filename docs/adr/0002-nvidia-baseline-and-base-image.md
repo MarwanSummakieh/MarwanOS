@@ -61,5 +61,9 @@ The gamescope-on-NVIDIA spike is no longer open-ended research. `gamescope-sessi
 is reported working as a DRM-master session on NVIDIA (RTX 4060, driver 565.77),
 and `bazzite-deck-nvidia` ships it. The spike's job is now **porting a known-good
 configuration into a minimal image**, not discovering whether the thing is possible.
-Read `bazzite-org/gamescope-session` and the bazzite COPR packaging first; budget
-the 3 days against integration, and keep cage as plan B for the same reasons.
+Budget the 3 days against integration, and keep cage as plan B for the same reasons.
+
+*(Correction, 2026-08-03: this note originally said to read
+`bazzite-org/gamescope-session`. That GitHub org still exists but now has zero
+public repositories. The live upstream — and what the M1 scaffold in ADR 0004
+actually mined — is `ChimeraOS/gamescope-session`, the session bazzite forks.)*
