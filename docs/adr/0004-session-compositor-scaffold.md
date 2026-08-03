@@ -235,6 +235,50 @@ winning. Focus, scaling and gamepad input under the real session are what the
 risk table calls out, and finding them broken in M3 is far more expensive than
 finding them broken now.
 
+## What the first hardware run found (2026-08-03)
+
+Steps 0–3 only; step 4 has not been run, so **D4 is not decided yet**.
+
+**Plan A started and rendered.** gamescope ran as `player` for ~75 s and put the
+`vkcube` placeholder on the TV. The evidence is indirect but consistent: an
+`ANOM_ABEND` record naming `exe="/usr/bin/gamescope"`, the cube on the external
+display in video, and the cursor appearing on movement and vanishing — which is
+`--hide-cursor-delay 1`, a flag plan B has no equivalent of. There is no
+"chose connector X, vk device Y" line to cite, for the reason below.
+
+**Connecting the TV is a precondition, not a detail.** On a panel-only boot the
+dGPU logged `[drm] Cannot find any crtc or sizes` and got no framebuffer; with
+HDMI connected it came up as `fb1: nvidia-drmdrmfb`. Plan A pins gamescope to the
+NVIDIA device, so on the internal panel alone it has no display to drive and
+falls back to cage. This is the trap the last bullet of "what would not flip it"
+already names, and it cost a boot to walk into anyway.
+
+**The session's log output never reached the journal.** The header of
+`marwanos-session` asserted that greetd's inherited descriptors made the journal
+the only debugging surface. False: `config.toml` sets `vt = 1`, and greetd opens
+that VT and hands it to the session as fds 0, 1 and 2. Every line the script and
+gamescope wrote went to the laptop's internal panel — a wall of scrolling text on
+a machine whose acceptance gate is "no text at any point" — while `journalctl -u
+greetd` held none of it. Both halves are one bug, and it is why the paragraph
+above has to argue from a phone video. Fixed by re-exec'ing through `systemd-cat`
+in the session script; a greetd drop-in cannot fix it, because greetd reopens the
+tty for the child itself.
+
+**`serial-getty@ttyS0` respawned every ~10 s.** `console=ttyS0` is on the kernel
+command line for QEMU's benefit, systemd-getty-generator instantiates a serial
+getty for it, and this chassis has no serial port — `restart counter is at 7`
+inside a 75-second session, each failure logged at err priority into the one
+command the appliance offers for triage. Masked alongside the tty1 gettys.
+
+Still open, neither of them blocking D4:
+
+- gamescope segfaults during teardown (SIGSEGV at 95.08 s, *after* the power key
+  at 94.16 s and after greetd stopped). It does not affect a running session. A
+  coredump was captured on the target.
+- `iwlwifi ... probe with driver iwlwifi failed with error -110` — no wifi, which
+  matters because devmode ssh over the network is the escape hatch D6 allows and
+  this chassis cannot currently reach it without ethernet.
+
 ## What would flip plan A to plan B
 
 Any one of these, reproduced across three cold boots on the Predator with the TV
@@ -272,9 +316,13 @@ not a rewrite.
   silently changes compositor is an appliance whose behaviour cannot be reasoned
   about from the image. When M1 decides, the fallback and
   `/var/marwanos/compositor` both go away.
-- `getty@tty1` and `autovt@tty1` are masked from this image onward, which pulls
-  one item out of M2 and makes D6 true from the first session rather than the
-  third milestone. tty2 is untouched, so devmode's getty remains possible.
+- `getty@tty1`, `autovt@tty1` and `serial-getty@ttyS0` are masked from this image
+  onward, which pulls one item out of M2 and makes D6 true from the first session
+  rather than the third milestone. tty2 is untouched, so devmode's getty remains
+  possible — though note that nothing can currently log in on it: `root` is
+  passwordless (`*`) and `player` is `!*` with `/usr/sbin/nologin`. Both recovery
+  paths the session script's comments name, tty2 and devmode ssh, are aspirational
+  as of M1. Giving the appliance a way back in is real work, not a flag.
 - `player` is uid 1000, pinned, and declared in `sysusers.d` rather than created
   with `useradd`. `/var` is machine-local and outlives image upgrades, so a uid
   that drifted between builds would orphan everything the session had written to
