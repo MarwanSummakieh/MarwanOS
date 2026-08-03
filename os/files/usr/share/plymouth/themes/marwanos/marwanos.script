@@ -2,14 +2,23 @@
 // without inventing progress that nothing measures yet. M2 owns the polish
 // (handoff sequencing, maybe motion); this owns "no scrolling text".
 
-Window.SetBackgroundTopColor(0, 0, 0);
-Window.SetBackgroundBottomColor(0, 0, 0);
+// Sampled from the artwork's own background (#05347C) so the image sits on a
+// continuous field rather than a black box, whatever the screen's aspect ratio.
+// Plymouth wants 0..1 floats, not bytes.
+Window.SetBackgroundTopColor(0.0196, 0.2039, 0.4863);
+Window.SetBackgroundBottomColor(0.0196, 0.2039, 0.4863);
 
 logo.image = Image("splash.png");
 
-// Scale to a third of the screen width so the same asset works on the laptop
-// panel and a 4K TV without pixelation mattering from couch distance.
-scale = Window.GetWidth() / 3 / logo.image.GetWidth();
+// Fit to two thirds of the screen width. The artwork is a wide banner rather
+// than a small mark, so it has to be read from couch distance on a TV without
+// spilling off the edges of a 14" panel -- proportional beats fixed either way.
+scale = Window.GetWidth() * 0.66 / logo.image.GetWidth();
+
+// Never upscale past the source: enlarging a 1599px-wide bitmap on a 4K TV
+// would soften exactly the crisp comic linework the art is made of.
+if (scale > 1) { scale = 1; }
+
 logo.scaled = logo.image.Scale(logo.image.GetWidth() * scale,
                                logo.image.GetHeight() * scale);
 
