@@ -189,6 +189,19 @@ RUN set -euxo pipefail; \
 # means the account exists in the image and not only after the first boot, where
 # systemd-sysusers.service is gated on ConditionNeedsUpdate=/etc.
 #
+# The group loop exists because three different tools silently refuse this job.
+# Fedora ships video, render and input in /usr/lib/group, not /etc/group. getent
+# resolves them fine, but every shadow-utils tool reads and writes /etc/group
+# only: sysusers' `m` lines and `usermod -aG` both exit 0 having added no
+# membership, and gpasswd is the only one honest enough to say why ("group
+# 'video' does not exist in /etc/group"). So the group is materialised into
+# /etc/group at its real GID first, and then usermod has something to modify.
+#
+# The cost of getting this wrong is a session that boots, logs in, and cannot
+# open /dev/dri/renderD* -- which on an appliance with no terminal reads as a
+# driver failure. Hence the three id greps below: this must never ship silent
+# again.
+#
 # The preset is applied explicitly rather than left to greetd's rpm scriptlet:
 # %systemd_post runs presets on first install, which happened in the dnf layer
 # above, before COPY landed 50-marwanos.preset.
@@ -218,6 +231,11 @@ RUN set -euxo pipefail; \
          -type f -exec chmod 0644 {} +; \
     chmod 0755 /usr/lib/marwanos/session/marwanos-session; \
     systemd-sysusers /usr/lib/sysusers.d/50-marwanos.conf; \
+    for g in video render input; do \
+        gid="$(getent group "$g" | cut -d: -f3)"; \
+        [ -n "$gid" ] || { echo "group $g does not exist at all"; exit 1; }; \
+        grep -q "^${g}:" /etc/group || printf '%s:x:%s:\n' "$g" "$gid" >> /etc/group; \
+    done; \
     usermod -aG video,render,input player; \
     systemctl --no-reload preset greetd.service; \
     mkdir -p /usr/lib/systemd/system/multi-user.target.wants; \
