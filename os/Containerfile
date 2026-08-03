@@ -218,6 +218,7 @@ RUN set -euxo pipefail; \
          -type f -exec chmod 0644 {} +; \
     chmod 0755 /usr/lib/marwanos/session/marwanos-session; \
     systemd-sysusers /usr/lib/sysusers.d/50-marwanos.conf; \
+    usermod -aG video,render,input player; \
     systemctl --no-reload preset greetd.service; \
     mkdir -p /usr/lib/systemd/system/multi-user.target.wants; \
     ln -sf ../greetd.service \
@@ -227,7 +228,10 @@ RUN set -euxo pipefail; \
     test -L /etc/systemd/system/getty@tty1.service; \
     test -L /etc/systemd/system/autovt@tty1.service; \
     getent passwd player; \
-    test "$(id -u player)" = "1000"
+    test "$(id -u player)" = "1000"; \
+    id -nG player | grep -qw video; \
+    id -nG player | grep -qw render; \
+    id -nG player | grep -qw input
 
 # These ARGs are declared here, not at the top, and the placement is load-bearing.
 # A changed ARG invalidates every layer after its declaration. MARWANOS_VERSION
