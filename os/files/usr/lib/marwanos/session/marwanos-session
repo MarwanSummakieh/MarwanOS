@@ -294,9 +294,35 @@ start_gamescope() {
 # cage has no equivalent of --prefer-output or --prefer-vk-device. On a hybrid
 # laptop driving a TV that is not a detail -- plan B cannot be told which output
 # or which GPU to use -- and it is part of what the M1 decision weighs.
+#
+# Not exec'd, deliberately. exec would replace this script, so cage failing to
+# start would become the session's exit status, greetd would restart the session
+# from default_session, and the whole thing would loop at boot speed forever --
+# which is exactly what a target did the first time both compositors failed on
+# real hardware. Returning instead lets the caller decide, and the caller stops.
 start_cage() {
     log "starting cage with $SELF --client-loop"
-    exec cage -d -- "$SELF" --client-loop
+    _cage_start="$(uptime_seconds)"
+    cage -d -- "$SELF" --client-loop
+    _cage_status=$?
+    _cage_ran="$(( $(uptime_seconds) - _cage_start ))"
+    err "cage exited with status ${_cage_status} after ${_cage_ran}s"
+
+    # A cage that dies immediately never came up at all. One that ran for a
+    # while ended a real session, and letting greetd restart that is correct.
+    [ "$_cage_ran" -ge "$READY_TIMEOUT" ]
+}
+
+# Both plans failed to take the display. Returning here would hand control back
+# to greetd, which would start the session again, which would fail again: an
+# unbounded loop that buries its own diagnosis in repeated log spam. Hold
+# instead, so the journal's first failure is the one still on screen and tty2
+# stays usable.
+compositor_dead_end() {
+    err "no compositor could take the display"
+    err "gamescope and cage both failed to start -- the session is holding rather than looping"
+    err "read the first failure above; recover over tty2 or devmode ssh"
+    hold_forever
 }
 
 # Entry point for plan B: cage execs this script again with --client-loop as
@@ -368,9 +394,9 @@ GAMESCOPE_PID=""
 trap 'stop_gamescope' EXIT INT TERM
 
 if [ "$COMPOSITOR" = "cage" ]; then
-    start_cage
+    start_cage || compositor_dead_end
 elif start_gamescope; then
     supervise_client
 else
-    start_cage
+    start_cage || compositor_dead_end
 fi
