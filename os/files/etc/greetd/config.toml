@@ -1,0 +1,46 @@
+# greetd, configured for D3: autologin `player` on tty1 straight into the
+# session script. No greeter, no prompt, nothing to type, no display-manager
+# baggage -- greetd's whole value here is that it creates a real logind session
+# so the compositor can take DRM master, and does nothing else.
+#
+# This file replaces the one the greetd rpm ships at the same path. In bootc,
+# /etc is machine-local and three-way merged against the image on upgrade, so a
+# copy that has been edited on a target will not be overwritten by `bootc
+# upgrade`. If this file changes, check what the target actually has rather
+# than assuming the upgrade delivered it.
+
+[terminal]
+# tty1 is the appliance's only display surface. The image masks getty@tty1 and
+# autovt@tty1 so nothing else can claim it (D6).
+vt = 1
+
+[initial_session]
+# The boot-time autologin. greetd runs this once per boot, unauthenticated and
+# as a logind session of class "user" -- which is what lets `player` be a locked
+# account with no password and still reach a session. The one-shot behaviour is
+# guarded by greetd's runfile in /run, so every cold boot gets it again.
+command = "/usr/lib/marwanos/session/marwanos-session"
+user = "player"
+
+[default_session]
+# Not a greeter, deliberately. greetd requires this section and falls back to it
+# the moment the initial session exits, so leaving the rpm's default here
+# (`agreety --cmd /bin/sh`) would put a text login prompt on tty1 the first time
+# the compositor died -- the exact escape hatch D6 forbids, appearing only on
+# failure, which is when nobody is watching for it. Pointing it back at the
+# session means an exited session restarts instead.
+#
+# Sessions started this way are logind class "greeter" rather than "user".
+# M1's acceptance check reads `loginctl`, so expect that difference after any
+# session restart and do not read it as a fault.
+command = "/usr/lib/marwanos/session/marwanos-session"
+user = "player"
+
+[general]
+# $HOME/.profile lives in /var/home/player and is writable by the session user.
+# With source_profile on, greetd would source it as part of every login: a
+# persistent arbitrary-code path into the session that nothing on an appliance
+# with no terminal would ever surface. The session script sets the environment
+# it needs and calls binaries by absolute path, so nothing here depends on a
+# profile having run.
+source_profile = false

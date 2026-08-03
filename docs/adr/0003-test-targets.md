@@ -79,3 +79,80 @@ test, not a pass. The M2 camera test in particular means the TV over HDMI.
   firmware toggle affecting only what that machine will boot, and it is reversible.
 - Phase 0's exit criteria stay honest: everything filmed happens on hardware that
   has the GPU the project is about.
+
+## Addendum (2026-08-03) — the bare-metal target boots a UKI, and no VM can show you why
+
+The first attempt to boot the raw image on the Predator (Acer PT314-51s,
+firmware V1.10) turned up two findings that change how these three roles relate.
+
+**The firmware cannot boot GRUB from USB.** It loads EFI binaries off the stick
+without complaint — shim starts, GRUB starts — and then GRUB cannot read the
+stick's own partition table. `ls (hd0)/` answers `unknown filesystem` and no
+`(hd0,gptN)` devices appear at all. So the shim → GRUB → BLS chain is simply
+unavailable on the one machine every filmed acceptance gate has to run on, and
+no change to the image can repair it: the failing component is the firmware's
+block layer as GRUB sees it.
+
+**Decision: the bare-metal target boots a Unified Kernel Image.** Kernel,
+initramfs and command line linked into a single EFI binary behind the
+systemd-boot stub, installed at `EFI/BOOT/BOOTX64.EFI`, with `EFI/fedora` renamed
+aside so nothing can chain back into GRUB. The firmware loads the whole ~350 MB
+file by itself, through the path that already demonstrably works, and no
+bootloader filesystem access ever happens. `scripts/make-usb.sh` post-processes a
+`make-installer.sh raw` image into that shape.
+
+What this does to the roles above:
+
+- The bare-metal route is three steps now, not two: `make-installer.sh raw`,
+  `make-usb.sh`, flash. The VM target is untouched and keeps booting GRUB
+  normally, which is right — that is the path any eventual internal install uses.
+- **The UKI is a copy, and it goes stale.** `bootc upgrade` on the bare-metal
+  target rewrites the kernel, initramfs and BLS entry on the boot partition,
+  none of which the firmware reads. Upgrade and rollback testing therefore stays
+  a VM-target job, and the bare-metal target receives whole images. This sharpens
+  the split this ADR argues for rather than softening it.
+- Secure Boot stays off there, which D7 already required; the UKI is unsigned.
+- This entire class of bug is invisible in a VM. The firmware is the component
+  under test, and no hypervisor reproduces it.
+
+**Second finding: VM storage attachment is not representative either.** Booted
+via the UKI, the machine reached the initramfs and then timed out in
+`dracut-initqueue` waiting for the root filesystem's UUID — while the identical
+image booted to a login prompt in QEMU.
+
+The diagnosis closed by elimination (2026-08-03, same night): every driver was
+present — `uas` and `usb_storage` modular and in the initramfs, `xhci-pci` and
+`sd_mod` built into the Fedora kernel (`=y`, which is why "missing module"
+theories kept dying) — and the kernel booted the image over *both* transports in
+QEMU: bulk-only via OVMF end-to-end, UAS via direct kernel boot. The Acer
+firmware reads the stick fine. The only failing combination is the Linux `uas`
+driver against this specific stick, which makes **the stick's UAS implementation
+the defect** — a class common enough that the kernel maintains a quirks table
+(`usb-storage.quirks`) for it.
+
+The fix is a per-device kernel argument forcing the bulk-only transport the
+firmware already uses: `usb-storage.quirks=346d:5678:u` for this stick. Read a
+stick's VID:PID from Windows (`Get-PnpDevice`, the `USB\VID_xxxx&PID_xxxx`
+entry) or Linux (`lsusb`), and pass it through `make-usb.sh` via `EXTRA_KARGS`.
+The dracut drop-in adding `uas usb_storage sd_mod` stays as insurance for
+initramfs regens, not as the fix.
+
+**QEMU testing of USB images, calibrated by what each mode can prove:**
+
+- `usb-storage` attachment (bulk-only) is the end-to-end rig — firmware → UKI →
+  kernel → root — and is also the transport a quirked stick actually uses.
+- `usb-uas` attachment exercises the kernel's UAS path, but **OVMF cannot boot
+  from it** (it has no UAS driver of its own): pair it with QEMU's direct kernel
+  boot (`-kernel/-initrd/-append`) instead of a firmware boot.
+- Neither mode reproduces a *broken* UAS device. A green VM boot narrows the
+  search; only hardware convicts the stick.
+
+```bash
+# kernel-UAS path (no firmware):
+qemu-system-x86_64 -m 3072 -machine q35 \
+    -kernel vmlinuz -initrd initramfs.img -append "root=UUID=... rw ..." \
+    -device qemu-xhci,id=xhci \
+    -drive if=none,id=stick,format=raw,file=disk.raw \
+    -device usb-uas,id=uas,bus=xhci.0 \
+    -device scsi-hd,drive=stick,bus=uas.0
+```

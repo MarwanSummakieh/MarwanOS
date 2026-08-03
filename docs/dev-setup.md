@@ -283,6 +283,10 @@ there is no moment where you pick a disk blind alongside the Windows drive:
 OUT_DIR=/var/tmp/usb-out SSH_KEY_FILE=/mnt/c/Users/brain/.ssh/id_marwanos.pub ./scripts/make-installer.sh raw
 ```
 
+**On the Predator, post-process the image before writing it** — its firmware
+cannot boot GRUB from USB, and the fix happens on the image, not on the stick.
+See "Bare metal via USB: the UKI path" below.
+
 Copy the result to Windows renamed `.img` — Rufus and Etcher recognise that
 extension and write raw; they do not recognise `.raw`. Then write it with Rufus
 (DD mode) or balenaEtcher. Both list only removable devices by default, which is
@@ -293,6 +297,73 @@ practice. Use **32 GB or larger**. A plain stick is fine for M1 — it only asks
 whether gamescope can take DRM master, and a slow device answers that as well as
 a fast one. M2 is different: a 15-second boot budget measured on flash memory is
 meaningless, so the timed and filmed gates want a real USB 3.x SSD.
+
+### Bare metal via USB: the UKI path
+
+The Predator will not boot the raw image as written, and the reason is worth
+knowing before you spend an evening on it. Its firmware (V1.10) loads EFI
+binaries off a USB stick without complaint — shim and GRUB both start. But GRUB,
+once it is running from that stick, cannot read the stick's own partition table:
+`ls (hd0)/` answers `unknown filesystem`, and no `(hd0,gptN)` devices appear at
+all. A bootloader that cannot see a filesystem cannot find a kernel, so the
+shim → GRUB → BLS chain is dead here. Nothing in the image fixes it; the broken
+piece is the firmware's block layer as GRUB sees it.
+
+The way around it is to take the bootloader out of the path entirely. A
+**Unified Kernel Image** is the kernel, the initramfs and the kernel command
+line linked into one EFI binary behind the systemd-boot stub. Put it at
+`EFI/BOOT/BOOTX64.EFI` and the firmware loads all ~350 MB of it as a single file,
+through the one code path that already works. No bootloader filesystem access
+happens at any point.
+
+`scripts/make-usb.sh` does that to a finished raw image, in place:
+
+```bash
+sudo dnf install -y systemd-ukify systemd-boot-unsigned
+```
+
+```bash
+sudo OUT_DIR=/var/tmp/usb-out ./scripts/make-usb.sh
+```
+
+It mounts the image's boot partition, reads the BLS entry the machine would have
+booted, builds the UKI from that exact kernel, initramfs and `options` line,
+installs it as `EFI/BOOT/BOOTX64.EFI`, and renames `EFI/fedora` to
+`EFI/fedora-off` so nothing can chain back into the GRUB that cannot read this
+stick. The original shim is kept alongside as `BOOTX64.EFI.orig`. Then write the
+image to the stick as above.
+
+Per-stick hardware quirks go in via `EXTRA_KARGS`, appended after the BLS
+command line. The known example is a stick whose UAS implementation is broken
+(the first Predator stick is one — see the troubleshooting entry below):
+
+```bash
+EXTRA_KARGS="usb-storage.quirks=346d:5678:u" sudo OUT_DIR=/var/tmp/usb-out ./scripts/make-usb.sh
+```
+
+Secure Boot stays off (D7) — the UKI is unsigned, on top of already-unsigned
+NVIDIA modules.
+
+**The UKI goes stale, and this is the part that will bite.** It is a *copy* of
+the kernel, initramfs and command line as they were when the stick was made.
+`bootc upgrade` on the target writes a new kernel and initramfs to the stick's
+boot partition, adds a BLS entry and rewrites `grub.cfg` — and the firmware
+reads none of it, because on this machine nothing reads it. The stick keeps
+booting the old deployment. So on this target the loop ends with a rebuild and a
+re-flash rather than a reboot:
+
+```bash
+OUT_DIR=/var/tmp/usb-out SSH_KEY_FILE=/mnt/c/Users/brain/.ssh/id_marwanos.pub ./scripts/make-installer.sh raw
+sudo OUT_DIR=/var/tmp/usb-out ./scripts/make-usb.sh
+```
+
+Renaming `EFI/fedora` does not break `bootc upgrade` itself: the BLS entries and
+`grub.cfg` that ostree rewrites live on the boot partition, not the ESP. The
+upgrade lands correctly and is simply not what boots.
+
+Loading the UKI got the machine to the initramfs and straight into the next
+failure — `dracut-initqueue` timing out on the root filesystem's UUID. See the
+troubleshooting entry below.
 
 The alternative is an installer ISO, kept for the case where you want Anaconda to
 partition a device rather than accept the image's fixed layout:
@@ -423,6 +494,38 @@ deliberately added:
 ```bash
 podman run --rm ghcr.io/ublue-os/base-main:43 bash -c 'lsinitrd --mod /lib/modules/$(rpm -q --qf "%{VERSION}-%{RELEASE}.%{ARCH}" kernel-core | tail -1)/initramfs.img | sort'
 ```
+
+**`dracut-initqueue timeout` on a USB stick, while the same image boots in a VM.**
+The kernel and initramfs loaded; what never happened is the device holding root
+coming up, so the UUID `dracut-initqueue` waits for never appears.
+
+Before touching the image, know how this one actually ended (2026-08-03): every
+missing-driver theory died on evidence. `uas` and `usb_storage` were in the
+initramfs; `xhci-pci` and `sd_mod` are built into the Fedora kernel; the kernel
+booted the same image over both transports in QEMU. The defect was **the
+stick's own UAS implementation** — a class so common the kernel keeps a quirks
+table for it. The fix is one kernel argument naming the stick's USB IDs:
+
+```bash
+EXTRA_KARGS="usb-storage.quirks=346d:5678:u" sudo ./scripts/make-usb.sh
+```
+
+`346d:5678` is the first Predator stick; read another stick's IDs from Windows
+(`Get-PnpDevice`, the `USB\VID_xxxx&PID_xxxx` entry) or Linux (`lsusb`). The
+`:u` flag forces the bulk-only transport the firmware already uses — which is
+also why the firmware could boot what the kernel could not reach.
+
+The image also ships `os/files/usr/lib/dracut/dracut.conf.d/50-marwanos-usb.conf`
+(with a build assertion on `uas.ko`) so the drivers themselves can never
+silently vanish from an initramfs regen. Check any image directly:
+
+```bash
+podman run --rm ghcr.io/marwansummakieh/marwanos:latest bash -c 'KV=$(rpm -q --qf "%{VERSION}-%{RELEASE}.%{ARCH}" kernel-core | tail -1); lsinitrd /lib/modules/$KV/initramfs.img | grep uas'
+```
+
+A VM test only means something here if you know what each attachment mode can
+prove — see the addendum to [ADR 0003](adr/0003-test-targets.md), including why
+`usb-uas` attachment requires direct kernel boot (OVMF cannot boot from it).
 
 **Target boots to a black screen after a base bump.** Almost always a base/akmods
 mismatch — `bootc rollback`, then confirm `BASE_TAG` and `AKMODS_TAG` are a

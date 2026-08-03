@@ -1,0 +1,21 @@
+# Unit presets for the appliance. 50 beats Fedora's 90-default.preset
+# (`disable *`) and 90-systemd.preset (`enable getty@.service`), which is the
+# whole reason for the number.
+#
+# What a preset can and cannot do is worth stating, because the difference bit
+# once already: systemd.preset understands `enable` and `disable` and nothing
+# else. `disable` only means "do not enable this during a preset run" -- it does
+# not remove the getty.target.wants symlink systemd itself ships, and it is not
+# a mask. The real masking of getty@tty1 and autovt@tty1 (D6) happens in the
+# Containerfile, where `systemctl mask` can make the units genuinely not exist.
+# The line below is here so a future `systemctl preset-all` on a target does not
+# quietly undo that.
+#
+# Enabling greetd is likewise necessary but not sufficient. greetd's [Install]
+# section is only `Alias=display-manager.service`, so enabling it creates the
+# alias and nothing that pulls it into a boot target except graphical.target's
+# Wants=display-manager.service. The Containerfile adds the multi-user.target
+# wants link so the session comes up whichever target the image boots to.
+
+enable greetd.service
+disable getty@tty1.service

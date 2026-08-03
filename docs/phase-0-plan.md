@@ -75,10 +75,9 @@ Verified by a real build (2026-08-02, WSL2 `FedoraLinux-43` + podman 5.8.4):
 - [x] `root-fs-type = xfs` declared by the image; the ublue base does not set it and bib refuses to build without it
 - [x] **Loop time measured:** cold build 515 s, version-bump rebuild **70 s** with 8/12 steps cached. Comfortably inside the 15-minute budget
 
-Still to do, in order:
+Deployment, in the order it actually happened:
 
-- [ ] GHCR PAT created, package made public after first push
-- [ ] First push to GHCR (WSL2; ~7 GB the first time, small layers after)
+- [x] Package public on GHCR; no PAT exists anywhere — CI pushes with its per-run token
 - [x] Hyper-V target VM created and booted — **it failed**, dropping into dracut emergency mode
 - [x] Root cause found: our initramfs regen silently dropped the `ostree` dracut module, so nothing could assemble `/sysroot`. Fixed with `--add ostree` plus a build-time assertion. Verified: `ostree` present, 7 hits, matching the base exactly
 - [x] **The target boots and the system is healthy.** Verified from its own journal: SELinux policy loaded, **zero failed units**, no enforcing AVC denials, sshd listening, DHCP lease acquired
@@ -91,21 +90,24 @@ Still to do, in order:
 - [x] **`bootc upgrade` verified.** `1.2.0-journal` (local) → `0.0.202608021759` / commit `efc77ba` (CI). Digest `cf30658…` → `1d791d2…`
 - [x] **`bootc rollback` verified.** Back to `1.2.0-journal`, digest `cf30658…`. `systemctl is-system-running` = running and SELinux Enforcing at every step
 
-**M0 COMPLETE (2026-08-02).** The factory works: source in git, image built by CI, deployed by `bootc upgrade`, and a bad build undone by `bootc rollback`.
-- [ ] Kernel args verified on the target with `cat /proc/cmdline` (baked in the image, never set by hand)
-- [ ] `make-installer.sh anaconda-iso` → USB SSD install on the Predator
-- [ ] Verify `bootc rollback` boots the previous image
+**M0 COMPLETE (2026-08-02).** The factory works: source in git, image built by CI, deployed by `bootc upgrade`, and a bad build undone by `bootc rollback`. (Three stale checklist lines that previously sat below this banner — kargs, the anaconda-iso route, rollback — were removed 2026-08-03: two were already ticked above, and the installer-ISO route is superseded by the raw-image + UKI path in [ADR 0003](adr/0003-test-targets.md).)
 
 **Acceptance:** bump `MARWANOS_VERSION`, build, push, `bootc upgrade`, reboot, `cat /usr/share/marwanos/build-info` shows the new value on the target. Then roll it back. Total loop time measured and written down (target: under 15 minutes; the shell dev loop in D5 is the fast path).
 
 ### M1 — session bring-up + the plan A/B decision (~1–2 weeks)
 
-- [ ] Create `player` user in the image; `greetd` autologin on tty1
-- [ ] Session script launches the compositor with a placeholder client (`vkcube` or similar)
-- [ ] **Plan A spike (3 days max), on bare metal only:** gamescope as DRM-master session on the NVIDIA driver — does it start, render, survive mode switches, handle the TV's native resolution? **Scope narrowed:** `gamescope-session` is reported working on NVIDIA (RTX 4060, 565.77) and `bazzite-deck-nvidia` ships it, so this is porting a known-good config into a minimal image, not proving feasibility. Read `bazzite-org/gamescope-session` before writing anything
-- [ ] Confirm which card owns the HDMI output (`drm_info`, `nvidia-smi`) before trusting any result — on a hybrid-graphics laptop, gamescope grabbing the Intel iGPU would produce a green result for the wrong GPU
-- [ ] **Plan B fallback:** same session script swapped to `cage`; nested gamescope tested with the same placeholder inside
-- [ ] Decision recorded in `docs/adr/0001-session-compositor.md`
+Scaffolded in the image (2026-08-03, unverified on hardware — see [ADR 0004](adr/0004-session-compositor-scaffold.md)):
+
+- [x] `player` user (sysusers.d, uid 1000 pinned), `greetd` autologin on tty1, `getty@tty1`/`autovt@tty1` masked
+- [x] Session script tries gamescope (plan A) and falls back to cage (plan B), with `vkcube` as placeholder, the D5 dev-override path, M3's supervision loop, and an A/B lever at `/var/marwanos/compositor`
+- [x] NVIDIA **userspace** driver installed from the akmods sidecar — the image previously carried only kernel modules, which would have made every M1 gate fail in a way indistinguishable from a compositor problem
+
+Still to do, on hardware:
+
+- [ ] **Plan A spike (3 days max), on bare metal only:** gamescope as DRM-master session on the NVIDIA driver — does it start, render, survive mode switches, handle the TV's native resolution? **Scope narrowed:** this is porting a known-good config into a minimal image, not proving feasibility. The session mined `ChimeraOS/gamescope-session` — the upstream bazzite forks; the `bazzite-org/gamescope-session` repo this plan previously named no longer exists publicly
+- [ ] Confirm which card owns the HDMI output before trusting any result — the session script pins gamescope to the NVIDIA device by PCI id and logs what it found; verify with `nvidia-smi` and the sysfs checks in ADR 0004 (`drm_info` is not in the image, deliberately — see the ADR's open questions)
+- [ ] **Plan B fallback:** `echo cage > /var/marwanos/compositor && systemctl restart greetd` — no rebuild needed
+- [ ] Decision recorded in `docs/adr/0005-session-compositor-decision.md` (0004 is the scaffold; the plan's original `0001` reference predated the ADR series)
 - [ ] No desktop environment, no display manager, no portal packages in the image at all
 
 **Acceptance:** power on → autologin → fullscreen placeholder renders on the TV at native resolution. `loginctl` shows one session for `player`; nothing else owns the display.
@@ -157,6 +159,7 @@ Still to do, in order:
 | Hybrid graphics on the laptop makes M1 measure the Intel iGPU | False green on the project's central question | Drive the TV over HDMI (dGPU-routed on this chassis) and verify with `drm_info`/`nvidia-smi` before recording any M1 result. [ADR 0003](adr/0003-test-targets.md) |
 | Base/akmods tag drift (`43` vs `main-43`) | Builds clean, boots black | `bump-base.sh` hard-fails on a mismatched pair; base bumps go to the VM target before bare metal |
 | Regenerating the initramfs drops the `ostree` dracut module | **Hit on the first boot attempt.** Dracut emergency mode; lint and image build both pass | `--add ostree` plus a build-time `lsinitrd` assertion in the Containerfile. General lesson: a green build says nothing about a bootable image — boot the VM target after any initramfs change |
+| A USB stick with a broken UAS implementation | **Hit on the first bare-metal USB boot (2026-08-03).** `dracut-initqueue` timed out waiting for the root UUID while the same image booted in QEMU. Diagnosis was closed by elimination: every driver was present (`uas`/`usb_storage` modular and in the initramfs; `xhci-pci`/`sd_mod` built into the Fedora kernel), the kernel boots the image over both BOT and UAS in QEMU, and the Acer firmware reads the stick fine — leaving the stick's own UAS implementation as the only failing element. A class of defect common enough that the kernel maintains a quirks table for it | Per-device kernel arg `usb-storage.quirks=<VID>:<PID>:u` forces the bulk-only transport the firmware already uses (this stick: `346d:5678`; read the IDs from Windows with `Get-PnpDevice` or Linux `lsusb`). Pass it via `EXTRA_KARGS` to `make-usb.sh`. The dracut drop-in (`uas usb_storage sd_mod`) stays as insurance for initramfs regens, with a build assertion on `uas.ko`. QEMU attach modes: `usb-storage` for end-to-end (OVMF cannot boot from `usb-uas`); direct kernel boot + `usb-uas` to exercise the kernel's UAS path |
 | First boot after an upgrade wedges in early userspace | **Seen once during M0.** Hung just after `modprobe@loop.service`, with no "A start job is running" line — so not a unit timeout. A hard power-cycle booted the same deployment cleanly with SELinux still Enforcing | Unexplained and unreproduced; recorded rather than diagnosed. If it recurs, capture it properly — the working theory that it was SELinux labelling from the non-SELinux CI runner was **disproved**, since the CI image boots Enforcing without `enforcing=0`. Matters far more on bare metal, where a wedged boot has no `vmconnect` to inspect it |
 | Plymouth→compositor handoff flashes text/black | Fails the silent-boot gate | Known-fiddly; budgeted in M2; camera test is the arbiter, not eyeballs |
 | Godot Wayland quirks under gamescope/cage (focus, scaling, gamepad) | Shell unusable in session though fine on desktop | Test the Godot export inside the real session in M1 week 1, before building UI on top |

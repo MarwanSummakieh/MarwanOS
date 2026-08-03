@@ -1,10 +1,6 @@
 # syntax=docker/dockerfile:1
 #
-# MarwanOS — Phase 0 / M0: the factory.
-#
-# This image deliberately does almost nothing. Its whole job is to prove the
-# build -> push -> `bootc upgrade` -> rollback loop works. Session bring-up,
-# silent boot and the shell arrive in M1-M3.
+# MarwanOS — Phase 0: the factory, plus M1's session bring-up.
 #
 # Base pair, and why it is a pair:
 #   ghcr.io/ublue-os/base-nvidia is dead (last real tags are from 2023). The
@@ -39,21 +35,91 @@ COPY --from=akmods /rpms/ /tmp/rpms/
 
 # Fail loudly and early if the akmods layout ever changes upstream, rather than
 # letting a glob silently match nothing and shipping an image with no driver.
+# The nvidia/ directory carries the userspace driver and is as load-bearing as
+# the kmod -- see the install step below for what happened when it was missed.
 RUN set -euxo pipefail; \
     ls -1 /tmp/rpms/ublue-os/ublue-os-nvidia*.rpm >/dev/null; \
-    ls -1 /tmp/rpms/kmods/kmod-nvidia*.rpm >/dev/null
+    ls -1 /tmp/rpms/kmods/kmod-nvidia*.rpm >/dev/null; \
+    ls -1 /tmp/rpms/nvidia/nvidia-driver-libs-*.x86_64.rpm >/dev/null
 
+# Kernel module AND userspace driver, from the same sidecar.
+#
+# The userspace line exists because its absence cost a near-miss: the image
+# originally installed only the kmod and the ublue addons, which yields loaded
+# nvidia.ko modules and no Vulkan ICD, no EGL, no nvidia-smi -- a machine on
+# which gamescope fails in a way indistinguishable from the compositor problem
+# M1's spike exists to investigate. Upstream ublue's own installer script
+# installs /rpms/nvidia/* from this sidecar; we take the subset a Wayland
+# appliance needs. The ICD assertion at the end is the regression guard.
+#
+# i686 userspace (32-bit GL/Vulkan for Proton's 32-bit games) is deliberately
+# deferred to Phase 1: it drags multilib glibc into the image and nothing in
+# Phase 0 runs 32-bit code.
 RUN --mount=type=cache,dst=/var/cache/libdnf5,sharing=locked \
     set -euxo pipefail; \
     dnf -y install \
         /tmp/rpms/ublue-os/ublue-os-nvidia*.rpm \
-        /tmp/rpms/kmods/kmod-nvidia*.rpm; \
+        /tmp/rpms/kmods/kmod-nvidia*.rpm \
+        /tmp/rpms/nvidia/nvidia-driver-[0-9]*.x86_64.rpm \
+        /tmp/rpms/nvidia/nvidia-driver-common-[0-9]*.x86_64.rpm \
+        /tmp/rpms/nvidia/nvidia-driver-libs-[0-9]*.x86_64.rpm; \
     rm -rf /tmp/rpms; \
+    dnf clean all; \
+    rpm -q nvidia-driver-libs >/dev/null; \
+    ls /usr/share/vulkan/icd.d/nvidia_icd*.json >/dev/null
+
+# M1's packages. Every one of these is in Fedora 43 proper -- checked against
+# packages.fedoraproject.org before this line existed -- so no COPR is involved,
+# and none should be added here without an ADR saying why:
+#
+#   greetd 0.10.3    autologin daemon (D3). Its rich dependency pulls
+#                    greetd-selinux automatically wherever selinux-policy is
+#                    installed, which is here, so the policy module is not
+#                    named explicitly.
+#   gamescope 3.16   plan A: the DRM-master session compositor (D4). Requires
+#                    xorg-x11-server-Xwayland, so XWayland arrives with it and
+#                    does not need naming either.
+#   cage 0.2.0       plan B (D4).
+#   vulkan-tools     vkcube, M1's placeholder client.
+#   egl-wayland      NVIDIA's EGL external platform for Wayland. Named
+#                    explicitly rather than trusted to arrive as a dependency,
+#                    because a compositor on the NVIDIA driver without it fails
+#                    exactly like the driver problem the spike is looking for.
+#
+# gamescope Recommends mesa-vulkan-drivers and weak dependencies are on by
+# default, so this laptop ends up with two Vulkan ICDs installed. That is
+# wanted -- the iGPU still needs a driver -- but it means the compositor has a
+# wrong card available to pick, which is the false-green the plan's risk table
+# and ADR 0003 both warn about. The session script pins the device by PCI id
+# rather than trimming the recommend.
+RUN --mount=type=cache,dst=/var/cache/libdnf5,sharing=locked \
+    set -euxo pipefail; \
+    dnf -y install \
+        greetd \
+        gamescope \
+        cage \
+        vulkan-tools \
+        egl-wayland; \
     dnf clean all
+
+# Everything under os/files lands in the image here, and the position is
+# deliberate: it must be before the dracut run below, because
+# /usr/lib/dracut/dracut.conf.d/50-marwanos-usb.conf only affects an initramfs
+# if it exists in the filesystem at the moment dracut reads its config. Dracut
+# picks up /usr/lib/dracut/dracut.conf.d/*.conf on its own; there is no flag to
+# add.
+#
+# The cost is that editing anything under os/files now invalidates the dracut
+# layer and the session-wiring layer below it. That is the honest trade -- a
+# drop-in there can change what the initramfs contains -- but it is why a config
+# edit rebuilds slower than a version bump, which still only touches the three
+# cheap layers at the bottom.
+COPY files/ /
 
 # The nvidia kmod is built against the base's kernel but the initramfs shipped
 # in the base predates it. Without this regen, plymouth has no NVIDIA driver to
 # draw on in early boot -- which is exactly the M2 flash we are trying to avoid.
+#
 # --add ostree is load-bearing and was learned the hard way: without it this
 # image boots straight into dracut emergency mode.
 #
@@ -64,13 +130,21 @@ RUN --mount=type=cache,dst=/var/cache/libdnf5,sharing=locked \
 # reasonable, passes every lint, and cannot mount root. Diffing our module list
 # against the base's showed ostree as the single difference.
 #
-# The two greps below are the regression guard. A broken initramfs is invisible
-# until boot, so the build has to be the thing that refuses.
+# The three greps below are the regression guard. A broken initramfs is
+# invisible until boot, so the build has to be the thing that refuses.
+#
+# The uas.ko check guards the USB stack: a USB 3.x stick attaches over UAS, and
+# the drivers are named in os/files/usr/lib/dracut/dracut.conf.d/
+# 50-marwanos-usb.conf and nowhere else, so this grep doubles as proof that
+# dracut actually read the drop-in.
 #
 # They read from files rather than pipes on purpose. `lsinitrd | grep -q` makes
 # grep exit on the first match, lsinitrd then dies of SIGPIPE, and `set -o
 # pipefail` turns that into exit 141 -- a guard that fails precisely when it
 # should pass. Do not turn these back into pipelines.
+#
+# The .ko patterns are deliberately unanchored at the end: Fedora ships
+# compressed modules, so the file in the initramfs is uas.ko.xz, not uas.ko.
 RUN set -euxo pipefail; \
     KERNEL_VERSION="$(rpm -q --qf '%{VERSION}-%{RELEASE}.%{ARCH}\n' kernel-core | tail -1)"; \
     dracut --force --no-hostonly --kver "${KERNEL_VERSION}" \
@@ -81,9 +155,61 @@ RUN set -euxo pipefail; \
     lsinitrd "/lib/modules/${KERNEL_VERSION}/initramfs.img" > /tmp/ir-files.txt; \
     grep -qx ostree /tmp/ir-mods.txt; \
     grep -q 'nvidia\.ko' /tmp/ir-files.txt; \
+    grep -q '/uas\.ko' /tmp/ir-files.txt; \
     rm -f /tmp/ir-mods.txt /tmp/ir-files.txt
 
-COPY files/ /
+# Session wiring. Separate from the package install so that editing a session
+# file does not re-run dnf, and after COPY because every line acts on something
+# COPY put there.
+#
+# The chmod is not belt and braces. This repo is authored on Windows with
+# core.filemode false -- every blob in the index is 0644, scripts/*.sh included
+# -- so an executable bit cannot survive a checkout here and has to be applied
+# where the file is consumed. Without it greetd's `exec` of the session fails
+# with EACCES on tty1, where nothing can report it. Same family of problem as
+# the line endings .gitattributes exists to fix.
+#
+# systemd-sysusers is run against our file rather than bare, so this step
+# creates exactly the account 50-marwanos.conf declares and cannot quietly
+# depend on some other package's sysusers entry. The declaration is what bootc
+# wants and what `bootc container lint` checks for; running it here as well just
+# means the account exists in the image and not only after the first boot, where
+# systemd-sysusers.service is gated on ConditionNeedsUpdate=/etc.
+#
+# The preset is applied explicitly rather than left to greetd's rpm scriptlet:
+# %systemd_post runs presets on first install, which happened in the dnf layer
+# above, before COPY landed 50-marwanos.preset.
+#
+# The wants symlink exists because greetd's [Install] section is nothing but
+# Alias=display-manager.service. That gets it started under graphical.target
+# (systemd's graphical.target carries Wants=display-manager.service) and
+# nowhere else, so an appliance that stops at multi-user.target would boot to
+# no session at all. It is created here rather than shipped under os/files/
+# because git in this repo has core.symlinks false and would check a tracked
+# symlink out as a text file containing its own target.
+#
+# getty@tty1 and autovt@tty1 are masked now rather than in M2, because D6 says
+# no getty on tty1 ever and this is the cheapest possible moment to mean it.
+# greetd's unit does declare Conflicts=getty@tty1.service, but a Conflicts is a
+# race that systemd resolves after both units have been asked to start; a mask
+# is the unit not existing. A preset file cannot express this -- systemd.preset
+# understands only enable and disable, and disable would not touch the
+# getty.target.wants symlink that systemd itself ships. autovt@tty1 is masked
+# separately because autovt@.service is its own alias of getty@.service and is
+# what logind starts on VT activation, so masking one does not mask the other.
+RUN set -euxo pipefail; \
+    chmod 0755 /usr/lib/marwanos/session/marwanos-session; \
+    systemd-sysusers /usr/lib/sysusers.d/50-marwanos.conf; \
+    systemctl --no-reload preset greetd.service; \
+    mkdir -p /usr/lib/systemd/system/multi-user.target.wants; \
+    ln -sf ../greetd.service \
+        /usr/lib/systemd/system/multi-user.target.wants/greetd.service; \
+    systemctl --no-reload mask getty@tty1.service autovt@tty1.service; \
+    test -x /usr/lib/marwanos/session/marwanos-session; \
+    test -L /etc/systemd/system/getty@tty1.service; \
+    test -L /etc/systemd/system/autovt@tty1.service; \
+    getent passwd player; \
+    test "$(id -u player)" = "1000"
 
 # These ARGs are declared here, not at the top, and the placement is load-bearing.
 # A changed ARG invalidates every layer after its declaration. MARWANOS_VERSION

@@ -1,0 +1,376 @@
+#!/bin/sh
+#
+# MarwanOS session -- D4 (which compositor), D5 (where the client comes from),
+# and the supervision loop M3 specifies.
+#
+# Plan A is gamescope owning DRM directly; plan B is cage. Which one ships is
+# the decision M1's spike exists to make, and it cannot be made off hardware.
+# Until it is made this script tries A and falls back to B, so a target that
+# cannot do A still reaches a picture instead of a black screen with nothing to
+# read afterwards.
+#
+# greetd runs this as `/bin/sh -c "exec /usr/lib/marwanos/session/marwanos-session"`,
+# as `player`, with stdout and stderr inherited from greetd.service. That makes
+# the journal the only debugging surface this appliance has, which is why the
+# messages below carry systemd's <N> syslog-level prefixes: <3> is err, <4> is
+# warning, <6> is info. A failure is then findable with `journalctl -p err -u
+# greetd` instead of being one more line of session chatter in a machine that
+# by design shows no text.
+
+set -u
+
+readonly TAG="marwanos-session"
+
+# Plan B re-executes this script as cage's client (see start_cage). Hardcoded
+# rather than taken from $0 so the path is the same however the script was
+# entered.
+readonly SELF="/usr/lib/marwanos/session/marwanos-session"
+
+# D5. The client is baked into the image; the override is a directory under
+# /var so a fresh Godot export can be scp'd onto a running target and restarted
+# in seconds, instead of costing an image rebuild and a reboot per UI tweak.
+# Both halves are required -- an executable at the override path AND the devmode
+# flag -- so a forgotten dev build cannot quietly become what the appliance
+# ships.
+readonly DEVMODE_FLAG="/var/marwanos/devmode"
+readonly DEV_CLIENT="/var/marwanos/dev-shell/marwanos-shell"
+
+# The A/B lever for M1's spike. Contains "gamescope" or "cage"; absent means try
+# plan A. It exists because comparing the two plans otherwise costs an image
+# rebuild and a reboot each way, and three days does not survive many of those:
+#   echo cage > /var/marwanos/compositor && systemctl restart greetd
+# When M1 produces its decision this file stops being a lever and the choice is
+# baked in, because a machine-local file that silently changes the compositor is
+# state the image cannot see.
+readonly COMPOSITOR_FILE="/var/marwanos/compositor"
+
+# M1's placeholder. M3 replaces this with the Godot export under
+# /usr/lib/marwanos/shell/; nothing else in this file changes when it does.
+readonly BAKED_CLIENT="/usr/bin/vkcube"
+
+# M3's loop guard. Five client crashes inside sixty seconds means the client is
+# broken rather than unlucky, and restarting it faster will not fix it.
+readonly CRASH_LIMIT=5
+readonly CRASH_WINDOW=60
+
+# How long to wait for the compositor to say it is up. See start_gamescope for
+# why this is a readiness handshake and not a check for a nonzero exit.
+readonly READY_TIMEOUT=5
+
+# The TV is the display this project is about; the laptop's internal panel is
+# not, and on a hybrid chassis the HDMI port is what routes to the dGPU.
+# gamescope takes an ordered connector list, so name HDMI first and let it fall
+# through -- a target booted with the TV unplugged should still show something.
+: "${MARWANOS_OUTPUT_CONNECTOR:=HDMI-A-1,HDMI-A-2,DP-1,*}"
+
+log()  { printf '<6>%s: %s\n' "$TAG" "$*" >&2; }
+warn() { printf '<4>%s: %s\n' "$TAG" "$*" >&2; }
+err()  { printf '<3>%s: %s\n' "$TAG" "$*" >&2; }
+
+# Monotonic seconds. Wall clock is wrong for a sixty-second window: NTP steps
+# the clock shortly after boot, which is exactly when a crash loop would be
+# happening, and a step backwards would make the guard never trip.
+uptime_seconds() {
+    IFS=. read -r _up _rest < /proc/uptime
+    printf '%s\n' "$_up"
+}
+
+# The hybrid-graphics trap, which the plan's risk table and ADR 0003 both call
+# out: this chassis has an Intel iGPU alongside the NVIDIA dGPU, and gamescope
+# Recommends mesa-vulkan-drivers, so both ICDs are installed and the compositor
+# has a wrong card available to choose. A gamescope that came up on the iGPU
+# would render a perfectly convincing green result about the card the project
+# is not about. Pinning by PCI id makes that outcome impossible instead of
+# merely detectable.
+#
+# ChimeraOS/gamescope-session solves the same problem with export-gpu, which
+# prompts a human and writes the answer to a config file. An appliance has
+# nobody to prompt, so it is resolved here. Read from sysfs rather than lspci
+# because pciutils is not a dependency of anything this image installs. Class
+# 0x0300 is a VGA controller and 0x0302 a 3D controller; 0x10de is NVIDIA.
+detect_nvidia_vk_device() {
+    for _dev in /sys/bus/pci/devices/*; do
+        [ -r "$_dev/class" ] || continue
+        [ -r "$_dev/vendor" ] || continue
+        [ -r "$_dev/device" ] || continue
+
+        read -r _class < "$_dev/class"
+        case "$_class" in
+            0x0300*|0x0302*) ;;
+            *) continue ;;
+        esac
+
+        read -r _vendor < "$_dev/vendor"
+        [ "$_vendor" = "0x10de" ] || continue
+
+        read -r _device < "$_dev/device"
+        printf '%s:%s\n' "${_vendor#0x}" "${_device#0x}"
+        return 0
+    done
+    return 1
+}
+
+# Borrowed from ChimeraOS/gamescope-session, and it earns its keep for one
+# reason: M1 exists to judge plan A, and an unrecognised flag makes gamescope
+# exit during argument parsing, which looks from the outside exactly like
+# gamescope being unable to take DRM master. Guarding the optional flags means a
+# plan A failure is a real one.
+gamescope_has_option() {
+    gamescope --help 2>&1 | grep -q -- "$1"
+}
+
+# Re-resolved on every restart, not once at startup: D5's ten-second loop is
+# scp the new build, kill the old process, and have the new one come back.
+resolve_client() {
+    if [ -e "$DEVMODE_FLAG" ] && [ -x "$DEV_CLIENT" ]; then
+        printf '%s\n' "$DEV_CLIENT"
+        return 0
+    fi
+    printf '%s\n' "$BAKED_CLIENT"
+}
+
+# Nothing here ever exits into a text console. When the guard trips the session
+# holds the compositor up with an empty screen instead of returning, because
+# returning would hand control back to greetd, which would start the session,
+# which would start the client -- the same respawn loop one level up, running at
+# boot speed. M3 replaces the hold with the error screen. Until then the way
+# back in is devmode ssh, which is the only escape hatch D6 allows.
+hold_forever() {
+    while :; do
+        sleep 3600
+    done
+}
+
+# M3's supervision spec, scaffolded now because M1 is where the first client
+# runs and a session that died to a console would fail D6 the first time the
+# placeholder crashed.
+#
+# Restarts are immediate. "Back at the grid in under three seconds" is an exit
+# criterion, so there is no backoff worth tuning; the guard is the only brake.
+# The window is a fixed sixty seconds rather than a sliding one, deliberately:
+# a client that crashes four times a minute forever is still broken, but it is
+# broken in a way a human can see and fix, and a sliding window would trap it
+# in the hold where nothing is visible at all.
+supervise_client() {
+    _crashes=0
+    _window_start="$(uptime_seconds)"
+
+    while :; do
+        _client="$(resolve_client)"
+
+        if [ ! -x "$_client" ]; then
+            err "client $_client is missing or not executable"
+            hold_forever
+        fi
+
+        log "starting client $_client"
+        "$_client"
+        _status=$?
+
+        _now="$(uptime_seconds)"
+        if [ "$((_now - _window_start))" -ge "$CRASH_WINDOW" ]; then
+            _crashes=0
+            _window_start="$_now"
+        fi
+        _crashes=$((_crashes + 1))
+
+        err "client exited with status $_status (restart $_crashes of $CRASH_LIMIT within ${CRASH_WINDOW}s)"
+
+        # A client cannot outlive its compositor, and restarting it against a
+        # dead one would burn the whole crash budget in a second and land in the
+        # hold for the wrong reason. Return instead: the session exits, greetd
+        # starts it again, and the compositor comes back with it.
+        if [ -n "${GAMESCOPE_PID:-}" ] && ! kill -0 "$GAMESCOPE_PID" 2>/dev/null; then
+            err "compositor died underneath the client; ending the session so greetd restarts it"
+            GAMESCOPE_PID=""
+            return 1
+        fi
+
+        if [ "$_crashes" -ge "$CRASH_LIMIT" ]; then
+            err "client crashed $_crashes times in under ${CRASH_WINDOW}s; not respawning"
+            err "compositor is still up with an empty screen -- recover over devmode ssh"
+            hold_forever
+        fi
+    done
+}
+
+stop_gamescope() {
+    [ -n "${GAMESCOPE_PID:-}" ] || return 0
+    kill "$GAMESCOPE_PID" 2>/dev/null || true
+    GAMESCOPE_PID=""
+}
+
+# Plan A: gamescope as the DRM master.
+#
+# Returns nonzero if it did not come up, having already cleaned up after itself,
+# so the caller can move to plan B.
+start_gamescope() {
+    _fifo="$RUNTIME/gamescope-ready"
+    rm -f "$_fifo"
+    mkfifo "$_fifo" || return 1
+
+    # No client is handed to gamescope. gamescope shuts down when the child it
+    # spawned exits, so passing the client would put the compositor inside the
+    # supervision loop and take the whole screen down on every client crash.
+    # Started bare, it stays up and only the client restarts -- which is what
+    # M3's "no text visible at any point" actually requires. This is also how
+    # ChimeraOS/gamescope-session does it, for the same reason.
+    #
+    # --backend drm is the standalone display session, as opposed to the nested
+    # backends. It is the whole of what plan A is claiming.
+    #
+    # No --steam, no mangoapp, no HDR: those are the parts of the upstream
+    # session that belong to Steam, not to a compositor taking DRM master.
+    # --force-windows-fullscreen is what makes the placeholder satisfy M1's
+    # acceptance wording rather than merely render: vkcube opens a small window
+    # by default, and a 500x500 cube in the middle of a black TV proves the
+    # compositor works while failing the gate. --hide-cursor-delay 1 is the "no
+    # cursor" half of the same gate.
+    set -- \
+        --backend drm \
+        --prefer-output "$MARWANOS_OUTPUT_CONNECTOR" \
+        --xwayland-count 1 \
+        --hide-cursor-delay 1 \
+        --ready-fd "$_fifo"
+
+    if [ -n "${VK_DEVICE:-}" ]; then
+        set -- "$@" --prefer-vk-device "$VK_DEVICE"
+    fi
+
+    if gamescope_has_option "--force-windows-fullscreen"; then
+        set -- "$@" --force-windows-fullscreen
+    else
+        warn "gamescope has no --force-windows-fullscreen; the placeholder will render windowed"
+    fi
+
+    log "starting gamescope: $*"
+    gamescope "$@" &
+    GAMESCOPE_PID=$!
+
+    # gamescope opens the ready fd O_WRONLY while parsing arguments -- which on
+    # a fifo blocks until a reader appears -- and writes "<x-display>
+    # <wayland-display>" to it once the backend is genuinely up.
+    #
+    # Reading that with a timeout is a stronger test than watching for a nonzero
+    # exit inside five seconds. The plausible NVIDIA failure is not a clean
+    # crash; it is a gamescope that starts, takes DRM master, and then sits
+    # there having drawn nothing, holding the display hostage. An exit-status
+    # check calls that success and leaves a black TV. This does not.
+    _handshake="$(timeout "$READY_TIMEOUT" head -n 1 "$_fifo" 2>/dev/null || true)"
+    rm -f "$_fifo"
+
+    if [ -z "$_handshake" ]; then
+        err "gamescope did not report ready within ${READY_TIMEOUT}s -- falling back to cage (plan B)"
+        err "if this is reproducible on hardware, that is the M1 decision: see docs/adr/0004"
+        stop_gamescope
+        return 1
+    fi
+
+    if ! kill -0 "$GAMESCOPE_PID" 2>/dev/null; then
+        err "gamescope reported ready and then exited -- falling back to cage (plan B)"
+        GAMESCOPE_PID=""
+        return 1
+    fi
+
+    DISPLAY="${_handshake%% *}"
+    GAMESCOPE_WAYLAND_DISPLAY="${_handshake##* }"
+    export DISPLAY GAMESCOPE_WAYLAND_DISPLAY
+
+    log "gamescope ready on DISPLAY=$DISPLAY WAYLAND=$GAMESCOPE_WAYLAND_DISPLAY"
+    return 0
+}
+
+# Plan B: cage.
+#
+# cage runs the client itself and exits when the client exits, so the guard
+# cannot live inside it the way it does under gamescope. Re-executing this
+# script as cage's client keeps one implementation of the guard for both plans
+# rather than two that drift.
+#
+# -s is absent on purpose: it is cage's "allow VT switching", and a keystroke
+# that leaves the session is exactly the reachable escape hatch D6 forbids.
+# -d drops client-side decorations.
+#
+# cage has no equivalent of --prefer-output or --prefer-vk-device. On a hybrid
+# laptop driving a TV that is not a detail -- plan B cannot be told which output
+# or which GPU to use -- and it is part of what the M1 decision weighs.
+start_cage() {
+    log "starting cage with $SELF --client-loop"
+    exec cage -d -- "$SELF" --client-loop
+}
+
+# Entry point for plan B: cage execs this script again with --client-loop as
+# its single client, and everything below is already done in the parent.
+if [ "${1:-}" = "--client-loop" ]; then
+    supervise_client
+    exit 0
+fi
+
+# XDG_RUNTIME_DIR comes from pam_systemd. If it is missing there is no logind
+# session, which means no seat, which means no DRM master and nothing that
+# follows can work -- so say so plainly and carry on to fail somewhere the
+# journal can explain, rather than dying here with no context.
+if [ -z "${XDG_RUNTIME_DIR:-}" ]; then
+    err "XDG_RUNTIME_DIR is unset: pam_systemd did not create a logind session"
+    XDG_RUNTIME_DIR="/run/user/$(id -u)"
+    export XDG_RUNTIME_DIR
+fi
+
+RUNTIME="$XDG_RUNTIME_DIR/marwanos"
+mkdir -p "$RUNTIME"
+
+# Environment.
+#
+# Mined from ChimeraOS/gamescope-session, which is the session bazzite forks --
+# the `bazzite-org/gamescope-session` that the plan and ADR 0002 name no longer
+# exists as a public repository (see ADR 0004). Almost everything that script
+# exports is Steam, Proton, RADV and mangohud tuning that means nothing to a
+# machine with no Steam on it, and copying it would be inventing constraints
+# nobody here has. What is kept is the part that is about a compositor taking
+# DRM master on NVIDIA.
+#
+# What is deliberately not set: __NV_PRIME_RENDER_OFFLOAD and
+# __GLX_VENDOR_LIBRARY_NAME, because PRIME offload is the opposite of what this
+# does -- the dGPU is the DRM master here, not a device being offloaded to. And
+# WLR_NO_HARDWARE_CURSORS / WLR_RENDERER=vulkan, the classic wlroots-on-NVIDIA
+# workarounds that only matter to plan B: Universal Blue deleted its copy of
+# those in December 2025 alongside adding driver 590 support, which is the best
+# evidence available that current drivers no longer need them. If cage misbehaves
+# during the spike they are the first thing to try, not the first thing to ship.
+
+# gamescope's Vulkan WSI layer, which gives the client a present path gamescope
+# controls rather than one it has to infer. A no-op if the layer is not
+# installed, so setting it early costs nothing.
+export ENABLE_GAMESCOPE_WSI=1
+
+# gamescope defaults these under $HOME. Naming them keeps the negotiated mode
+# and the patched EDID somewhere stable across reboots, which matters most for
+# the one display whose handshake is least predictable -- the TV.
+export GAMESCOPE_MODE_SAVE_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/gamescope/modes.cfg"
+export GAMESCOPE_PATCHED_EDID_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/gamescope/edid.bin"
+mkdir -p "$(dirname "$GAMESCOPE_MODE_SAVE_FILE")"
+
+VK_DEVICE="$(detect_nvidia_vk_device || true)"
+if [ -n "$VK_DEVICE" ]; then
+    log "pinning compositor to NVIDIA vulkan device $VK_DEVICE"
+else
+    warn "no NVIDIA PCI display device found; the compositor will choose a device itself"
+    warn "on this chassis that may be the Intel iGPU, which would make any M1 result meaningless"
+fi
+
+COMPOSITOR="gamescope"
+if [ -r "$COMPOSITOR_FILE" ]; then
+    read -r COMPOSITOR < "$COMPOSITOR_FILE"
+    log "compositor pinned to '$COMPOSITOR' by $COMPOSITOR_FILE"
+fi
+
+GAMESCOPE_PID=""
+trap 'stop_gamescope' EXIT INT TERM
+
+if [ "$COMPOSITOR" = "cage" ]; then
+    start_cage
+elif start_gamescope; then
+    supervise_client
+else
+    start_cage
+fi
