@@ -490,6 +490,41 @@ field of `!` (locked), or `/run/nologin` blocking every non-root login when the
 boot did not complete. root sidesteps both — its field is `*` and `pam_nologin`
 exempts uid 0 — which is why the installer adds your key to root as well.
 
+**The target shows a wall of scrolling text, and `journalctl -u greetd` has none
+of it.** These are one bug, not two. `/etc/greetd/config.toml` sets `vt = 1`;
+greetd opens that VT and hands it to the session as stdin, stdout and stderr, so
+everything the session script and the compositor print goes to the screen instead
+of the journal — breaking the "no text at any point" gate and removing the only
+debugging surface in the same stroke. A `StandardOutput=` drop-in on
+`greetd.service` does not help, because greetd reopens the tty for the child
+itself. `marwanos-session` therefore re-execs itself through `systemd-cat` before
+writing anything, which redirects fds 1 and 2 for the script and every descendant
+it spawns. `--level-prefix=true` is passed explicitly: the `<3>`/`<4>`/`<6>`
+prefixes the script emits are what make `journalctl -p err -u greetd` selective,
+and unprefixed output (gamescope's own) lands at info, so it cannot drown the
+triage command.
+
+If you are debugging a session that predates this fix, you do not need a terminal
+on the target — the journal is persistent (`Storage=persistent`). Shut down
+cleanly with a **short press of the power button** (`HandlePowerKey` is at its
+default, `poweroff`), then read the stick offline from WSL. A hard power-off
+loses the tail of the journal, which is exactly the part you want:
+
+```bash
+mount -o ro /dev/sdX4 /mnt/rootfs   # NOT -o norecovery: the XFS log must replay,
+                                    # or system.journal reads as missing entirely
+journalctl -D /mnt/rootfs/ostree/deploy/default/var/log/journal -p err --no-pager
+```
+
+**`agetty: failed to get terminal attributes: Input/output error`, every ~10 seconds.**
+`console=ttyS0` on the kernel command line makes systemd-getty-generator
+instantiate `serial-getty@ttyS0`; on hardware with no serial port agetty fails
+and systemd restarts it forever. Harmless on screen, corrosive in
+`journalctl -p err`, which is the appliance's only triage command. The image
+masks the unit rather than dropping the karg, because QEMU still wants kernel
+output on serial (ADR 0003) — masking removes the login prompt, which D6 forbids
+anyway, and keeps the console.
+
 **Target drops into dracut emergency mode ("Entering emergency mode", repeating).**
 The initramfs cannot assemble the root filesystem. On a bootc/ostree system the
 usual cause is a missing `ostree` dracut module: its `check()` looks for a live
@@ -523,6 +558,42 @@ GPT is self-consistent there and only there.
 The fix is `sgdisk -e` after every write — and `scripts/flash-usb.sh` does the
 write, the repair and the verification as one operation. Use it instead of
 Rufus; see "Flashing from WSL" above.
+
+**Then it came back, with the geometry fix intact — a second, separate cause
+wearing the same symptom.** Same 213s timeout, same emergency shell, on a stick
+`flash-usb.sh` had just verified. The autopsy: Windows rewrites the GPT of
+every removable disk it enumerates, moving the partition entry array from LBA 2
+(where `sgdisk` puts it) to LBA 2016 (where Windows wants it, first usable LBA
+2048). That is **two** writes — the header at LBA 1, then the array at LBA 2016
+— and the stick was pulled between them. What was left: a header pointing at
+LBA 2016, nothing but zeros there, and the only valid array orphaned back at
+LBA 2. Main partition table CRC invalid, kernel enumerates **zero** partitions,
+`/dev/disk/by-uuid/<root>` never appears. Both filesystems were pristine and
+both UUIDs matched the UKI's cmdline the entire time; the damage was six bytes
+in one header.
+
+Confirmed by experiment rather than inference: detaching the repaired stick to
+Windows and taking it straight back showed Windows had indeed rewritten the
+header and relocated the array — but with time to flush, it completed *both*
+writes and the table stayed valid. The corruption is the interrupted case.
+
+So the rule after a verified flash is **unplug the stick physically while it is
+still attached to WSL — never `usbipd detach`**, which hands it back to Windows
+and restarts the race. Windows never has to see the stick again. If it did get
+hold of one, re-check before booting rather than guessing:
+
+```bash
+VERIFY_ONLY=yes ./scripts/flash-usb.sh /var/tmp/m1-out/image/disk.raw /dev/sdX
+```
+
+and repair in place with `sgdisk -e /dev/sdX` if it fails — both copies of the
+entry array survive this, so no data is lost and no reflash is needed.
+
+Note the trap that made this expensive twice: `sfdisk`, `blkid` and `lsblk` all
+fall back to the backup table and report a perfect stick, printing the fatal
+`primary GPT table is corrupt` as a single easily-missed first line. The kernel
+is the only reader that refuses. `flash-usb.sh` now fails hard on the `sgdisk
+-v` CRC check before any of the friendlier checks run.
 
 For the record, the two wrong convictions, both disproved by evidence: missing
 initramfs drivers (everything was present — `uas`/`usb_storage` as modules,

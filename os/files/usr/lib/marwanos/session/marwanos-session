@@ -10,12 +10,22 @@
 # read afterwards.
 #
 # greetd runs this as `/bin/sh -c "exec /usr/lib/marwanos/session/marwanos-session"`,
-# as `player`, with stdout and stderr inherited from greetd.service. That makes
-# the journal the only debugging surface this appliance has, which is why the
-# messages below carry systemd's <N> syslog-level prefixes: <3> is err, <4> is
-# warning, <6> is info. A failure is then findable with `journalctl -p err -u
-# greetd` instead of being one more line of session chatter in a machine that
-# by design shows no text.
+# as `player`. The messages below carry systemd's <N> syslog-level prefixes: <3>
+# is err, <4> is warning, <6> is info, so a failure is findable with
+# `journalctl -p err -u greetd` rather than being one more line of chatter in a
+# machine that by design shows no text.
+#
+# That only works because of the re-exec through systemd-cat below. This script
+# does NOT inherit journal-connected descriptors from greetd.service, which is
+# what the first hardware run assumed and disproved: /etc/greetd/config.toml sets
+# `vt = 1`, and greetd opens that VT and hands it to the session as stdin, stdout
+# and stderr. So every line this script printed, plus every line gamescope
+# printed, went to the laptop's internal panel -- a wall of scrolling text on the
+# one display D6 says must never show any, while `journalctl` held none of it and
+# the only way to read a compositor failure was a phone camera pointed at the
+# screen. Redirecting fds 1 and 2 into the journal fixes both halves at once, and
+# doing it here rather than in a greetd drop-in is deliberate: greetd reopens the
+# tty for the child itself, so StandardOutput= on the unit does not reach us.
 
 set -u
 
@@ -25,6 +35,29 @@ readonly TAG="marwanos-session"
 # rather than taken from $0 so the path is the same however the script was
 # entered.
 readonly SELF="/usr/lib/marwanos/session/marwanos-session"
+
+# Point stdout and stderr at the journal before anything writes to them. See the
+# header for why this cannot be a greetd drop-in. systemd-cat execs the program
+# after redirecting, so this costs no extra process and every descendant --
+# gamescope, cage, the client -- inherits journal-connected descriptors.
+#
+# --level-prefix=true is explicit rather than left to the default, because
+# `journalctl -p err -u greetd` finding anything depends entirely on the <N>
+# prefixes still being parsed.
+#
+# stdin is deliberately not redirected: fds 1 and 2 are what leaked to the panel,
+# and the VT on fd 0 is the session's controlling terminal.
+#
+# Guarded two ways. The environment variable makes the re-exec happen once --
+# plan B re-enters this script as cage's client with it already exported, so it
+# cannot stack. And a missing systemd-cat skips the redirect rather than killing
+# the session: text on screen is a failed acceptance criterion, no session at all
+# is a brick.
+if [ -z "${MARWANOS_SESSION_LOGGING:-}" ] && command -v systemd-cat >/dev/null 2>&1; then
+    MARWANOS_SESSION_LOGGING=1
+    export MARWANOS_SESSION_LOGGING
+    exec systemd-cat --level-prefix=true -t "$TAG" "$SELF" "$@"
+fi
 
 # D5. The client is baked into the image; the override is a directory under
 # /var so a fresh Godot export can be scp'd onto a running target and restarted
