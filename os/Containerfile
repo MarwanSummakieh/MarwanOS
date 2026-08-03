@@ -240,7 +240,7 @@ RUN set -euxo pipefail; \
         -e 's/^NAME=.*/NAME="MarwanOS"/' \
         -e "s/^PRETTY_NAME=.*/PRETTY_NAME=\"MarwanOS (Phase 0, ${MARWANOS_VERSION})\"/" \
         /usr/lib/os-release; \
-    printf 'MarwanOS (Phase 0) \\n \\l\n' > /etc/issue; \
+    printf 'MarwanOS (Phase 0) on \\n\nKernel \\r (\\l)\n\n' > /etc/issue; \
     printf 'marwanos\n' > /etc/hostname
 
 # In bootc, /var is machine-local state that is populated once at install and
