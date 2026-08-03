@@ -120,22 +120,30 @@ via the UKI, the machine reached the initramfs and then timed out in
 `dracut-initqueue` waiting for the root filesystem's UUID — while the identical
 image booted to a login prompt in QEMU.
 
-The diagnosis closed by elimination (2026-08-03, same night): every driver was
-present — `uas` and `usb_storage` modular and in the initramfs, `xhci-pci` and
-`sd_mod` built into the Fedora kernel (`=y`, which is why "missing module"
-theories kept dying) — and the kernel booted the image over *both* transports in
-QEMU: bulk-only via OVMF end-to-end, UAS via direct kernel boot. The Acer
-firmware reads the stick fine. The only failing combination is the Linux `uas`
-driver against this specific stick, which makes **the stick's UAS implementation
-the defect** — a class common enough that the kernel maintains a quirks table
-(`usb-storage.quirks`) for it.
+The diagnosis went through two wrong convictions before landing (2026-08-03,
+final). First "missing initramfs drivers": disproved — `uas` and `usb_storage`
+were modular and present, `xhci-pci` and `sd_mod` built into the Fedora kernel
+(`=y`), and the kernel booted the image over *both* transports in QEMU. Then
+"the stick's broken UAS implementation": also disproved — the per-device quirk
+(`usb-storage.quirks=346d:5678:u`) changed nothing, because the transport was
+never the problem.
 
-The fix is a per-device kernel argument forcing the bulk-only transport the
-firmware already uses: `usb-storage.quirks=346d:5678:u` for this stick. Read a
-stick's VID:PID from Windows (`Get-PnpDevice`, the `USB\VID_xxxx&PID_xxxx`
-entry) or Linux (`lsusb`), and pass it through `make-usb.sh` via `EXTRA_KARGS`.
-The dracut drop-in adding `uas usb_storage sd_mod` stays as insurance for
-initramfs regens, not as the fix.
+**The actual cause: the image is smaller than the stick, and the resulting GPT
+is invalid on the device.** A 14.9 GB GPT image written to a 29.3 GB stick
+leaves the backup GPT header mid-disk and the protective MBR sized to the
+image. Firmware and Windows tolerate this — the UKI boots — but GRUB and the
+Linux kernel reject the partition table wholesale, so no `(hd0,gptN)` for GRUB
+and no `/dev/sdX4` for the kernel, ever. Windows then auto-"repairs" the header
+on insertion and corrupts the main partition table CRC, cementing the failure.
+Proven by attaching the physical stick to WSL's kernel over usbipd: disk
+visible, zero partitions, `sgdisk -v` reporting the CRC damage — and one
+`sgdisk -e` later, all four partitions appeared with the exact UUIDs the boot
+arguments name, and the next bare-metal boot reached login.
+
+`scripts/flash-usb.sh` makes this unrepeatable: write from WSL, `sgdisk -e`,
+then verify partitions, UUIDs and the boot binary checksum before any reboot.
+The dracut drop-in and the `EXTRA_KARGS` quirk plumbing remain — insurance and
+a lever, not fixes for this symptom.
 
 **QEMU testing of USB images, calibrated by what each mode can prove:**
 

@@ -287,9 +287,18 @@ OUT_DIR=/var/tmp/usb-out SSH_KEY_FILE=/mnt/c/Users/brain/.ssh/id_marwanos.pub ./
 cannot boot GRUB from USB, and the fix happens on the image, not on the stick.
 See "Bare metal via USB: the UKI path" below.
 
-Copy the result to Windows renamed `.img` — Rufus and Etcher recognise that
-extension and write raw; they do not recognise `.raw`. Then write it with Rufus
-(DD mode) or balenaEtcher. Both list only removable devices by default, which is
+**Write it with `scripts/flash-usb.sh`, not Rufus.** Rufus writes the bytes
+correctly and then everything after the write goes wrong: on any stick larger
+than the image the resulting GPT is one GRUB and the Linux kernel reject (see
+the `dracut-initqueue` troubleshooting entry for the full autopsy), and Windows
+then "repairs" it into something worse. `flash-usb.sh` writes from WSL over
+usbipd, runs the `sgdisk -e` repair, and verifies partitions, UUIDs and the
+boot binary before you ever reboot — the stick is bootable-by-construction or
+the script says exactly why not. The usbipd attach commands are in the script
+header.
+
+If you must use a Windows GUI tool anyway, know that both Rufus and Etcher list
+only removable devices by default, which is
 most of what keeps your system disk safe.
 
 **Device sizing:** the image is ~15 GB, so a nominal 16 GB stick is too small in
@@ -499,33 +508,32 @@ podman run --rm ghcr.io/ublue-os/base-main:43 bash -c 'lsinitrd --mod /lib/modul
 The kernel and initramfs loaded; what never happened is the device holding root
 coming up, so the UUID `dracut-initqueue` waits for never appears.
 
-Before touching the image, know how this one actually ended (2026-08-03): every
-missing-driver theory died on evidence. `uas` and `usb_storage` were in the
-initramfs; `xhci-pci` and `sd_mod` are built into the Fedora kernel; the kernel
-booted the same image over both transports in QEMU. The defect was **the
-stick's own UAS implementation** — a class so common the kernel keeps a quirks
-table for it. The fix is one kernel argument naming the stick's USB IDs:
+This one consumed three days and two wrong convictions before the real cause
+was proven (2026-08-03), so read the ending first: **the image is smaller than
+the stick, and that breaks the GPT.** Writing a 14.9 GB GPT image to a 29.3 GB
+stick leaves the backup GPT header stranded mid-disk and the protective MBR
+sized to the image, not the device. UEFI firmware and Windows tolerate that —
+which is why the firmware happily boots the UKI — but **GRUB and the Linux
+kernel reject the entire partition table**, so the machine boots from a stick
+it then cannot see. Windows makes it worse on the next insertion by "repairing"
+the GPT header and corrupting the main partition table CRC. QEMU never
+reproduces any of this because the virtual disk is exactly image-sized, so the
+GPT is self-consistent there and only there.
 
-```bash
-EXTRA_KARGS="usb-storage.quirks=346d:5678:u" sudo ./scripts/make-usb.sh
-```
+The fix is `sgdisk -e` after every write — and `scripts/flash-usb.sh` does the
+write, the repair and the verification as one operation. Use it instead of
+Rufus; see "Flashing from WSL" above.
 
-`346d:5678` is the first Predator stick; read another stick's IDs from Windows
-(`Get-PnpDevice`, the `USB\VID_xxxx&PID_xxxx` entry) or Linux (`lsusb`). The
-`:u` flag forces the bulk-only transport the firmware already uses — which is
-also why the firmware could boot what the kernel could not reach.
-
-The image also ships `os/files/usr/lib/dracut/dracut.conf.d/50-marwanos-usb.conf`
-(with a build assertion on `uas.ko`) so the drivers themselves can never
-silently vanish from an initramfs regen. Check any image directly:
-
-```bash
-podman run --rm ghcr.io/marwansummakieh/marwanos:latest bash -c 'KV=$(rpm -q --qf "%{VERSION}-%{RELEASE}.%{ARCH}" kernel-core | tail -1); lsinitrd /lib/modules/$KV/initramfs.img | grep uas'
-```
-
-A VM test only means something here if you know what each attachment mode can
-prove — see the addendum to [ADR 0003](adr/0003-test-targets.md), including why
-`usb-uas` attachment requires direct kernel boot (OVMF cannot boot from it).
+For the record, the two wrong convictions, both disproved by evidence: missing
+initramfs drivers (everything was present — `uas`/`usb_storage` as modules,
+`xhci-pci`/`sd_mod` built into the kernel) and the stick's UAS implementation
+(the per-device quirk `usb-storage.quirks=<VID>:<PID>:u` changed nothing,
+because the transport was never the problem). The dracut drop-in and the quirk
+plumbing both remain — cheap insurance and a useful lever respectively — but
+neither is the fix for this symptom. Diagnose with the stick attached to WSL
+via usbipd: if `lsblk` shows the disk with **no partitions** while `blkid`
+still reports `PTTYPE="gpt"`, this is your problem, and `sgdisk -v` will name
+the damage.
 
 **Target boots to a black screen after a base bump.** Almost always a base/akmods
 mismatch — `bootc rollback`, then confirm `BASE_TAG` and `AKMODS_TAG` are a
