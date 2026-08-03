@@ -223,6 +223,19 @@ RUN set -euxo pipefail; \
 # getty.target.wants symlink that systemd itself ships. autovt@tty1 is masked
 # separately because autovt@.service is its own alias of getty@.service and is
 # what logind starts on VT activation, so masking one does not mask the other.
+#
+# serial-getty@ttyS0 is masked for the same D6 reason and one practical one.
+# `console=ttyS0` is on the kernel command line so QEMU can capture kernel output
+# (ADR 0003), and systemd-getty-generator instantiates a serial getty on every
+# console it finds there. This chassis has no serial port, so agetty opens the
+# device, fails with EIO, and systemd restarts it -- measured on hardware at a
+# restart every ~10s, `restart counter is at 7` inside a 75-second session. Two
+# costs: a respawn loop forever, and `journalctl -p err` filling with
+# "failed to get terminal attributes" when that command is the only triage
+# surface this appliance has (see marwanos-session's header). Masking the ttyS0
+# instance rather than dropping the karg keeps the kernel console on serial,
+# which is what the QEMU targets actually use, and removes only the login prompt
+# -- which D6 forbids regardless of whether the port exists.
 RUN set -euxo pipefail; \
     find /etc/greetd /etc/issue /usr/lib/marwanos /usr/lib/sysusers.d \
          /usr/lib/tmpfiles.d /usr/lib/dracut/dracut.conf.d /usr/lib/bootc \
@@ -241,10 +254,12 @@ RUN set -euxo pipefail; \
     mkdir -p /usr/lib/systemd/system/multi-user.target.wants; \
     ln -sf ../greetd.service \
         /usr/lib/systemd/system/multi-user.target.wants/greetd.service; \
-    systemctl --no-reload mask getty@tty1.service autovt@tty1.service; \
+    systemctl --no-reload mask getty@tty1.service autovt@tty1.service \
+                               serial-getty@ttyS0.service; \
     test -x /usr/lib/marwanos/session/marwanos-session; \
     test -L /etc/systemd/system/getty@tty1.service; \
     test -L /etc/systemd/system/autovt@tty1.service; \
+    test -L /etc/systemd/system/serial-getty@ttyS0.service; \
     getent passwd player; \
     test "$(id -u player)" = "1000"; \
     id -nG player | grep -qw video; \

@@ -490,6 +490,41 @@ field of `!` (locked), or `/run/nologin` blocking every non-root login when the
 boot did not complete. root sidesteps both — its field is `*` and `pam_nologin`
 exempts uid 0 — which is why the installer adds your key to root as well.
 
+**The target shows a wall of scrolling text, and `journalctl -u greetd` has none
+of it.** These are one bug, not two. `/etc/greetd/config.toml` sets `vt = 1`;
+greetd opens that VT and hands it to the session as stdin, stdout and stderr, so
+everything the session script and the compositor print goes to the screen instead
+of the journal — breaking the "no text at any point" gate and removing the only
+debugging surface in the same stroke. A `StandardOutput=` drop-in on
+`greetd.service` does not help, because greetd reopens the tty for the child
+itself. `marwanos-session` therefore re-execs itself through `systemd-cat` before
+writing anything, which redirects fds 1 and 2 for the script and every descendant
+it spawns. `--level-prefix=true` is passed explicitly: the `<3>`/`<4>`/`<6>`
+prefixes the script emits are what make `journalctl -p err -u greetd` selective,
+and unprefixed output (gamescope's own) lands at info, so it cannot drown the
+triage command.
+
+If you are debugging a session that predates this fix, you do not need a terminal
+on the target — the journal is persistent (`Storage=persistent`). Shut down
+cleanly with a **short press of the power button** (`HandlePowerKey` is at its
+default, `poweroff`), then read the stick offline from WSL. A hard power-off
+loses the tail of the journal, which is exactly the part you want:
+
+```bash
+mount -o ro /dev/sdX4 /mnt/rootfs   # NOT -o norecovery: the XFS log must replay,
+                                    # or system.journal reads as missing entirely
+journalctl -D /mnt/rootfs/ostree/deploy/default/var/log/journal -p err --no-pager
+```
+
+**`agetty: failed to get terminal attributes: Input/output error`, every ~10 seconds.**
+`console=ttyS0` on the kernel command line makes systemd-getty-generator
+instantiate `serial-getty@ttyS0`; on hardware with no serial port agetty fails
+and systemd restarts it forever. Harmless on screen, corrosive in
+`journalctl -p err`, which is the appliance's only triage command. The image
+masks the unit rather than dropping the karg, because QEMU still wants kernel
+output on serial (ADR 0003) — masking removes the login prompt, which D6 forbids
+anyway, and keeps the console.
+
 **Target drops into dracut emergency mode ("Entering emergency mode", repeating).**
 The initramfs cannot assemble the root filesystem. On a bootc/ostree system the
 usual cause is a missing `ostree` dracut module: its `check()` looks for a live
