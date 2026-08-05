@@ -122,7 +122,11 @@ Still to do, on hardware:
 - [ ] Flash hunt: plymouth must hold the splash until the compositor's first frame (`plymouth deactivate` sequencing in the session script)
 - [x] ~~Journald persistent logging on, so silence never costs debuggability~~ **Pulled forward into M0.** A target became unreachable over SSH and took its journal with it on shutdown, making the failure undiagnosable. On a machine whose entire premise is no visible text and no terminal, volatile logs are not a Phase-2 nicety — they are the only way any failure before login is knowable. Shipped as `/usr/lib/systemd/journald.conf.d/10-marwanos-persistent.conf`
 
+- [ ] **Close the 31-second black gap between the splash ending and the shell's first frame.** Measured off the 2026-08-05 film: splash reaches the external display at t=15 s, that display goes black at t=43 s, the laptop panel keeps the splash until t=59 s, the grid draws at t=74 s. The blackout is *staggered* — one display taken, then the other sixteen seconds later — which is the shape of a handover that happened twice, i.e. what a gamescope readiness timeout followed by a cage start would look like from a camera. Exit criterion 1 allows 15 s for the whole boot, so this gap alone is twice the budget. Diagnose it from the journal, not the film
+
 **Acceptance:** film the boot with a phone camera. Frame-by-frame: vendor logo → splash → shell, zero frames of text, cursor, or console. Same result on three consecutive cold boots.
+
+The 2026-08-05 run had zero frames of text, cursor or console across all 100 seconds — the silent-boot gate itself held. It is **not** banked as 1 of the 3, for two reasons: it booted from the USB stick rather than an installed target, and `console=ttyS0` is still in the image. Start counting the three after that karg is dropped.
 
 ### M3 — shell skeleton (~1–2 weeks)
 
@@ -147,6 +151,12 @@ Still to do, on hardware:
 - [ ] Loop guard's error screen. The guard itself works — 5 crashes in 60 s stops the respawn — but it holds an empty screen rather than drawing anything. A plymouth-style error frame is still outstanding, and it is the last thing between a broken shell and a black TV with no explanation
 
 Most of this is VM-testable ([ADR 0003](adr/0003-test-targets.md)), and the supervision and `kill -9` gates should be run there first. The couch test is not: it needs the TV over HDMI and a real pad.
+
+**First hardware run (2026-08-05), filmed for 100 s and read frame by frame:**
+
+- [x] **The shell comes up inside the real session, on the real GPU.** The grid draws, the header reads `Player 1  DualSense Wireless Controller`, focus moves between tiles, **A** swaps to the placeholder scene and **B** returns to the grid. That is exit criterion 2 demonstrated on hardware for the first time. Nothing crashed in 100 seconds and no frame of the film contains console text
+- [ ] **Fullscreen at native resolution is NOT met, and the cause is not the desk setup.** The shell was handed one surface covering *both* connected displays and laid itself out across the pair: the header's left end — the `MarwanOS` wordmark from `_build_header()` in `shell/src/shell_root.gd` — rendered on the laptop panel, while the right end of that same `HBoxContainer` (`Player 1  DualSense Wireless Controller`) rendered on the external display, with the grid's first column falling in the gap between the two panels. One row of one container, split across two screens, is not a Godot scaling failure: the scene is intact and `stretch/aspect="keep"` did exactly what it promises. It is the compositor handing the client an output layout spanning every connected display. This is also the strongest evidence available for M1's decision, because the two plans cannot both produce it — gamescope is given `--prefer-output` and drives exactly one connector, while cage has no output selection at all and wlroots enables every output it finds. Confirm against the journal before writing ADR 0005; do not infer the compositor from geometry alone
+- [ ] **Pin the shell to one output.** Two monitors on a gaming machine is the normal case, so this is a defect to fix rather than a configuration to avoid. Under plan A `--prefer-output` already covers it; under plan B there is no compositor-side lever, so the shell has to choose its own screen. `Kiosk._assert_display_policy()` currently sets `MODE_FULLSCREEN` and never touches `Window.current_screen`, and it logs neither the screen count nor the size it ended up with — which is why the geometry above had to be reconstructed from a phone video instead of read out of `journalctl`. Instrument first, then pin
 
 **Acceptance:** navigate the grid from the couch; `kill -9` the shell over SSH → back at the grid in under 3 seconds with no text visible at any point.
 
