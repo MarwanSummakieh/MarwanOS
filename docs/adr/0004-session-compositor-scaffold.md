@@ -32,7 +32,15 @@ superseded by one that names plan B.
 All four packages are in Fedora 43 proper — `greetd` 0.10.3, `gamescope` 3.16.15,
 `cage` 0.2.0, `vulkan-tools` 1.4.321.0 — checked against
 `packages.fedoraproject.org` before any of them was named in a `dnf` line. **No
-COPR is involved and none should be added without an ADR.** Bazzite's
+COPR is involved and none should be added without an ADR.**
+
+> Those versions were read off the web in August 2026 and two have already moved.
+> Measured out of the built image on 2026-08-05: `gamescope-3.16.23-1.fc43`,
+> `cage-0.2.0-3.fc43`, `greetd-0.10.3-6.fc43`, `vulkan-tools-1.4.341.0-1.fc43`.
+> The image is the authority, not this list — re-read it with
+> `podman run --rm --entrypoint rpm <image> -q gamescope cage greetd vulkan-tools`
+> rather than trusting a number written down here. It matters most for gamescope,
+> where flag behaviour is what plan A is being judged on. Bazzite's
 `gamescope-session` is a COPR package upstream; this image does not use it, and
 deliberately does not depend on the COPR that builds it.
 
@@ -124,6 +132,17 @@ CLI is `-d -h -m extend|last -s -v`. There is no equivalent of gamescope's
 is a real difference between the plans, not a detail, and it belongs in the
 decision. (`-s` is cage's "allow VT switching" and is deliberately never passed.)
 
+> **Half of this is wrong, corrected 2026-08-05 — see [ADR 0007](0007-single-display-appliance.md).**
+> The output half stands: `-m last` disables an output by *enumeration order*, not
+> by name, and it switches to a display plugged in mid-session, so it is not an
+> output selector and is deliberately not passed. The GPU half does not stand.
+> wlroots underneath cage reads `WLR_DRM_DEVICES`, which the session now pins to
+> the NVIDIA node — and that turned out to matter more than the missing flag did:
+> left unset, wlroots moves the `boot_vga` device to index 0, which on this chassis
+> is the iGPU, so plan B would have composited on Intel and fed the NVIDIA output
+> by cross-GPU blits. Pinning it also drops the eDP panel from enumeration
+> entirely, which is the 2026-08-05 spanning defect.
+
 **10. The wlroots-on-NVIDIA workarounds are probably obsolete.** Universal Blue
 deleted its `WLR_NO_HARDWARE_CURSORS=1` / `WLR_RENDERER=vulkan` environment file
 in December 2025, in the same release that added driver 590 support. The session
@@ -177,8 +196,8 @@ systemctl is-system-running                        # expect: running
 loginctl list-sessions
 loginctl show-session "$(loginctl list-sessions --no-legend | awk 'NR==1{print $1}')" \
     -p Name -p Class -p Type -p Active -p Seat -p VTNr
-journalctl -b -u greetd -o cat | grep -F 'marwanos-session:'
-journalctl -b -p err -u greetd
+journalctl -b -t marwanos-session -o cat | grep -F 'marwanos-session:'
+journalctl -b -p err -t marwanos-session
 ```
 
 Expect one session, `Name=player`, `Class=user`, `Seat=seat0`, `VTNr=1`,
@@ -203,7 +222,7 @@ These are the ones that decide D4, because starting once is the easy half.
 #   - TV off and on at the remote
 #   - TV input switched away and back
 #   - HDMI unplugged and replugged
-journalctl -b -u greetd -o cat | tail -50
+journalctl -b -t marwanos-session -o cat | tail -50
 
 # the supervision loop (M3's exit criterion 3)
 #
@@ -213,7 +232,7 @@ journalctl -b -u greetd -o cat | tail -50
 # that hits nothing exits nonzero and looks exactly like a pass.
 pkill -9 -u player marwanos-shell  # expect: the client back in under 3 s, no text
 for i in 1 2 3 4 5 6; do pkill -9 -u player marwanos-shell; sleep 1; done
-journalctl -b -u greetd -o cat | grep -F 'not respawning'   # guard must trip
+journalctl -b -t marwanos-session -o cat | grep -F 'not respawning'   # guard must trip
 
 # D5's override path. The override keeps the same basename, so whatever is
 # copied in still runs as marwanos-shell and the restart command is unchanged.

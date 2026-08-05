@@ -17,5 +17,15 @@
 # Wants=display-manager.service. The Containerfile adds the multi-user.target
 # wants link so the session comes up whichever target the image boots to.
 
+# marwanos-panel.service is listed for the same defensive reason as the line
+# below it, not because the preset is what enables it. `systemctl enable` and
+# `systemctl preset` write their symlinks into /etc/systemd/system, and in bootc
+# /etc is three-way merged on upgrade -- so an image that enabled a unit that way
+# would be shipping machine-local state instead of image state. The Containerfile
+# creates the multi-user.target.wants link under /usr/lib itself, exactly as it
+# does for greetd. This line only stops a future `systemctl preset-all` on a
+# target from deciding the unit should be off.
+
 enable greetd.service
+enable marwanos-panel.service
 disable getty@tty1.service

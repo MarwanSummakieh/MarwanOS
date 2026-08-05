@@ -493,13 +493,31 @@ RUN set -euxo pipefail; \
 # instance rather than dropping the karg keeps the kernel console on serial,
 # which is what the QEMU targets actually use, and removes only the login prompt
 # -- which D6 forbids regardless of whether the port exists.
+#
+# marwanos-panel.service gets a hand-made wants symlink under /usr/lib for the
+# same reason greetd's is hand-made: `systemctl enable` and `systemctl preset`
+# write into /etc/systemd/system, and bootc three-way merges /etc on upgrade, so
+# enabling a unit that way ships machine-local state where image state belongs.
+# The unit is still listed in 50-marwanos.preset, which is what stops a future
+# `systemctl preset-all` on a target from turning it back off.
+#
+# /usr/lib/systemd/logind.conf.d is in the find list for the same reason every
+# other entry is: it arrives through os/files/ and therefore lands 0777 from the
+# drvfs bridge, and systemd warns about world-writable configuration on every
+# boot. /usr/lib/systemd/system is deliberately NOT in the list -- it holds the
+# entire base unit set, none of which came through os/files/, and chmodding the
+# directory would force an overlayfs copy-up of hundreds of files into the
+# MarwanOS layer on every build. The one unit that is ours is normalised by name.
 RUN set -euxo pipefail; \
     find /etc/greetd /etc/issue /usr/lib/marwanos /usr/lib/sysusers.d \
          /usr/lib/tmpfiles.d /usr/lib/dracut/dracut.conf.d /usr/lib/bootc \
          /usr/lib/systemd/journald.conf.d /usr/lib/systemd/system-preset \
+         /usr/lib/systemd/logind.conf.d \
          /usr/share/plymouth/themes/marwanos \
          -type f -exec chmod 0644 {} +; \
+    chmod 0644 /usr/lib/systemd/system/marwanos-panel.service; \
     chmod 0755 /usr/lib/marwanos/session/marwanos-session; \
+    chmod 0755 /usr/lib/marwanos/display/panel-policy; \
     systemd-sysusers /usr/lib/sysusers.d/50-marwanos.conf; \
     for g in video render input; do \
         gid="$(getent group "$g" | cut -d: -f3)"; \
@@ -511,9 +529,14 @@ RUN set -euxo pipefail; \
     mkdir -p /usr/lib/systemd/system/multi-user.target.wants; \
     ln -sf ../greetd.service \
         /usr/lib/systemd/system/multi-user.target.wants/greetd.service; \
+    ln -sf ../marwanos-panel.service \
+        /usr/lib/systemd/system/multi-user.target.wants/marwanos-panel.service; \
     systemctl --no-reload mask getty@tty1.service autovt@tty1.service \
                                serial-getty@ttyS0.service; \
     test -x /usr/lib/marwanos/session/marwanos-session; \
+    test -x /usr/lib/marwanos/display/panel-policy; \
+    test -L /usr/lib/systemd/system/multi-user.target.wants/marwanos-panel.service; \
+    test -f /usr/lib/systemd/logind.conf.d/50-marwanos-lid.conf; \
     test -L /etc/systemd/system/getty@tty1.service; \
     test -L /etc/systemd/system/autovt@tty1.service; \
     test -L /etc/systemd/system/serial-getty@ttyS0.service; \

@@ -2,12 +2,12 @@ extends Node
 
 ## Logging, aimed at the journal rather than at a screen.
 ##
-## The appliance shows no text by design (D6), so `journalctl -b -u greetd` is
+## The appliance shows no text by design (D6), so `journalctl -b -t marwanos-session` is
 ## the only place a shell failure can be read. marwanos-session re-execs itself
 ## through `systemd-cat --level-prefix=true` and the client inherits those
 ## descriptors, which means systemd parses a leading `<N>` on each line as a
 ## syslog priority: `<3>` err, `<4>` warning, `<6>` info. Emitting the prefixes
-## here is what makes `journalctl -p err -u greetd` surface a shell problem
+## here is what makes `journalctl -p err -t marwanos-session` surface a shell problem
 ## instead of burying it under engine chatter, and it puts the shell's lines in
 ## the same shape as the session script's.
 ##

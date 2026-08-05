@@ -21,7 +21,8 @@ shell/
     shell_root.tscn      the one scene file: an empty Control with a script
   src/
     shell_log.gd         journal-shaped logging          (autoload ShellLog)
-    kiosk.gd             fullscreen, borderless, no cursor (autoload Kiosk)
+    kiosk.gd             fullscreen, borderless, no cursor; logs the display
+                         geometry it was actually handed (autoload Kiosk)
     shell_input.gd       the six actions, at device -1   (autoload ShellInput)
     player_one.gd        which pad is player one, hotplug (autoload PlayerOne)
     focus_repeat.gd      held-direction repeat for a pad (autoload FocusRepeat)
@@ -183,12 +184,26 @@ plans D4 is still choosing between:
 | | gamescope (plan A) | cage (plan B) |
 |---|---|---|
 | session exports | `DISPLAY`, no `WAYLAND_DISPLAY` | `WAYLAND_DISPLAY` |
-| Godot lands on | XWayland | native Wayland |
-| why that is the good path | it is the path `--force-windows-fullscreen` manages, and the one Steam games take | wlroots is the best-tested Godot Wayland target there is |
+| Godot lands on | XWayland | **XWayland, measured** — see below |
+| why that is the good path | it is the path `--force-windows-fullscreen` manages, and the one Steam games take | it is the same path, which at least means one tested code path rather than two |
 
-Pinning the driver would break whichever plan it was not pinned for. Re-check this
-on every Godot bump: upstream pressure to default `linuxbsd` to Wayland is
-increasing, and a future 4.x could flip it under us.
+**The plan B column used to say "native Wayland", and a VM run on 2026-08-05
+disproved it.** With cage demonstrably the compositor — gamescope had failed its
+readiness handshake and the session had logged the fallback — the shell reported
+`DisplayServer.get_name() == "X11"`. cage ships with Xwayland and Godot's linuxbsd
+driver order puts x11 first, so `DISPLAY` exists and wins. The shell therefore runs
+on XWayland under **both** plans.
+
+Two consequences worth carrying. The good one: there is one display-server code
+path in production, not two, so a Godot Wayland-backend bug cannot be what
+distinguishes the plans. The bad one: `get_name()` is not the free D4 oracle it
+looked like — it says `X11` either way, and the session script's own log line is
+what names the compositor.
+
+Pinning the driver would still break whichever plan it was not pinned for. Re-check
+this on every Godot bump: upstream pressure to default `linuxbsd` to Wayland is
+increasing, and a future 4.x could flip it under us — at which point `Kiosk`'s
+`display ...: server ...` line is what says so.
 
 ### Fullscreen, borderless and no cursor are asserted by the client
 
@@ -201,6 +216,28 @@ Window mode is `MODE_FULLSCREEN`, not `MODE_EXCLUSIVE_FULLSCREEN`: exclusive ask
 for a videomode change, which under either compositor is not the client's job —
 gamescope has already negotiated a mode with the TV and written it to `modes.cfg`.
 
+**Which screen is not the client's job either, and it cannot be.** The 2026-08-05
+hardware run found the shell laid out across two displays at once, and the obvious
+fix — have the shell pick a screen — does not exist. Godot's Wayland
+`window_set_current_screen` is an empty function whose body is a comment saying the
+protocol does not support it; Godot's Wayland fullscreen request passes a null
+output; cage discards the output argument and sizes to the bounding box of every
+output anyway; and under gamescope's XWayland there is exactly one screen. There is
+no `DisplayServer.screen_get_name()` in 4.7.1 either, so the shell could not map
+`HDMI-A-1` to an index in principle. The single screen is delivered below the
+shell — see [ADR 0007](../docs/adr/0007-single-display-appliance.md).
+
+What `kiosk.gd` does instead is **measure**, twice — at startup and again after the
+first frame, because a Wayland compositor's first configure can arrive after
+`_ready`. It logs the display server name, the adapter, the screen count, every
+screen's size and position, the window's size and mode, the viewport and stretch
+settings, the pillarbox the stretch is about to produce, and at `<3>` a line naming
+the fault outright when the window matches no single screen. `DisplayServer.get_name()`
+is `X11` under gamescope's XWayland and `Wayland` under cage, which makes the shell
+a second, independent witness for D4 at the cost of one log line. On 2026-08-05 the
+only evidence of the defect was a phone camera pointed at a laptop; that is the
+thing these lines exist to make unnecessary.
+
 The engine's boot splash is off. It is a Godot logo on a white field, and M2's
 acceptance test is a frame-by-frame camera recording with zero frames of anything
 but the plymouth splash and the shell.
@@ -210,7 +247,7 @@ but the plymouth splash and the shell.
 `ShellLog.info/warn/error` prefix every line with `<6>`/`<4>`/`<3>`.
 `marwanos-session` re-execs itself through `systemd-cat --level-prefix=true`, the
 client inherits those descriptors, and systemd parses the prefix as a syslog
-priority. So `journalctl -p err -u greetd` surfaces a shell problem instead of
+priority. So `journalctl -p err -t marwanos-session` surfaces a shell problem instead of
 burying it under engine chatter, and the shell's lines look like the session
 script's. In the editor the prefixes are visible noise in the Output panel; that is
 the right trade, because the desk has a console and the appliance does not.
@@ -377,7 +414,7 @@ on a target cannot quietly become what the appliance ships.
 One line settles all three, because the session logs which path it took:
 
 ```bash
-ssh root@<target> "journalctl -b -u greetd -o cat | grep -F 'starting client'"
+ssh root@<target> "journalctl -b -t marwanos-session -o cat | grep -F 'starting client'"
 ```
 
 And to tell a shell problem from a compositor problem, push `vkcube` through the
@@ -418,7 +455,10 @@ versions with different DualSense handling.
 ADR 0004 step 6 schedules this, and it is worth doing before any more UI is built
 on top. In this order:
 
-1. Does the window come up fullscreen at the TV's native mode?
+1. Does the window come up fullscreen at the TV's native mode? On 2026-08-05 it did
+   not — it spanned both displays. `Kiosk` now logs the geometry, so read
+   `journalctl -b -t marwanos-session -o cat | grep marwanos-shell` rather than
+   judging this by eye.
 2. Does the gamepad enumerate, and does it survive an unplug/replug? The header
    status line and the `player one` lines in the journal answer this without
    guessing.
