@@ -292,7 +292,7 @@ done
 echo "==> BLS entry $(basename "$ENTRY")"
 echo "    kernel    ${BLS_LINUX} ($(mib "$(file_size "$KERNEL")"))"
 echo "    initramfs ${BLS_INITRDS[*]} ($(mib "$INITRD_BYTES"))"
-echo "    cmdline   ${BLS_CMDLINE}"
+echo "    from BLS  ${BLS_CMDLINE}"
 
 # ---------------------------------------------------------------------------
 # 2. Build the UKI
@@ -332,6 +332,15 @@ if [[ -n "${EXTRA_KARGS:-}" ]]; then
     echo "    extra     ${EXTRA_KARGS}"
     BLS_CMDLINE="${BLS_CMDLINE} ${EXTRA_KARGS}"
 fi
+
+# Printed here and not above, because the line above is what the IMAGE supplied
+# and this is what the MACHINE will boot with. They differ whenever EXTRA_KARGS is
+# set, and on a target with no boot menu and no way to edit a command line, a
+# printed cmdline that is not the real one is worse than none: it invites someone
+# to conclude an argument landed when it did not. Read this line, not that one --
+# or read it back out of the finished binary with
+#   objcopy -O binary --only-section=.cmdline <esp>/EFI/BOOT/BOOTX64.EFI /dev/stdout
+echo "    booting   ${BLS_CMDLINE}"
 
 # Via a file rather than an argument: the command line contains '=' and spaces
 # and is the one thing here that must survive verbatim -- it carries root=UUID

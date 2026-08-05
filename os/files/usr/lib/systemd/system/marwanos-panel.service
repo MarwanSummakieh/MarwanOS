@@ -1,0 +1,36 @@
+[Unit]
+Description=MarwanOS internal panel policy
+Documentation=file:///usr/lib/marwanos/display/panel-policy
+# Before the compositor, so the panel's state is simply what gamescope or cage
+# enumerates rather than something they would have to be told about afterwards.
+# See the script's header for why the sysfs write's own uevent is not relied on.
+Before=greetd.service
+
+# No ConditionPathExists* of any kind, deliberately. A condition failure is
+# logged at debug level and the unit is silently skipped, which on this appliance
+# is indistinguishable from success -- and in the re-enable direction a skipped
+# unit means a dark development machine. The script reports what it found
+# instead.
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+# A hung oneshot ordered Before=greetd.service stalls the boot for
+# DefaultTimeoutStartSec (90s on Fedora) with nothing on screen and no console to
+# say why. Ten seconds is far more than a handful of sysfs writes can need.
+TimeoutStartSec=10
+ExecStart=/usr/lib/marwanos/display/panel-policy
+# stdout/stderr default to the journal and SyslogLevelPrefix defaults to true, so
+# the script's <6>/<4> prefixes are parsed as priorities exactly as they are in
+# marwanos-session -- which is what makes `journalctl -p err` a triage surface on
+# a machine that shows no text.
+
+[Install]
+WantedBy=multi-user.target
+# Measured 2026-08-05: `systemctl is-enabled marwanos-panel.service` answers
+# "disabled" on a running target while `is-active` answers "active" and the unit
+# has plainly done its work. That is not a fault. The Containerfile puts the
+# multi-user.target.wants symlink under /usr/lib rather than /etc -- deliberately,
+# because bootc three-way merges /etc -- and is-enabled reports on the /etc config
+# path. The symlink still pulls the unit in. Judge this unit by `is-active` and by
+# `journalctl -u marwanos-panel.service`, never by is-enabled.

@@ -502,8 +502,16 @@ the appliance ships.
 One line settles all three, because the session logs which path it took:
 
 ```bash
-ssh root@<target> "journalctl -b -u greetd -o cat | grep -F 'starting client'"
+ssh root@<target> "journalctl -b -t marwanos-session -o cat | grep -F 'starting client'"
 ```
+
+`-t marwanos-session`, not `-u greetd`, and the difference is not cosmetic. greetd
+creates a real logind session, so the session's processes are moved out of
+`greetd.service`'s cgroup into `session-cN.scope` and `-u greetd` does not match
+them. What does match is the syslog identifier `systemd-cat` stamps on the
+session and every descendant that inherits its descriptors — the script, the
+compositor, and the shell all land under the one tag. `-u greetd` is still the
+right selector for greetd's *own* failures, such as refusing to start.
 
 ### Telling a shell problem from a compositor problem
 
@@ -517,7 +525,7 @@ ssh root@<target> 'cp /usr/bin/vkcube /var/marwanos/dev-shell/marwanos-shell; pk
 
 A spinning cube means the compositor took the display and the shell is the
 problem. No cube means the fault is below the shell, and
-`journalctl -b -p err -u greetd` is where the session says so.
+`journalctl -b -p err -t marwanos-session` is where the session says so.
 
 Undo it by removing the override, not the flag:
 
@@ -528,6 +536,45 @@ ssh root@<target> 'rm -f /var/marwanos/dev-shell/marwanos-shell; pkill -9 -u pla
 Removing the flag works today and will stop being safe: M4 makes `devmode` gate
 sshd as well, so on a finished image `rm /var/marwanos/devmode` on a machine you
 are connected to closes the door behind you. Do not build the habit.
+
+### Reading the display layout off a target
+
+MarwanOS drives exactly one screen and the laptop's internal panel is not it
+([ADR 0007](adr/0007-single-display-appliance.md)). The kernel argument that
+darkens the panel is a plain string match against the connector's name with **no
+error path** — a token naming a connector that does not exist is a silent no-op,
+indistinguishable from never having shipped it. So the name gets read off the
+machine before it is written into `kargs.d`, never guessed:
+
+```bash
+ssh root@<target> 'for c in /sys/class/drm/card*-*; do [ -e "$c/status" ] || continue; printf "%-24s %-14s %s\n" "${c##*/}" "$(cat "$c/status")" "$(cat "$c/enabled")"; done; echo ---; for d in /sys/class/drm/card*; do case "${d##*/}" in *-*) continue;; esac; [ -e "$d/device/driver" ] || continue; printf "%-8s %s\n" "${d##*/}" "$(basename "$(readlink -f "$d/device/driver")")"; done'
+```
+
+The karg token is the part **after** the `cardN-` prefix: sysfs names the node
+`card0-eDP-1` while the kernel matches on `eDP-1`. Expect one internal connector,
+`connected`, on the `i915` card. If it comes back `eDP-2` or `LVDS-1`, the token
+changes with it. Check that nvidia-drm does not also expose an `eDP-*` connector —
+one token covers every DRM device in the machine, which is fine here but should be
+a decision rather than a surprise. And note the NVIDIA card's HDMI/DP connector
+names while you are there: they should already be in `MARWANOS_OUTPUT_CONNECTOR`.
+
+After the karg is flashed, three things confirm it landed, and it is all three or
+none:
+
+```bash
+ssh root@<target> 'grep -o "video=[^ ]*" /proc/cmdline; dmesg | grep -i forcing; cat /sys/class/drm/card*-eDP-1/status'
+```
+
+If `video=` is missing from `/proc/cmdline`, the UKI was not rebuilt. `bootc
+upgrade` does **not** change what a stick boots — `make-usb.sh` bakes the command
+line into the UKI's `.cmdline` section, and that is what the firmware loads.
+
+To undo it live, without a reboot and without a boot menu (there isn't one — see
+`make-usb.sh`'s header):
+
+```bash
+ssh root@<target> 'echo detect > /sys/class/drm/card0-eDP-1/status'
+```
 
 ---
 
@@ -628,7 +675,7 @@ debugging surface in the same stroke. A `StandardOutput=` drop-in on
 itself. `marwanos-session` therefore re-execs itself through `systemd-cat` before
 writing anything, which redirects fds 1 and 2 for the script and every descendant
 it spawns. `--level-prefix=true` is passed explicitly: the `<3>`/`<4>`/`<6>`
-prefixes the script emits are what make `journalctl -p err -u greetd` selective,
+prefixes the script emits are what make `journalctl -p err -t marwanos-session` selective,
 and unprefixed output (gamescope's own) lands at info, so it cannot drown the
 triage command.
 

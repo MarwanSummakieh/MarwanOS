@@ -12,7 +12,7 @@
 # greetd runs this as `/bin/sh -c "exec /usr/lib/marwanos/session/marwanos-session"`,
 # as `player`. The messages below carry systemd's <N> syslog-level prefixes: <3>
 # is err, <4> is warning, <6> is info, so a failure is findable with
-# `journalctl -p err -u greetd` rather than being one more line of chatter in a
+# `journalctl -p err -t marwanos-session` rather than being one more line of chatter in a
 # machine that by design shows no text.
 #
 # That only works because of the re-exec through systemd-cat below. This script
@@ -42,7 +42,7 @@ readonly SELF="/usr/lib/marwanos/session/marwanos-session"
 # gamescope, cage, the client -- inherits journal-connected descriptors.
 #
 # --level-prefix=true is explicit rather than left to the default, because
-# `journalctl -p err -u greetd` finding anything depends entirely on the <N>
+# `journalctl -p err -t marwanos-session` finding anything depends entirely on the <N>
 # prefixes still being parsed.
 #
 # stdin is deliberately not redirected: fds 1 and 2 are what leaked to the panel,
@@ -101,7 +101,29 @@ readonly CRASH_WINDOW=60
 
 # How long to wait for the compositor to say it is up. See start_gamescope for
 # why this is a readiness handshake and not a check for a nonzero exit.
-readonly READY_TIMEOUT=5
+#
+# Twenty, not five. gamescope writes the ready fd very late: after Vulkan device
+# and ICD enumeration, after the DRM open and the initial modeset, after wlserver,
+# and after every Xwayland server it starts is up. On a cold boot from USB with a
+# cold page cache and the NVIDIA ICD, five seconds does not reliably cover that --
+# and the 2026-08-05 film's own timings say this machine is slow in exactly that
+# window: the external display goes black at t=43s and the shell's first frame
+# lands at t=74s.
+#
+# The trade is real and it is the right way round. On a genuine plan A failure the
+# screen is black for twenty seconds instead of five before plan B starts. This
+# appliance's acceptance criterion is "no text", not "fast", and a plan A that was
+# merely slow being scored as a plan A that failed would decide D4 wrongly -- which
+# is a decision the whole of M1 exists to get right.
+readonly READY_TIMEOUT=20
+
+# Separate constant, deliberately, even though it started life as the same five
+# seconds. It answers a different question: not "how long may gamescope take to
+# report ready" but "did cage get far enough that its exit represents a session
+# ending rather than a compositor that never came up". Raising the first to 20
+# must not silently raise the second, because that would turn a cage which ran for
+# fifteen seconds and died from "restart it" into "hold a black screen forever".
+readonly CAGE_MIN_RUNTIME=5
 
 # The TV is the display this project is about; the laptop's internal panel is
 # not, and on a hybrid chassis the HDMI port is what routes to the dGPU.
@@ -152,6 +174,56 @@ detect_nvidia_vk_device() {
         read -r _device < "$_dev/device"
         printf '%s:%s\n' "${_vendor#0x}" "${_device#0x}"
         return 0
+    done
+    return 1
+}
+
+# The NVIDIA card's primary DRM node, enumerated rather than hardcoded. Card
+# numbering is not stable across boots, so /dev/dri/card1 is a guess that works
+# until the day it does not, on a machine with no console to say what happened.
+detect_nvidia_drm_node() {
+    for _dev in /sys/bus/pci/devices/*; do
+        [ -r "$_dev/vendor" ] || continue
+        read -r _vendor < "$_dev/vendor"
+        [ "$_vendor" = "0x10de" ] || continue
+        for _n in "$_dev"/drm/card[0-9]*; do
+            [ -e "$_n" ] || continue
+            printf '/dev/dri/%s\n' "${_n##*/}"
+            return 0
+        done
+    done
+    return 1
+}
+
+# Is there a display attached to the NVIDIA card specifically?
+#
+# The scoping is the whole point, and it is why this is not a one-line glob over
+# /sys/class/drm/card*-HDMI-A-*. That glob would answer "yes" for an HDMI port on
+# the Intel card while the NVIDIA card has nothing attached -- and that is exactly
+# the case that must NOT pin wlroots to the NVIDIA node. Pinning wlroots to a
+# device with zero connectors is the worst outcome available: wlroots' DRM
+# backend_start() scans connectors and returns true with no count check, cage has
+# no zero-output check of its own, and cage only terminates on losing an output
+# that was NESTED. The result is a live compositor, a running client, no picture,
+# and no nonzero exit for greetd to react to. A silent hang is worse than a black
+# screen that ends.
+#
+# DP-* is in the list because MARWANOS_OUTPUT_CONNECTOR already claims it.
+nvidia_output_connected() {
+    for _dev in /sys/bus/pci/devices/*; do
+        [ -r "$_dev/vendor" ] || continue
+        read -r _vendor < "$_dev/vendor"
+        [ "$_vendor" = "0x10de" ] || continue
+        for _s in "$_dev"/drm/card[0-9]*/card[0-9]*-*/status; do
+            [ -r "$_s" ] || continue
+            _name="${_s%/status}"; _name="${_name##*/}"; _name="${_name#*-}"
+            case "$_name" in
+                HDMI-A-*|HDMI-B-*|DP-*|DVI-*) ;;
+                *) continue ;;
+            esac
+            read -r _st < "$_s"
+            [ "$_st" = "connected" ] && return 0
+        done
     done
     return 1
 }
@@ -314,7 +386,16 @@ start_gamescope() {
     rm -f "$_fifo"
 
     if [ -z "$_handshake" ]; then
-        err "gamescope did not report ready within ${READY_TIMEOUT}s -- falling back to cage (plan B)"
+        # Which of the two it was decides whether raising READY_TIMEOUT again
+        # would help, and the message this replaced could not tell them apart.
+        # Still running means slow or wedged; already gone means it died during
+        # startup and the timeout is irrelevant.
+        if kill -0 "$GAMESCOPE_PID" 2>/dev/null; then
+            err "gamescope is still running after ${READY_TIMEOUT}s but never reported ready -- falling back to cage (plan B)"
+            err "that is slow-or-wedged, not crashed: the ready fd is written only after every Xwayland server is up"
+        else
+            err "gamescope exited before reporting ready within ${READY_TIMEOUT}s -- falling back to cage (plan B)"
+        fi
         err "if this is reproducible on hardware, that is the M1 decision: see docs/adr/0004"
         stop_gamescope
         return 1
@@ -360,9 +441,15 @@ start_gamescope() {
 # that leaves the session is exactly the reachable escape hatch D6 forbids.
 # -d drops client-side decorations.
 #
-# cage has no equivalent of --prefer-output or --prefer-vk-device. On a hybrid
-# laptop driving a TV that is not a detail -- plan B cannot be told which output
-# or which GPU to use -- and it is part of what the M1 decision weighs.
+# cage has no equivalent of --prefer-output. It has `-m last`, which is a display
+# mode rather than an output selector: it disables output->link.next after a head
+# insertion, i.e. "whichever output wlroots happened to enumerate before this
+# one", which nothing in this image controls -- and it switches to a newly plugged
+# display mid-session, taking the TV away. It is not passed. The GPU half IS
+# addressable, one level down: wlroots reads WLR_DRM_DEVICES, which the
+# environment block below exports when the NVIDIA card has a display attached.
+# On a hybrid laptop driving a TV that difference is part of what the M1 decision
+# weighs.
 #
 # Not exec'd, deliberately. exec would replace this script, so cage failing to
 # start would become the session's exit status, greetd would restart the session
@@ -379,7 +466,7 @@ start_cage() {
 
     # A cage that dies immediately never came up at all. One that ran for a
     # while ended a real session, and letting greetd restart that is correct.
-    [ "$_cage_ran" -ge "$READY_TIMEOUT" ]
+    [ "$_cage_ran" -ge "$CAGE_MIN_RUNTIME" ]
 }
 
 # Both plans failed to take the display. Returning here would hand control back
@@ -455,10 +542,61 @@ mkdir -p "$(dirname "$GAMESCOPE_MODE_SAVE_FILE")"
 
 VK_DEVICE="$(detect_nvidia_vk_device || true)"
 if [ -n "$VK_DEVICE" ]; then
-    log "pinning compositor to NVIDIA vulkan device $VK_DEVICE"
+    # "will be asked to prefer", and "(plan A only)", because the previous wording
+    # claimed a pin this script does not have. gamescope's --prefer-vk-device is a
+    # preference, not a pin: if the NVIDIA ICD fails to enumerate, gamescope takes
+    # whatever device it did find and says nothing about it. And start_cage reads
+    # neither this variable nor MARWANOS_OUTPUT_CONNECTOR, so under plan B the old
+    # line advertised a pin that was never applied -- misleading in exactly the
+    # journal someone reads when the wrong GPU rendered.
+    log "gamescope will be asked to prefer NVIDIA vulkan device $VK_DEVICE (plan A only)"
 else
     warn "no NVIDIA PCI display device found; the compositor will choose a device itself"
     warn "on this chassis that may be the Intel iGPU, which would make any M1 result meaningless"
+fi
+
+# Pre-flight, and it is logging rather than control flow on purpose.
+#
+# gamescope with zero connected connectors on the device it opened is a FALSE
+# GREEN: it logs that it cannot find any connected connector, unsets the connector
+# and the mode, publishes a wlserver output described as a virtual screen, and
+# returns success -- so it stays up, writes the ready fd, and the cage fallback
+# never fires. With the internal panel disabled and no TV attached, that is
+# exactly the state this appliance boots into. The session cannot fix it, but a
+# black screen that says why in the journal is a different object from a black
+# screen that reports healthy.
+if nvidia_output_connected; then
+    log "an external display is connected to the NVIDIA card"
+else
+    err "no display connected to the NVIDIA card -- the compositor will come up with no picture"
+    err "gamescope reports success in this state (virtual screen), so a green session here means nothing"
+fi
+
+# Plan B only. cage has no --prefer-output and no --prefer-vk-device (ADR 0004
+# finding 9), but wlroots underneath it reads WLR_DRM_DEVICES, and pinning that to
+# the NVIDIA node buys two separate things.
+#
+# One: it drops the Intel device -- and with it the internal eDP panel -- from
+# wlroots' enumeration entirely, so there is one output and no layout to extend a
+# surface across. That is the 2026-08-05 defect, and this is the deterministic,
+# name-independent backstop for a `video=<internal>:d` karg that silently matched
+# nothing, which is a failure mode with no other warning.
+#
+# Two, and this is the one nobody was looking for: with it unset,
+# wlr_session_find_gpus() reads the PCI boot_vga sysattr and moves that device to
+# index 0, which on a hybrid laptop is the iGPU. wlroots would then composite the
+# shell on Intel and treat the NVIDIA HDMI output as a secondary device fed by
+# cross-GPU blits -- the long-standing broken wlroots multi-GPU path -- which is
+# the same wrong-card false green ADR 0003 warns about, arriving through a door
+# plan B has no flag to close.
+#
+# Gated on nvidia_output_connected: see that function's comment for why pinning a
+# device with no connectors is a silent hang rather than an honest failure.
+if nvidia_output_connected && DRM_NODE="$(detect_nvidia_drm_node)"; then
+    export WLR_DRM_DEVICES="$DRM_NODE"
+    log "pinning wlroots to $WLR_DRM_DEVICES (plan B only)"
+else
+    warn "not pinning WLR_DRM_DEVICES; wlroots will auto-probe and may composite on the iGPU"
 fi
 
 COMPOSITOR="gamescope"

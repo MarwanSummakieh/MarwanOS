@@ -72,6 +72,12 @@ window/stretch/aspect="keep"
 ; --force-windows-fullscreen actually manages); under cage, WAYLAND_DISPLAY is set
 ; and Fedora 43's cage does not depend on Xwayland at all. Pinning the driver
 ; would break whichever plan it was not pinned for.
+;
+; Measured 2026-08-05, correcting the sentence above: with cage running, the shell
+; still reported server "X11". Fedora 43's cage ships Xwayland and Godot's linuxbsd
+; driver order puts x11 first, so DISPLAY exists under plan B too and the shell
+; lands on XWayland under BOTH plans. Kiosk logs the server name every boot, which
+; is what would catch this changing.
 
 [gui]
 
