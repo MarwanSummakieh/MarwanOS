@@ -1,0 +1,114 @@
+#!/bin/sh
+#
+# Assert, once per boot and before any compositor exists, whether the internal
+# panel is driven at all.
+#
+# This is a RE-ENABLE policy, not a disable policy, and the direction is the
+# whole design. `video=<internal>:d` in kargs.d is what darkens the panel for
+# real, from connector-init time inside i915's probe -- early enough that fbcon
+# and plymouth never land there. That argument is unconditional, and
+# unconditional on a laptop that is also the development machine is a brick risk.
+# This script is the conditional half: with no external display attached it
+# writes "detect", which clears connector->force and brings the panel back a few
+# seconds into boot.
+#
+# So when this unit does not run, the APPLIANCE is still correct -- panel off --
+# and only the development case degrades to "no picture", which is recoverable by
+# pulling the stick. A script that disabled the panel instead would fail the
+# other way round, and the other way round is the one that cannot be undone from
+# a machine with no console.
+#
+# The "off" branch is not dead weight even though the karg has already done it.
+# `video=` is a plain string match against connector->name with no error path, so
+# a token naming a connector that does not exist is a silent no-op --
+# indistinguishable from never having shipped the change. This globs eDP/LVDS/DSI
+# rather than trusting one name, which makes a wrong karg partially self-healing
+# once the real root is mounted. It is also what makes this file useful BEFORE
+# the karg ships at all: on its own it takes the lid panel out of the
+# compositor's output layout, which is the 2026-08-05 spanning defect.
+#
+# Ordering (Before=greetd.service) is the design, not a nicety. status_store()
+# sets connector->force and calls fill_modes(); the status change does reach
+# userspace, but asynchronously, via mode_config.output_poll_work ->
+# drm_kms_helper_hotplug_event(). Running before the compositor means the state
+# is simply what gamescope or cage enumerates, and nothing here depends on that
+# workqueue landing first.
+#
+# Exits 0 unconditionally. A failure here must never block greetd on a machine
+# with no console.
+set -u
+
+TAG="marwanos-panel"
+log()  { printf '<6>%s: %s\n' "$TAG" "$*" >&2; }
+warn() { printf '<4>%s: %s\n' "$TAG" "$*" >&2; }
+
+# Any external display on any card. Deliberately NOT scoped to one GPU, unlike
+# the WLR_DRM_DEVICES gate in marwanos-session: the question here is only "does
+# this machine have a screen that is not the lid", and an Intel-side HDMI counts
+# for that.
+external_connected() {
+    for _s in /sys/class/drm/card*-*/status; do
+        [ -r "$_s" ] || continue
+        _n="${_s%/status}"; _n="${_n##*/}"; _n="${_n#*-}"
+        case "$_n" in
+            HDMI-A-*|HDMI-B-*|DP-*|DVI-*|VGA-*) ;;
+            *) continue ;;
+        esac
+        read -r _st < "$_s"
+        [ "$_st" = "connected" ] && return 0
+    done
+    return 1
+}
+
+# The whole DRM layout, once per boot, before anything is changed.
+#
+# This is not decoration. The kernel argument that darkens the panel for real is a
+# plain string match against connector->name with no error path, so it has to be
+# written with the machine's actual connector name -- and the only ways to learn
+# that name were an ssh session (ethernet only on this chassis: ADR 0004 records
+# wifi failing to associate) or a guess. Logging it here means one boot of this
+# image answers the question from the journal, on a machine with no console, with
+# no network and nothing typed.
+#
+# Read the karg token off the SECOND field below, not the first: sysfs names the
+# node card0-eDP-1 while the kernel matches on eDP-1.
+for _s in /sys/class/drm/card*-*/status; do
+    [ -r "$_s" ] || continue
+    _node="${_s%/status}"
+    _sysfs="${_node##*/}"
+    _conn="${_sysfs#*-}"
+    read -r _st < "$_s"
+    _en="unknown"
+    [ -r "$_node/enabled" ] && read -r _en < "$_node/enabled"
+    _drv="unknown"
+    _card="${_sysfs%%-*}"
+    if [ -e "/sys/class/drm/$_card/device/driver" ]; then
+        _drv="$(readlink -f "/sys/class/drm/$_card/device/driver")"
+        _drv="${_drv##*/}"
+    fi
+    log "connector $_sysfs -> karg name '$_conn' status=$_st enabled=$_en driver=$_drv"
+done
+
+if external_connected; then
+    WANT="off"
+    log "external display connected; the internal panel is not this appliance's screen"
+else
+    WANT="detect"
+    warn "no external display connected; re-enabling the internal panel so this machine stays usable"
+fi
+
+FOUND=0
+for _c in /sys/class/drm/card*-eDP-* /sys/class/drm/card*-LVDS-* \
+          /sys/class/drm/card*-DSI-*; do
+    [ -w "$_c/status" ] || continue
+    FOUND=$((FOUND + 1))
+    if printf '%s\n' "$WANT" > "$_c/status"; then
+        log "${_c##*/} status <- $WANT"
+    else
+        warn "could not write $WANT to ${_c##*/}/status"
+    fi
+done
+
+[ "$FOUND" -gt 0 ] || warn "no internal panel connector found under /sys/class/drm"
+
+exit 0

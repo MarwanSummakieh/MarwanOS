@@ -18,6 +18,7 @@ on:
     branches: [main]
     paths:
       - "os/**"
+      - "shell/**"
       - ".github/workflows/build.yml"
   workflow_dispatch:
 
@@ -62,7 +63,7 @@ jobs:
             --build-arg "MARWANOS_VERSION=${{ steps.ref.outputs.version }}" \
             --build-arg "MARWANOS_COMMIT=$(git rev-parse --short HEAD)" \
             --build-arg "MARWANOS_BUILD_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-            os/
+            .
 
       - name: Log in to GHCR
         run: |

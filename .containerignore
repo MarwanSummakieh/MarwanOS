@@ -1,0 +1,35 @@
+# The build context is the repo root as of M3 -- the Containerfile needs both
+# os/files/ and shell/, so it cannot be scoped to os/ any more.
+#
+# That makes this file load-bearing rather than tidiness. The context is read
+# over the Windows filesystem bridge from /mnt/c, where every byte is slow, and
+# .git alone is several MB and only grows. dev-setup.md's claim that the context
+# is "a few KB" was true when it was os/ and is only still true because of this.
+
+.git/
+.github/
+.claude/
+docs/
+scripts/
+out/
+README.md
+LICENSE
+
+# Disk images: multi-GB each, and make-installer.sh writes them into the repo's
+# out/ by default.
+*.raw
+*.img
+*.vhdx
+*.qcow2
+*.vmdk
+*.iso
+
+# A developer's local Godot import cache. The shell-export stage removes this
+# after COPY as well, so this is the belt to that braces: an editor-generated
+# .godot/ carries absolute paths from the machine that made it.
+shell/.godot/
+shell/.import/
+
+# Editor and OS noise
+.DS_Store
+*.swp
