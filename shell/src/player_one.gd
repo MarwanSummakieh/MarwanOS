@@ -93,6 +93,28 @@ func _consider(candidate: int) -> void:
 
 	var candidate_guid := Input.get_joy_guid(candidate)
 	var candidate_name := Input.get_joy_name(candidate)
+
+	# An empty GUID is a slot mid-teardown, not a controller. Measured on
+	# hardware 2026-08-05: a plain unplug/replug produced a connect event on a
+	# slot whose GUID and name both came back "", which the code below then
+	# treated as a DIFFERENT controller claiming player one -- overwriting the
+	# very identity `guid` exists to preserve across a disconnect. The tell was
+	# the replug logging "player one claimed" instead of "player one reconnected".
+	#
+	# It self-corrected with one pad in the room, so nothing was visible from the
+	# couch. With two, _reconcile()'s "prefer the controller we already know" pass
+	# has an empty string to match against and claims whichever pad it finds
+	# first, which is the wrong one half the time.
+	#
+	# Returning is safe rather than merely conservative: the reconcile timer comes
+	# back within RECONCILE_SECONDS, and by then the slot either has a real GUID or
+	# is gone. The cost of being wrong here is at most a one-second delay in
+	# claiming; the cost of accepting the empty string is losing the identity.
+	if candidate_guid.is_empty():
+		ShellLog.warn("ignoring claim from index %d with no GUID (slot is mid-teardown, not a controller)"
+			% candidate)
+		return
+
 	var previous_guid := guid
 
 	device = candidate

@@ -17,6 +17,12 @@ the user's only computer — so a reboot costs them their working environment, a
 hardware boot has to be planned to collect every outstanding answer at once.
 
 Image on the stick: `MarwanOS (Phase 0, 0.0.202608051352)`, built from `21151fc`.
+It is still on disk at **`/var/tmp/panel-out/image/disk.raw`** — that exact path, not
+the `/var/tmp/out` the recipe below uses as its example. `OUT_DIR` has been a different
+directory per build (`m1-out`, `m3-out`, `usb-out`, `panel-out`), so the only reliable
+way to tell which image a stick came from is to match its filesystem UUIDs against the
+ones below. Write the path down whenever a stick is flashed; recovering it costs a scan
+of every candidate build.
 
 ```
 GPT        : main + backup tables both intact
@@ -25,6 +31,29 @@ boot UUID  : 6487cf7d-409b-4d85-bcfe-581fac9f98ab
 root UUID  : 010befbf-c39a-4792-8600-9fcd8b22929f
 BOOTX64.EFI: checksum-identical to the image
 ```
+
+Re-check the stick at any time without writing to it:
+
+```sh
+VERIFY_ONLY=yes scripts/flash-usb.sh /var/tmp/panel-out/image/disk.raw /dev/sde
+```
+
+### This stick has already been corrupted once, and repaired
+
+**2026-08-05.** The stick was left plugged into the Windows side (`usbipd` state
+`Shared`, not attached), so Windows owned it and rewrote its GPT — header moved to
+point the partition entry array at LBA 2016, then it lost the race before writing the
+array there. Main partition table CRC invalid, kernel enumerated zero partitions, the
+Predator would not boot it. The filesystems were never touched.
+
+`sgdisk -e /dev/sde` rebuilt both tables from the surviving backup copy, and the stick
+re-passed the verifier above with identical UUIDs and an identical `BOOTX64.EFI`. No
+reflash was needed, and none ever is for this failure — both copies of the entry array
+survive it.
+
+The lesson is the one already in `scripts/flash-usb.sh`, now paid for twice: **pull the
+stick physically while it is still attached to WSL.** Leaving it plugged in is enough
+to lose it; Windows does not need to be asked.
 
 ### After the boot, read the journal off the stick
 
@@ -110,6 +139,10 @@ EXTRA_KARGS="usb-storage.quirks=346d:5678:u console=tty0" OUT_DIR=/var/tmp/out \
     scripts/make-usb.sh                               # NOT optional -- see below
 FLASH_CONFIRM=yes scripts/flash-usb.sh /var/tmp/out/image/disk.raw /dev/sde
 ```
+
+`OUT_DIR` above is an example, not the truth for any stick that already exists — each
+build has used its own directory. The current stick's image is at
+`/var/tmp/panel-out/image/disk.raw`; see the top of this file.
 
 `make-usb.sh` is the step that is easy to skip and fatal to skip: this Predator's
 firmware cannot run GRUB from USB, so a raw bootc image boots perfectly in QEMU and

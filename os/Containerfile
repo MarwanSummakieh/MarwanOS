@@ -348,7 +348,37 @@ RUN --mount=type=cache,dst=/var/cache/libdnf5,sharing=locked \
         grep -q "$lib" /tmp/ldcache.txt \
             || { echo "the Godot shell dlopens $lib and it is not installed"; exit 1; }; \
     done; \
-    rm -f /tmp/ldcache.txt
+    rm -f /tmp/ldcache.txt; \
+    setcap cap_sys_nice+ep /usr/bin/gamescope; \
+    getcap /usr/bin/gamescope | grep -q cap_sys_nice \
+        || { echo "setcap did not take on gamescope"; exit 1; }
+
+# CAP_SYS_NICE on gamescope, and it is a measured fix rather than a precaution.
+#
+# Without it gamescope says so itself, on every boot:
+#
+#   No CAP_SYS_NICE, falling back to regular-priority compute and threads.
+#   Performance will be affected.
+#
+# It wants the capability to put its compute and render threads at real-time
+# priority; denied that, frame pacing degrades, and the appliance is perceptibly
+# laggy in exactly the way the 2026-08-05 hardware runs felt (ADR 0005, open
+# question 3).
+#
+# It has to be set at build time. /usr is composefs-backed and read-only at
+# runtime, so this is one of the few classes of fix that cannot be tested by
+# injecting into a deployment on a stick -- it needs a rebuild, which is why it
+# was batched with the other rebuild-only changes rather than shipped alone.
+#
+# File capabilities live in the security.capability xattr, which ostree records
+# and composefs carries through; the getcap assertion above is what proves the
+# build actually set it rather than silently no-op'ing on a filesystem that
+# dropped the xattr.
+#
+# This is a real privilege grant, narrowly scoped: CAP_SYS_NICE permits raising
+# scheduling priority and nothing else -- no device access, no filesystem
+# override, no capability to gain further capabilities. gamescope is already the
+# DRM master on this machine, so it is not a new trust boundary.
 
 # Everything under os/files lands in the image here, and the position is
 # deliberate: it must be before the dracut run below, because
@@ -494,6 +524,25 @@ RUN set -euxo pipefail; \
 # which is what the QEMU targets actually use, and removes only the login prompt
 # -- which D6 forbids regardless of whether the port exists.
 #
+# xdg-desktop-portal-gtk is masked for the same reason serial-getty@ttyS0 is: it
+# fails repeatedly at err priority in the one place this appliance can be
+# triaged. Measured on the 2026-08-05 hardware runs -- eleven consecutive
+# "Failed to start xdg-desktop-portal-gtk.service - Portal service (GTK/GNOME
+# implementation)" lines inside a single session. It is a GNOME desktop portal
+# pulled in as a transitive dependency; there is no desktop here, nothing asks it
+# for a file chooser, and it has no business starting.
+#
+# The mask is a /dev/null symlink over the unit in /usr/lib/systemd/user rather
+# than `systemctl --global mask`, which writes into /etc/systemd/user -- and /etc
+# is three-way merged on upgrade, so that would ship machine-local state where
+# image state belongs. This is a USER unit: it is the per-user systemd that was
+# failing to start it, so masking the system instance would have done nothing.
+#
+# It is masked rather than removed because the package is a dependency of things
+# that are wanted; uninstalling it would drag out more than it fixes. Note the
+# portal is also D-Bus activatable, so this stops systemd starting it but not a
+# client that asks dbus for it by name -- nothing in this image does.
+#
 # marwanos-panel.service gets a hand-made wants symlink under /usr/lib for the
 # same reason greetd's is hand-made: `systemctl enable` and `systemctl preset`
 # write into /etc/systemd/system, and bootc three-way merges /etc on upgrade, so
@@ -533,6 +582,7 @@ RUN set -euxo pipefail; \
         /usr/lib/systemd/system/multi-user.target.wants/marwanos-panel.service; \
     systemctl --no-reload mask getty@tty1.service autovt@tty1.service \
                                serial-getty@ttyS0.service; \
+    ln -sf /dev/null /usr/lib/systemd/user/xdg-desktop-portal-gtk.service; \
     test -x /usr/lib/marwanos/session/marwanos-session; \
     test -x /usr/lib/marwanos/display/panel-policy; \
     test -L /usr/lib/systemd/system/multi-user.target.wants/marwanos-panel.service; \
@@ -540,6 +590,7 @@ RUN set -euxo pipefail; \
     test -L /etc/systemd/system/getty@tty1.service; \
     test -L /etc/systemd/system/autovt@tty1.service; \
     test -L /etc/systemd/system/serial-getty@ttyS0.service; \
+    test "$(readlink /usr/lib/systemd/user/xdg-desktop-portal-gtk.service)" = /dev/null; \
     getent passwd player; \
     test "$(id -u player)" = "1000"; \
     id -nG player | grep -qw video; \
