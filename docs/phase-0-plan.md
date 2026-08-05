@@ -126,13 +126,27 @@ Still to do, on hardware:
 
 ### M3 — shell skeleton (~1–2 weeks)
 
-- [ ] Godot 4 project in `shell/`: tile grid, gamepad focus navigation (d-pad + left stick), A activates, B backs out
-- [ ] TV-safe margins (~5% inset) and 10-foot type sizes from the first commit
-- [ ] "Launch" swaps to a placeholder fullscreen scene and returns — the seam where Phase 1's real launching bolts in
-- [ ] Controller hotplug: unplug/replug mid-session keeps working; explicit player-1 notion
-- [ ] Headless Godot export in the image build (no hand-exported binaries in git)
-- [ ] Session script: run shell in a supervision loop — crash → instant restart, never a TTY; loop guard (5 crashes in 60 s → plymouth-style error screen, not a text dump)
-- [ ] D5 dev override path working: `scp` new build, restart process, iterate in seconds
+Scaffolded (2026-08-05, unverified anywhere — see [ADR 0006](adr/0006-shell-skeleton.md)):
+
+- [x] Godot 4 project in `shell/`: tile grid, gamepad focus navigation (d-pad + left stick), A activates, B backs out. All six actions are defined explicitly at device `-1`: Godot's defaults bind no joypad button to `ui_accept` or `ui_cancel` at all, and its directional defaults answer only joypad index 0
+- [x] Focus repeat implemented in the shell. There is no key repeat for a gamepad in any Godot 4.x — a held d-pad moves focus exactly once — so a grid without it reads as broken from the couch while every line of code works as designed
+- [x] TV-safe margins (~5% inset: 96 px horizontal, 54 px vertical at 1080p) and 10-foot type sizes from the first commit
+- [x] "Launch" swaps to a placeholder fullscreen scene and returns — the seam where Phase 1's real launching bolts in
+- [x] Headless Godot export in the image build, from a checksummed upstream release (4.7.1; the `GODOT_*` ARGs in `os/Containerfile` are the source of truth) in a builder stage that never ships. No hand-exported binaries in git, and no Godot editor in the appliance — it is a GDScript interpreter, which is the same category of object D6 exists to keep off the machine
+- [x] Single self-contained executable (`embed_pck=true`), so `BAKED_CLIENT` and D5's override path both stay one `[ -x ]` check and the session script needs no restructuring
+- [x] Session script: `BAKED_CLIENT` now points at `/usr/lib/marwanos/shell/marwanos-shell`. The supervision loop, crash-window guard and dev override were scaffolded in M1 and are unchanged
+- [x] The shell sets its own fullscreen mode and hides its own cursor rather than relying on `--force-windows-fullscreen` and `--hide-cursor-delay 1`, which are plan A only — cage has no equivalent of either ([ADR 0004](adr/0004-session-compositor-scaffold.md) finding 9)
+
+Still to do, on hardware:
+
+- [ ] **The shell comes up at all, inside the real session.** This is [ADR 0004](adr/0004-session-compositor-scaffold.md)'s step 6 and it should run before any more UI is built on top: fullscreen at the TV's native mode, correct scaling, no Wayland protocol error in the journal
+- [ ] Controller hotplug: unplug/replug mid-session keeps working; explicit player-1 notion, keyed on the joypad GUID rather than the index. Godot's hotplug signals have open upstream bugs in both directions, so the fallback behaviour is a hardware answer
+- [ ] Navigate the grid from the couch — the one gate no automated check can stand in for. Focus visibility and the ~5% inset are judged against the TV, like M2's camera test
+- [ ] `kill -9` the shell over SSH → back at the grid in under 3 seconds, no text at any point
+- [ ] D5 dev override exercised end to end on a running target: `scp`, restart, iterate in seconds
+- [ ] Loop guard's error screen. The guard itself works — 5 crashes in 60 s stops the respawn — but it holds an empty screen rather than drawing anything. A plymouth-style error frame is still outstanding, and it is the last thing between a broken shell and a black TV with no explanation
+
+Most of this is VM-testable ([ADR 0003](adr/0003-test-targets.md)), and the supervision and `kill -9` gates should be run there first. The couch test is not: it needs the TV over HDMI and a real pad.
 
 **Acceptance:** navigate the grid from the couch; `kill -9` the shell over SSH → back at the grid in under 3 seconds with no text visible at any point.
 
@@ -162,7 +176,7 @@ Still to do, on hardware:
 | GPT image written to larger media | **The real cause of the bare-metal boot failures (2026-08-03), after two wrong convictions** (missing initramfs drivers; the stick's UAS implementation — both disproved by test). Image-sized GPT on a bigger stick = backup header mid-disk + undersized protective MBR: firmware and Windows tolerate it, **GRUB and the Linux kernel reject the whole partition table**, and Windows' auto-"repair" then corrupts the main table CRC. QEMU can never reproduce it: virtual disks are exactly image-sized | `scripts/flash-usb.sh`: write from WSL over usbipd, `sgdisk -e`, then verify partitions/UUIDs/boot-binary checksum before any reboot. Never flash with Rufus alone. Diagnostic signature: `blkid` sees `PTTYPE=gpt` but `lsblk` shows zero partitions |
 | First boot after an upgrade wedges in early userspace | **Seen once during M0.** Hung just after `modprobe@loop.service`, with no "A start job is running" line — so not a unit timeout. A hard power-cycle booted the same deployment cleanly with SELinux still Enforcing | Unexplained and unreproduced; recorded rather than diagnosed. If it recurs, capture it properly — the working theory that it was SELinux labelling from the non-SELinux CI runner was **disproved**, since the CI image boots Enforcing without `enforcing=0`. Matters far more on bare metal, where a wedged boot has no `vmconnect` to inspect it |
 | Plymouth→compositor handoff flashes text/black | Fails the silent-boot gate | Known-fiddly; budgeted in M2; camera test is the arbiter, not eyeballs |
-| Godot Wayland quirks under gamescope/cage (focus, scaling, gamepad) | Shell unusable in session though fine on desktop | Test the Godot export inside the real session in M1 week 1, before building UI on top |
+| Godot Wayland quirks under gamescope/cage (focus, scaling, gamepad) | Shell unusable in session though fine on desktop | Test the Godot export inside the real session in M1 week 1, before building UI on top. **Narrowed by M3:** the export keeps Godot's default x11 driver and relies on its documented two-way fallback, so it runs on XWayland under plan A and native Wayland under plan B with no per-compositor code. Gamepad input bypasses the compositor entirely, so a controller failure is never evidence about D4 ([ADR 0006](adr/0006-shell-skeleton.md)) |
 | ublue base image churn breaks a build | Deploy loop breaks randomly | Pin by digest; bump deliberately, never track `latest` |
 | Boot >15 s on the actual hardware | Fails exit criterion 1 | `systemd-analyze blame` early (M2), not at the end; NVMe target box if possible |
 | 326 MB initramfs (measured) eats the boot budget | Seconds of decompression before anything draws | `--no-hostonly` is correct for a portable image, but M2 should measure the cost and consider trimming dracut modules. Do not switch to hostonly — it would bake the build machine's hardware into the image |

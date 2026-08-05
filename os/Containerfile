@@ -21,8 +21,200 @@ ARG AKMODS_IMAGE="ghcr.io/ublue-os/akmods-nvidia-open"
 ARG AKMODS_TAG="main-43"
 ARG AKMODS_DIGEST="sha256:b73a194f8d9d74bc2bca763be2dedde193b77956f4c83cb5eb3978150ff1f11f"
 
+# Godot, pinned by exact version plus checksums for the same reason the base is
+# pinned by digest: the engine exports the shell at build time, so the engine
+# version is an input to what ships, and an engine that moved under us would
+# change the appliance's only UI without any change on this side.
+#
+# `dnf install godot` is not the shortcut it looks like. Fedora's package is
+# unpinned within F43 -- it has already gone 4.4 -> 4.4.1 -> 4.5 inside one
+# release -- and it ships no export templates, which exist only as the official
+# ~1.2 GB .tpz. The download is unavoidable either way, so the official binary,
+# which is what the published checksums actually cover, is the honest choice.
+#
+# The two sums are the release's own SHA512-SUMS.txt, which upstream does not
+# sign (godot-proposals#6042 is open), so copying them here is
+# trust-on-first-use at the moment they were resolved -- the same trust model as
+# BASE_DIGEST, which also came from one unauthenticated response. Resolved
+# 2026-08-05 against godot-builds 4.7.1-stable (published 2026-07-14); 4.7.2-rc1
+# exists, so expect a bump, and a bump must move the version and BOTH sums
+# together or the export fails on a template/editor mismatch.
+#
+# These sit at the top rather than with the MARWANOS_* block at the bottom, and
+# that is not a contradiction of the comment down there. An ARG declared before
+# the first FROM is only visible to a stage that redeclares it; these four are
+# redeclared only inside shell-export, so they cannot reach the dnf or dracut
+# layers of the final stage. They also change once per deliberate Godot bump,
+# which is exactly the churn profile BASE_DIGEST has.
+ARG GODOT_VERSION="4.7.1"
+ARG GODOT_RELEASE="stable"
+ARG GODOT_EDITOR_SHA512="4ccdab7a48eeccbe8819a2fc1f6262f8d72065d98601bcb3743fcbd7ebd39f373758a788ee3293a05ec5b2c48538266c437404312e372225cd2df273945a2de9"
+ARG GODOT_TEMPLATES_SHA512="afcc83d8d3d298038f19c58744a0d660fa75dd4baa33cb55d1011bb2565a2a8c2381728924564cb909e37c205a23f21b521b23bd057993afd43ae4da0b2f9d47"
+
 
 FROM ${AKMODS_IMAGE}:${AKMODS_TAG}@${AKMODS_DIGEST} AS akmods
+
+
+# M3's shell, exported here and nowhere else. No hand-exported binary is ever
+# committed, which is the M3 checklist item this stage exists to satisfy.
+#
+# The toolchain stays in a discarded stage, and size is the smaller half of the
+# reason: the editor binary is a GDScript interpreter with --script and
+# --headless, which is to say a general-purpose arbitrary-code-execution engine,
+# on a machine whose entire thesis (D6) is that no such thing is reachable. It
+# is the same category of object as a shell. Only the exported binary crosses
+# into the image.
+#
+# The base is reused rather than a fresh fedora tag so this adds no second
+# multi-GB pull and no third digest anyone has to remember to bump. Nothing here
+# needs the X11 or Wayland stacks: official Godot builds are compiled with
+# use_sowrap=yes, so every display, audio and input library is dlopen'd at
+# runtime by the *exported* binary rather than linked into the editor.
+FROM ${BASE_IMAGE}:${BASE_TAG}@${BASE_DIGEST} AS shell-export
+
+ARG GODOT_VERSION
+ARG GODOT_RELEASE
+ARG GODOT_EDITOR_SHA512
+ARG GODOT_TEMPLATES_SHA512
+
+# Godot finds its editor data and its export templates through XDG, defaulting
+# under $HOME. Naming all three removes any dependence on HOME being set or
+# writable, which is otherwise a silent source of "no export template found" in
+# a container build -- the export then fails for a reason that has nothing to do
+# with the project.
+#
+# /godot rather than /opt/godot, and not as a style preference: in an ostree
+# base /opt is a SYMLINK to /var/opt, the same trap as /usr/local. `install -d`
+# mkdirs every path component, hits the symlink, and dies with "cannot create
+# directory '/opt': File exists" -- after the 1.2 GB download has already been
+# paid. A top-level directory in a stage that gets discarded owes nothing to
+# FHS convention.
+ENV XDG_DATA_HOME=/godot/data \
+    XDG_CONFIG_HOME=/godot/config \
+    XDG_CACHE_HOME=/godot/cache
+
+# unzip only. curl is already here as curl-minimal, and `dnf install curl` does
+# not no-op on that -- it tries to swap the two packages and fails on the
+# conflict. Asserted instead.
+RUN --mount=type=cache,dst=/var/cache/libdnf5,sharing=locked \
+    set -euxo pipefail; \
+    dnf -y install unzip; \
+    dnf clean all; \
+    command -v curl >/dev/null
+
+# Fetch, verify, unpack. The cache mount keeps the 1.2 GB .tpz across local
+# rebuilds even though none of it is committed to a shipped layer. CI is cold
+# every time and pays the download once per build; if that ever hurts, the
+# escalation is a separately published toolchain image consumed by digest, not a
+# looser pin.
+#
+# The cached copy is checksummed BEFORE it is trusted, and a mismatch deletes
+# and refetches rather than failing forever. A corrupt or half-written cache
+# entry would otherwise wedge every later build behind an error that points at
+# the pin instead of at the cache.
+#
+# Two members come out of the .tpz and no more. It carries a template for every
+# platform Godot supports, so unpacking it whole would put ~2 GB into this stage
+# for nothing.
+#
+# The version.txt check is the direct analogue of bump-base.sh's base/akmods
+# pair check: an export template from a different release than the editor is a
+# hard export failure, so the pair is asserted rather than assumed to have been
+# bumped together.
+RUN --mount=type=cache,dst=/godot-dl,sharing=locked \
+    set -euxo pipefail; \
+    base_url="https://github.com/godotengine/godot-builds/releases/download/${GODOT_VERSION}-${GODOT_RELEASE}"; \
+    editor_zip="Godot_v${GODOT_VERSION}-${GODOT_RELEASE}_linux.x86_64.zip"; \
+    templates_tpz="Godot_v${GODOT_VERSION}-${GODOT_RELEASE}_export_templates.tpz"; \
+    for spec in "${editor_zip} ${GODOT_EDITOR_SHA512}" \
+                "${templates_tpz} ${GODOT_TEMPLATES_SHA512}"; do \
+        set -- ${spec}; \
+        if ! printf '%s  %s\n' "$2" "/godot-dl/$1" | sha512sum -c --status - 2>/dev/null; then \
+            rm -f "/godot-dl/$1"; \
+            curl -fsSL --retry 3 -o "/godot-dl/$1" "${base_url}/$1"; \
+            printf '%s  %s\n' "$2" "/godot-dl/$1" | sha512sum -c -; \
+        fi; \
+    done; \
+    install -d /godot/bin; \
+    unzip -j -o "/godot-dl/${editor_zip}" -d /godot/bin; \
+    mv /godot/bin/Godot_v*_linux.x86_64 /godot/bin/godot; \
+    chmod 0755 /godot/bin/godot; \
+    unzip -j -o "/godot-dl/${templates_tpz}" \
+        'templates/version.txt' 'templates/linux_release.x86_64' -d /tmp/tpl; \
+    tpl_version="$(cat /tmp/tpl/version.txt)"; \
+    test "${tpl_version}" = "${GODOT_VERSION}.${GODOT_RELEASE}"; \
+    install -D -m 0755 /tmp/tpl/linux_release.x86_64 \
+        "${XDG_DATA_HOME}/godot/export_templates/${tpl_version}/linux_release.x86_64"; \
+    rm -rf /tmp/tpl; \
+    /godot/bin/godot --version > /tmp/godot-version.txt; \
+    grep -q "^${GODOT_VERSION}\.${GODOT_RELEASE}\." /tmp/godot-version.txt; \
+    rm -f /tmp/godot-version.txt
+
+# The project arrives last, deliberately. It is the only input a UI change
+# touches, so the dnf install, the 1.2 GB download and the unpack above all stay
+# cached across shell edits -- and because this is a separate stage, none of it
+# reaches the final stage's dnf or dracut layers at all.
+COPY shell/ /build/shell/
+
+# Everything the export depends on, checked before the export runs, so a problem
+# names its own cause instead of surfacing later as a missing or half-working
+# binary on a machine with no console.
+#
+# "Linux" is the contract between this file and shell/export_presets.cfg. It is
+# the preset name --export-release resolves, and Godot's error for an unknown
+# preset does not say which names it does know.
+#
+# binary_format/embed_pck=true is what makes the export ONE file. Off (its
+# default) Godot writes marwanos-shell plus a sibling .pck, and BAKED_CLIENT in
+# the session script and D5's `[ -x "$DEV_CLIENT" ]` are both single paths -- so
+# a preset re-saved in the Godot editor GUI with that box unticked ships a
+# binary whose data was never copied. The .pck assertion after the export is the
+# same guard from the other side.
+#
+# .godot is the import cache and is regenerated below. A copy carried in from a
+# developer's machine is host state with absolute host paths in it, and this
+# build's whole claim is that the binary is a function of the repo.
+RUN set -euxo pipefail; \
+    grep -q '^name="Linux"$' /build/shell/export_presets.cfg; \
+    grep -q '^binary_format/embed_pck=true$' /build/shell/export_presets.cfg; \
+    rm -rf /build/shell/.godot
+
+# Import and export are two steps because only --export-debug and --export-pack
+# are documented to imply an import. Without one, the export fails with "make
+# sure resources have been imported by opening the project in the editor at
+# least once" (godot#71521) -- advice aimed at a human, in a place where there
+# is none.
+#
+# --network=none turns "the export fetches nothing" from a belief into a
+# build-time fact: everything needed is already in this stage and checksummed.
+# The day the shell needs something fetched at export time -- C# would, it needs
+# the mono templates and a NuGet restore -- this gets revisited deliberately
+# rather than deleted in frustration.
+#
+# timeout is not paranoia. godot#95287 is a headless export that hangs forever
+# instead of failing, and a hang on a CI runner burns the whole job budget
+# before failing uselessly.
+RUN --network=none set -euxo pipefail; \
+    timeout 600 /godot/bin/godot --headless --path /build/shell --import
+
+# The export is guarded rather than trusted, because Godot's headless export has
+# a documented history of lying about its own success: godot#83042 returned exit
+# 0 on failure for years, and godot#99284 crashed while still writing a
+# plausible-looking executable. Nothing downstream can tell a good binary from a
+# bad one, and the machine that finds out is a TV showing black.
+#
+# The output keeps the .x86_64 extension Godot's Linux exporter expects and is
+# renamed by the install, rather than fighting the extension check.
+RUN --network=none set -euxo pipefail; \
+    install -d /build/out; \
+    timeout 900 /godot/bin/godot --headless --path /build/shell \
+        --export-release "Linux" /build/out/marwanos-shell.x86_64; \
+    test -s /build/out/marwanos-shell.x86_64; \
+    test "$(stat -c%s /build/out/marwanos-shell.x86_64)" -gt 20000000; \
+    test "$(od -An -tx1 -N4 /build/out/marwanos-shell.x86_64 | tr -d ' ')" = "7f454c46"; \
+    test ! -e /build/out/marwanos-shell.pck; \
+    install -D -m 0755 /build/out/marwanos-shell.x86_64 \
+        /out/usr/lib/marwanos/shell/marwanos-shell
 
 
 FROM ${BASE_IMAGE}:${BASE_TAG}@${BASE_DIGEST}
@@ -80,11 +272,42 @@ RUN --mount=type=cache,dst=/var/cache/libdnf5,sharing=locked \
 #                    xorg-x11-server-Xwayland, so XWayland arrives with it and
 #                    does not need naming either.
 #   cage 0.2.0       plan B (D4).
-#   vulkan-tools     vkcube, M1's placeholder client.
+#   vulkan-tools     vkcube. Not the shell -- M3's Godot export is -- but kept
+#                    deliberately: it is the one client that can tell a
+#                    compositor problem apart from a shell problem, and ADR
+#                    0004's step-4 commands still use it.
 #   egl-wayland      NVIDIA's EGL external platform for Wayland. Named
 #                    explicitly rather than trusted to arrive as a dependency,
 #                    because a compositor on the NVIDIA driver without it fails
 #                    exactly like the driver problem the spike is looking for.
+#
+# M3's additions, all of them for the exported Godot shell rather than the
+# compositor. Official Godot builds are compiled with use_sowrap=yes, so the
+# binary dlopens these instead of linking them -- which means a missing one
+# never produces a link error, only a feature that silently does not exist.
+# That is why they are named here and asserted below rather than left to arrive
+# as somebody else's dependency:
+#
+#   libX11, libXcursor, libXinerama, libXext, libXrandr, libXrender, libXi
+#                    the X11 CLIENT libraries. gamescope drags in
+#                    xorg-x11-server-Xwayland, but that is the X SERVER, and
+#                    nothing in that chain promises the client side. Under plan
+#                    A the shell runs on gamescope's XWayland, so their absence
+#                    is a shell that starts and never opens a window --
+#                    indistinguishable from a compositor failure, which is the
+#                    exact class of bug ADR 0004 finding 2 was written about.
+#   libxkbcommon     keyboard handling for the same client. It does arrive via
+#                    gamescope and cage today; a dependency that happens to be
+#                    there is not a guarantee.
+#
+# Deliberately NOT added, so nobody adds them later thinking it was an
+# oversight: fontconfig (Godot embeds its own UI font; only SystemFont lookups
+# need it) and any audio library (Phase 0 has no sound, so Godot selects the
+# Dummy audio driver and says so once). Both would grow an appliance whose
+# thesis is that nothing extra is reachable, and both are M4 audit questions
+# rather than things to pre-empt. Gamepad input needs neither: it goes to
+# /dev/input/event* directly through libudev, which systemd-libs already
+# provides, and the player account is already in the input group.
 #
 # gamescope Recommends mesa-vulkan-drivers and weak dependencies are on by
 # default, so this laptop ends up with two Vulkan ICDs installed. That is
@@ -92,6 +315,14 @@ RUN --mount=type=cache,dst=/var/cache/libdnf5,sharing=locked \
 # wrong card available to pick, which is the false-green the plan's risk table
 # and ADR 0003 both warn about. The session script pins the device by PCI id
 # rather than trimming the recommend.
+#
+# The loop at the end is the regression guard for the dlopen'd set, and it
+# covers two libraries nothing above installs directly: libudev, without which
+# SDL3 (which is what Godot 4.5+ uses for gamepads) falls back to polling and
+# controller hotplug stops working -- an explicit M3 checklist item that would
+# still pass any test where the pad was plugged in at boot; and libvulkan, the
+# loader every renderer path here goes through. ldconfig writes to a file rather
+# than a pipe for the same SIGPIPE reason the initramfs greps below spell out.
 RUN --mount=type=cache,dst=/var/cache/libdnf5,sharing=locked \
     set -euxo pipefail; \
     dnf -y install \
@@ -100,8 +331,24 @@ RUN --mount=type=cache,dst=/var/cache/libdnf5,sharing=locked \
         cage \
         vulkan-tools \
         egl-wayland \
-        plymouth-plugin-script; \
-    dnf clean all
+        plymouth-plugin-script \
+        libX11 \
+        libXcursor \
+        libXinerama \
+        libXext \
+        libXrandr \
+        libXrender \
+        libXi \
+        libxkbcommon; \
+    dnf clean all; \
+    ldconfig -p > /tmp/ldcache.txt; \
+    for lib in libX11.so.6 libXcursor.so.1 libXinerama.so.1 libXext.so.6 \
+               libXrandr.so.2 libXrender.so.1 libXi.so.6 libxkbcommon.so.0 \
+               libudev.so.1 libvulkan.so.1; do \
+        grep -q "$lib" /tmp/ldcache.txt \
+            || { echo "the Godot shell dlopens $lib and it is not installed"; exit 1; }; \
+    done; \
+    rm -f /tmp/ldcache.txt
 
 # Everything under os/files lands in the image here, and the position is
 # deliberate: it must be before the dracut run below, because
@@ -115,7 +362,17 @@ RUN --mount=type=cache,dst=/var/cache/libdnf5,sharing=locked \
 # drop-in there can change what the initramfs contains -- but it is why a config
 # edit rebuilds slower than a version bump, which still only touches the three
 # cheap layers at the bottom.
-COPY files/ /
+#
+# The source path is os/files rather than files because M3 moved the build
+# context from os/ to the repo root. It had to move: the Godot project lives at
+# shell/ (phase-0 M3, and phase-1 puts daemon/ and proto/ beside it), a COPY
+# cannot reach outside its context, and doing it now costs three one-line edits
+# instead of also moving shell/ later. The context is passed in
+# scripts/build-push.sh and .github/workflows/build.yml; that workflow's paths:
+# filter must list shell/** as well, or a shell edit stops triggering CI with
+# nothing anywhere to say so. The repo root also needs a .containerignore --
+# .git alone is 7 MB and this context is read over drvfs from /mnt/c.
+COPY os/files/ /
 
 # The nvidia kmod is built against the base's kernel but the initramfs shipped
 # in the base predates it. Without this regen, plymouth has no NVIDIA driver to
@@ -265,6 +522,35 @@ RUN set -euxo pipefail; \
     id -nG player | grep -qw video; \
     id -nG player | grep -qw render; \
     id -nG player | grep -qw input
+
+# M3's shell, from the shell-export stage. The position is load-bearing in both
+# directions and both failures are quiet ones.
+#
+# It has to be AFTER the session-wiring RUN above, because that RUN's find
+# recurses through /usr/lib/marwanos and chmods every file to 0644. Placed any
+# earlier, this binary loses its executable bit, resolve_client hands
+# supervise_client a path that fails `[ -x ]`, the session logs "missing or not
+# executable" and holds -- a black TV on a machine with no console. Same family
+# as the greetd EACCES failure ADR 0004 finding 6 records, one level down.
+#
+# For the same reason /usr/lib/marwanos/shell must never be added to that find
+# list. Nothing here comes through os/files, so it never arrives 0777 from the
+# drvfs bridge and needs none of the normalisation that list exists for.
+#
+# It has to be BEFORE the MARWANOS_* ARGs below, because those change on every
+# single build and a layer declared after them is re-committed every time. This
+# one is ~90 MB, so below the ARGs a version bump would re-copy it and every
+# `bootc upgrade` would transfer it. Above them, the measured 70 s warm rebuild
+# is unchanged and only a real shell edit moves these bytes.
+#
+# The mode comes from the `install -m 0755` in shell-export, which COPY --from
+# preserves. If the bit is ever missing here the fix is the placement above, not
+# a chmod added underneath.
+COPY --from=shell-export /out/ /
+
+RUN set -euxo pipefail; \
+    test -x /usr/lib/marwanos/shell/marwanos-shell; \
+    test -s /usr/lib/marwanos/shell/marwanos-shell
 
 # These ARGs are declared here, not at the top, and the placement is load-bearing.
 # A changed ARG invalidates every layer after its declaration. MARWANOS_VERSION

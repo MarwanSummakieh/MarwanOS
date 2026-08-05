@@ -48,7 +48,7 @@ podman build \
     --build-arg "MARWANOS_VERSION=${VERSION}" \
     --build-arg "MARWANOS_COMMIT=${COMMIT}" \
     --build-arg "MARWANOS_BUILD_DATE=${BUILD_DATE}" \
-    "${REPO_ROOT}/os"
+    "${REPO_ROOT}"
 
 if [[ "$PUSH" -eq 0 ]]; then
     echo "==> Built ${IMAGE_REF} (push skipped)"

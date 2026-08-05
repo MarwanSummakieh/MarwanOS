@@ -77,9 +77,22 @@ readonly DEV_CLIENT="/var/marwanos/dev-shell/marwanos-shell"
 # state the image cannot see.
 readonly COMPOSITOR_FILE="/var/marwanos/compositor"
 
-# M1's placeholder. M3 replaces this with the Godot export under
-# /usr/lib/marwanos/shell/; nothing else in this file changes when it does.
-readonly BAKED_CLIENT="/usr/bin/vkcube"
+# The baked client. M1 ran vkcube here; from M3 it is the Godot export that the
+# Containerfile builds in a separate stage and installs at exactly this path.
+#
+# The name is a contract this file cannot enforce and three other places have to
+# honour. The Containerfile installs the export as marwanos-shell; D5's override
+# above is the same basename under /var/marwanos/dev-shell; and the export preset
+# sets binary_format/embed_pck=true so that both of them are one self-contained
+# executable. An export that ships a binary plus a sibling .pck would pass the
+# [ -x ] check in supervise_client, start, and then fail to find its own content
+# -- a black screen indistinguishable from a compositor failure, on a machine
+# with no console to say otherwise.
+#
+# vkcube stays installed. It is still the fastest way to tell a compositor
+# problem apart from a shell problem, and it is what ADR 0004's spike commands
+# use before the shell is trusted.
+readonly BAKED_CLIENT="/usr/lib/marwanos/shell/marwanos-shell"
 
 # M3's loop guard. Five client crashes inside sixty seconds means the client is
 # broken rather than unlucky, and restarting it faster will not fix it.
@@ -254,11 +267,19 @@ start_gamescope() {
     #
     # No --steam, no mangoapp, no HDR: those are the parts of the upstream
     # session that belong to Steam, not to a compositor taking DRM master.
-    # --force-windows-fullscreen is what makes the placeholder satisfy M1's
+    # --force-windows-fullscreen is what makes a placeholder satisfy M1's
     # acceptance wording rather than merely render: vkcube opens a small window
     # by default, and a 500x500 cube in the middle of a black TV proves the
     # compositor works while failing the gate. --hide-cursor-delay 1 is the "no
     # cursor" half of the same gate.
+    #
+    # From M3 the shell sets its own fullscreen mode and hides its own cursor as
+    # well, and that duplication is deliberate rather than sloppy: both flags are
+    # plan A only. cage has no equivalent of either (ADR 0004 finding 9), so a
+    # client that leans on the compositor for fullscreen and a hidden cursor
+    # passes the gate under gamescope and fails it under cage -- which would read
+    # as "Godot is broken under plan B" and is one of the criteria for flipping
+    # the decision. Keep both flags anyway: they still cover anything run by hand.
     set -- \
         --backend drm \
         --prefer-output "$MARWANOS_OUTPUT_CONNECTOR" \
@@ -305,6 +326,21 @@ start_gamescope() {
         return 1
     fi
 
+    # WAYLAND_DISPLAY is deliberately not exported, and that omission is the whole
+    # of how the shell chooses a display server. Godot's default linuxbsd driver
+    # is x11 and it falls back in both directions: with DISPLAY set and
+    # WAYLAND_DISPLAY unset it runs on gamescope's XWayland, which is the path
+    # gamescope's window management -- including --force-windows-fullscreen --
+    # actually acts on; under cage, where DISPLAY does not exist and cage sets
+    # WAYLAND_DISPLAY for its own child, the same binary runs native Wayland on
+    # wlroots. One export, correct under both plans, which is what D4 means when
+    # it says the shell code is identical either way.
+    #
+    # Do not "modernise" this by adding gamescope's --expose-wayland and copying
+    # GAMESCOPE_WAYLAND_DISPLAY into WAYLAND_DISPLAY. It moves the shell onto
+    # gamescope's least-exercised path -- native Wayland clients under gamescope
+    # are a long-standing broken area upstream -- to gain nothing a kiosk with no
+    # decorations, no second window and no clipboard needs.
     DISPLAY="${_handshake%% *}"
     GAMESCOPE_WAYLAND_DISPLAY="${_handshake##* }"
     export DISPLAY GAMESCOPE_WAYLAND_DISPLAY
@@ -401,6 +437,14 @@ mkdir -p "$RUNTIME"
 # controls rather than one it has to infer. A no-op if the layer is not
 # installed, so setting it early costs nothing.
 export ENABLE_GAMESCOPE_WSI=1
+
+# Godot's Wayland backend dlopens libdecor to draw client-side decorations, and
+# upstream documents that loading it has quirks worth avoiding. Neither plan has
+# anything to decorate -- gamescope forces its windows fullscreen, cage runs a
+# single client -- so the code path is risk with no benefit. A no-op under plan A,
+# where the shell talks to XWayland and never reaches the Wayland backend at all,
+# which is why it is set unconditionally rather than per compositor.
+export GODOT_WAYLAND_DISABLE_LIBDECOR=1
 
 # gamescope defaults these under $HOME. Naming them keeps the negotiated mode
 # and the patched EDID somewhere stable across reboots, which matters most for
