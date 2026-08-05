@@ -206,15 +206,21 @@ These are the ones that decide D4, because starting once is the easy half.
 journalctl -b -u greetd -o cat | tail -50
 
 # the supervision loop (M3's exit criterion 3)
-pkill -9 -u player vkcube          # expect: cube back in under 3 s, no text
-for i in 1 2 3 4 5 6; do pkill -9 -u player vkcube; sleep 1; done
+#
+# The process name is the client file's basename. From M3 that is
+# marwanos-shell; on an image built before M3 it is vkcube (updated 2026-08-05
+# with the baked client -- see ADR 0006). Match whichever the image has: a pkill
+# that hits nothing exits nonzero and looks exactly like a pass.
+pkill -9 -u player marwanos-shell  # expect: the client back in under 3 s, no text
+for i in 1 2 3 4 5 6; do pkill -9 -u player marwanos-shell; sleep 1; done
 journalctl -b -u greetd -o cat | grep -F 'not respawning'   # guard must trip
 
-# D5's override path
+# D5's override path. The override keeps the same basename, so whatever is
+# copied in still runs as marwanos-shell and the restart command is unchanged.
 mkdir -p /var/marwanos/dev-shell
 cp /usr/bin/vkcubepp /var/marwanos/dev-shell/marwanos-shell
 touch /var/marwanos/devmode
-pkill -9 -u player vkcube          # expect: vkcubepp comes back instead
+pkill -9 -u player marwanos-shell  # expect: vkcubepp comes back instead
 ```
 
 ### Step 5 — plan B, measured the same way
@@ -234,6 +240,12 @@ Export the M3 skeleton headlessly, drop it at
 winning. Focus, scaling and gamepad input under the real session are what the
 risk table calls out, and finding them broken in M3 is far more expensive than
 finding them broken now.
+
+The skeleton exists as of 2026-08-05 and the image bakes it — see
+[ADR 0006](0006-shell-skeleton.md), which also names what to watch for: a
+`wl_registry` protocol error in the journal is a known Godot-on-minimal-Wayland
+crash family rather than a shell bug, and gamepad input bypasses the compositor
+entirely, so a controller failure here is not evidence about D4.
 
 ## What the first hardware run found (2026-08-03)
 

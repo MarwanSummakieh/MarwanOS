@@ -403,6 +403,134 @@ nvidia-smi
 
 ---
 
+## 6. Iterating the shell
+
+Three loops. Most of the time lost here is spent in the wrong one.
+
+| Loop | Cost | Use it for |
+|------|------|-----------|
+| Godot editor, F5 | seconds, no target involved | layout, focus order, anything judgeable on a monitor |
+| **D5 override** — export, `scp`, restart the client | ~10 s | anything that has to be judged on the TV, under the real compositor |
+| Full build + `bootc upgrade` | ~70 s build, ~100 MB pull, a reboot | changing what the appliance actually ships |
+
+The shell binary is a separate ~100 MB layer near the bottom of the image, so
+every UI edit that goes through the third loop transfers all of it. That is the
+cost D5 exists to avoid — use the image path for builds a target should keep, not
+for iteration.
+
+### The editor loop
+
+Open `shell/` with **the same Godot version the image pins** — the number is in
+`os/Containerfile`'s `GODOT_VERSION`. The match matters in both directions: a
+newer editor re-saves project files in a format the pinned exporter can refuse,
+and the editor and the export template must be the same version or the export
+fails outright.
+
+The desktop is not the target, and the differences are exactly what M3 is about:
+there is a mouse, the window is not fullscreen unless the project makes it so, and
+a pad plugged into a desktop can enumerate differently from one plugged into the
+appliance. Get closer without leaving the desk by running the exported binary
+under nested gamescope on any Linux machine:
+
+```bash
+gamescope -W 1920 -H 1080 -f -- ./marwanos-shell
+```
+
+That reproduces focus handling and fullscreen behaviour. It does not reproduce the
+TV, DRM master, or the NVIDIA driver — those are the bare-metal target's job.
+
+**The Godot editor is the first GUI tool that authors files into this repo**, and
+it rewrites `project.godot`, `export_presets.cfg` and scene files on its own
+schedule. Look at what it did before committing:
+
+```bash
+git diff --stat && git status --short
+```
+
+Never commit `shell/.godot/` — it is the import cache and the build regenerates
+it. `project.godot` and `export_presets.cfg` must be committed: the export names
+that preset by name, and losing the file breaks the build with an error that
+points somewhere else.
+
+### The on-target loop (D5)
+
+First get a binary. The one the image ships, taken out of the image itself, is the
+honest artefact — same engine version, same preset, no dependency on what happens
+to be installed on your desktop:
+
+```bash
+podman create --name marwanos-extract ghcr.io/marwansummakieh/marwanos:latest
+podman cp marwanos-extract:/usr/lib/marwanos/shell/marwanos-shell ./marwanos-shell
+podman rm marwanos-extract
+```
+
+For a UI change you have not built an image for, export from the editor to the
+same filename instead. That is the fast half of the loop and the reason D5 exists
+— just remember the result came from whatever Godot is on your desktop, not the
+pinned one, so a bug that only reproduces there is suspect.
+
+Then push it and restart the client:
+
+```bash
+scp marwanos-shell root@<target>:/var/marwanos/dev-shell/marwanos-shell
+```
+
+```bash
+ssh root@<target> 'chmod 0755 /var/marwanos/dev-shell/marwanos-shell; touch /var/marwanos/devmode; pkill -9 -u player marwanos-shell'
+```
+
+`resolve_client` runs again on **every** restart rather than once at session
+start, so the supervision loop picks the new binary up about a second later. No
+rebuild, no reboot, and nothing appears on the screen while it happens.
+
+Both halves of the override are required — an executable at the path **and** the
+`devmode` flag — so a dev build left behind on a target cannot quietly become what
+the appliance ships.
+
+**Three ways this looks like "my change did not deploy", all of them silent:**
+
+1. **The binary is not executable.** `resolve_client` tests `[ -x ]` and returns
+   the baked client when it fails, without a word. `scp` does not reliably
+   preserve the mode, and `core.filemode` is false on this repo anyway — `chmod
+   0755` every time.
+2. **`/var/marwanos/devmode` is missing.** Same fallback, same symptom.
+3. **You iterated too fast.** Five client exits inside sixty seconds trips the
+   crash guard, and the session then deliberately holds the compositor up with an
+   empty screen rather than respawning at boot speed. `systemctl restart greetd`
+   clears it.
+
+One line settles all three, because the session logs which path it took:
+
+```bash
+ssh root@<target> "journalctl -b -u greetd -o cat | grep -F 'starting client'"
+```
+
+### Telling a shell problem from a compositor problem
+
+A black TV is ambiguous, and `vkcube` is still in the image precisely to
+disambiguate it. Push it through the same override seam — the client's process
+name comes from the file, so the restart command does not change:
+
+```bash
+ssh root@<target> 'cp /usr/bin/vkcube /var/marwanos/dev-shell/marwanos-shell; pkill -9 -u player marwanos-shell'
+```
+
+A spinning cube means the compositor took the display and the shell is the
+problem. No cube means the fault is below the shell, and
+`journalctl -b -p err -u greetd` is where the session says so.
+
+Undo it by removing the override, not the flag:
+
+```bash
+ssh root@<target> 'rm -f /var/marwanos/dev-shell/marwanos-shell; pkill -9 -u player marwanos-shell'
+```
+
+Removing the flag works today and will stop being safe: M4 makes `devmode` gate
+sshd as well, so on a finished image `rm /var/marwanos/devmode` on a machine you
+are connected to closes the door behind you. Do not build the habit.
+
+---
+
 ## Troubleshooting
 
 **Build fails at the `ls -1 /tmp/rpms/...` check.** Upstream changed the akmods
