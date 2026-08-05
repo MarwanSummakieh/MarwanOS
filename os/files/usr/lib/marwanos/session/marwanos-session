@@ -3,11 +3,21 @@
 # MarwanOS session -- D4 (which compositor), D5 (where the client comes from),
 # and the supervision loop M3 specifies.
 #
-# Plan A is gamescope owning DRM directly; plan B is cage. Which one ships is
-# the decision M1's spike exists to make, and it cannot be made off hardware.
-# Until it is made this script tries A and falls back to B, so a target that
-# cannot do A still reaches a picture instead of a black screen with nothing to
-# read afterwards.
+# The compositor is gamescope, owning DRM directly. That was plan A of the M1
+# spike, and it is now the decision: see docs/adr/0005. cage was plan B, and the
+# fallback to it -- along with the /var/marwanos/compositor lever that let a
+# machine-local file choose between them -- is deliberately gone.
+#
+# Removing it is the point rather than a tidy-up. ADR 0004 said so before the
+# spike ran: an automatic fallback "is right for a spike and wrong for a product:
+# an appliance that silently changes compositor is an appliance whose behaviour
+# cannot be reasoned about from the image." A session that quietly lands on a
+# different compositor is one where every later measurement has to first
+# establish which one it was talking about.
+#
+# So a gamescope that cannot take the display is now a hard stop that says so,
+# not a silent downgrade. On a machine with no console the honest black screen
+# with a journal entry beats the working-but-unexplained one.
 #
 # greetd runs this as `/bin/sh -c "exec /usr/lib/marwanos/session/marwanos-session"`,
 # as `player`. The messages below carry systemd's <N> syslog-level prefixes: <3>
@@ -31,9 +41,9 @@ set -u
 
 readonly TAG="marwanos-session"
 
-# Plan B re-executes this script as cage's client (see start_cage). Hardcoded
-# rather than taken from $0 so the path is the same however the script was
-# entered.
+# Hardcoded rather than taken from $0 so the path is the same however the script
+# was entered. Only the systemd-cat re-exec below uses it now that plan B's
+# cage-runs-this-script-as-its-client path is gone.
 readonly SELF="/usr/lib/marwanos/session/marwanos-session"
 
 # Point stdout and stderr at the journal before anything writes to them. See the
@@ -48,11 +58,12 @@ readonly SELF="/usr/lib/marwanos/session/marwanos-session"
 # stdin is deliberately not redirected: fds 1 and 2 are what leaked to the panel,
 # and the VT on fd 0 is the session's controlling terminal.
 #
-# Guarded two ways. The environment variable makes the re-exec happen once --
-# plan B re-enters this script as cage's client with it already exported, so it
-# cannot stack. And a missing systemd-cat skips the redirect rather than killing
-# the session: text on screen is a failed acceptance criterion, no session at all
-# is a brick.
+# Guarded two ways. The environment variable makes the re-exec happen once, and
+# it is kept even though plan B's re-entry is gone -- greetd's default_session
+# points back at this same script, so a session that ends and is restarted must
+# not stack another systemd-cat. And a missing systemd-cat skips the redirect
+# rather than killing the session: text on screen is a failed acceptance
+# criterion, no session at all is a brick.
 if [ -z "${MARWANOS_SESSION_LOGGING:-}" ] && command -v systemd-cat >/dev/null 2>&1; then
     MARWANOS_SESSION_LOGGING=1
     export MARWANOS_SESSION_LOGGING
@@ -67,15 +78,6 @@ fi
 # ships.
 readonly DEVMODE_FLAG="/var/marwanos/devmode"
 readonly DEV_CLIENT="/var/marwanos/dev-shell/marwanos-shell"
-
-# The A/B lever for M1's spike. Contains "gamescope" or "cage"; absent means try
-# plan A. It exists because comparing the two plans otherwise costs an image
-# rebuild and a reboot each way, and three days does not survive many of those:
-#   echo cage > /var/marwanos/compositor && systemctl restart greetd
-# When M1 produces its decision this file stops being a lever and the choice is
-# baked in, because a machine-local file that silently changes the compositor is
-# state the image cannot see.
-readonly COMPOSITOR_FILE="/var/marwanos/compositor"
 
 # The baked client. M1 ran vkcube here; from M3 it is the Godot export that the
 # Containerfile builds in a separate stage and installs at exactly this path.
@@ -110,20 +112,12 @@ readonly CRASH_WINDOW=60
 # window: the external display goes black at t=43s and the shell's first frame
 # lands at t=74s.
 #
-# The trade is real and it is the right way round. On a genuine plan A failure the
-# screen is black for twenty seconds instead of five before plan B starts. This
-# appliance's acceptance criterion is "no text", not "fast", and a plan A that was
-# merely slow being scored as a plan A that failed would decide D4 wrongly -- which
-# is a decision the whole of M1 exists to get right.
+# The trade is real and it is the right way round. This appliance's acceptance
+# criterion is "no text", not "fast", and a gamescope that was merely slow being
+# scored as one that failed now costs a held black screen rather than a wrong
+# fallback -- which makes the generous timeout matter more, not less, than it did
+# when D4 was still open.
 readonly READY_TIMEOUT=20
-
-# Separate constant, deliberately, even though it started life as the same five
-# seconds. It answers a different question: not "how long may gamescope take to
-# report ready" but "did cage get far enough that its exit represents a session
-# ending rather than a compositor that never came up". Raising the first to 20
-# must not silently raise the second, because that would turn a cage which ran for
-# fifteen seconds and died from "restart it" into "hold a black screen forever".
-readonly CAGE_MIN_RUNTIME=5
 
 # The TV is the display this project is about; the laptop's internal panel is
 # not, and on a hybrid chassis the HDMI port is what routes to the dGPU.
@@ -174,23 +168,6 @@ detect_nvidia_vk_device() {
         read -r _device < "$_dev/device"
         printf '%s:%s\n' "${_vendor#0x}" "${_device#0x}"
         return 0
-    done
-    return 1
-}
-
-# The NVIDIA card's primary DRM node, enumerated rather than hardcoded. Card
-# numbering is not stable across boots, so /dev/dri/card1 is a guess that works
-# until the day it does not, on a machine with no console to say what happened.
-detect_nvidia_drm_node() {
-    for _dev in /sys/bus/pci/devices/*; do
-        [ -r "$_dev/vendor" ] || continue
-        read -r _vendor < "$_dev/vendor"
-        [ "$_vendor" = "0x10de" ] || continue
-        for _n in "$_dev"/drm/card[0-9]*; do
-            [ -e "$_n" ] || continue
-            printf '/dev/dri/%s\n' "${_n##*/}"
-            return 0
-        done
     done
     return 1
 }
@@ -318,10 +295,11 @@ stop_gamescope() {
     GAMESCOPE_PID=""
 }
 
-# Plan A: gamescope as the DRM master.
+# gamescope as the DRM master.
 #
-# Returns nonzero if it did not come up, having already cleaned up after itself,
-# so the caller can move to plan B.
+# Returns nonzero if it did not come up, having already cleaned up after itself.
+# There is nowhere for the caller to move to now (ADR 0005); the only thing left
+# is to say why and hold.
 start_gamescope() {
     _fifo="$RUNTIME/gamescope-ready"
     rm -f "$_fifo"
@@ -391,18 +369,18 @@ start_gamescope() {
         # Still running means slow or wedged; already gone means it died during
         # startup and the timeout is irrelevant.
         if kill -0 "$GAMESCOPE_PID" 2>/dev/null; then
-            err "gamescope is still running after ${READY_TIMEOUT}s but never reported ready -- falling back to cage (plan B)"
+            err "gamescope is still running after ${READY_TIMEOUT}s but never reported ready"
             err "that is slow-or-wedged, not crashed: the ready fd is written only after every Xwayland server is up"
         else
-            err "gamescope exited before reporting ready within ${READY_TIMEOUT}s -- falling back to cage (plan B)"
+            err "gamescope exited before reporting ready within ${READY_TIMEOUT}s"
         fi
-        err "if this is reproducible on hardware, that is the M1 decision: see docs/adr/0004"
+        err "there is no fallback compositor any more -- see docs/adr/0005"
         stop_gamescope
         return 1
     fi
 
     if ! kill -0 "$GAMESCOPE_PID" 2>/dev/null; then
-        err "gamescope reported ready and then exited -- falling back to cage (plan B)"
+        err "gamescope reported ready and then exited"
         GAMESCOPE_PID=""
         return 1
     fi
@@ -430,63 +408,22 @@ start_gamescope() {
     return 0
 }
 
-# Plan B: cage.
-#
-# cage runs the client itself and exits when the client exits, so the guard
-# cannot live inside it the way it does under gamescope. Re-executing this
-# script as cage's client keeps one implementation of the guard for both plans
-# rather than two that drift.
-#
-# -s is absent on purpose: it is cage's "allow VT switching", and a keystroke
-# that leaves the session is exactly the reachable escape hatch D6 forbids.
-# -d drops client-side decorations.
-#
-# cage has no equivalent of --prefer-output. It has `-m last`, which is a display
-# mode rather than an output selector: it disables output->link.next after a head
-# insertion, i.e. "whichever output wlroots happened to enumerate before this
-# one", which nothing in this image controls -- and it switches to a newly plugged
-# display mid-session, taking the TV away. It is not passed. The GPU half IS
-# addressable, one level down: wlroots reads WLR_DRM_DEVICES, which the
-# environment block below exports when the NVIDIA card has a display attached.
-# On a hybrid laptop driving a TV that difference is part of what the M1 decision
-# weighs.
-#
-# Not exec'd, deliberately. exec would replace this script, so cage failing to
-# start would become the session's exit status, greetd would restart the session
-# from default_session, and the whole thing would loop at boot speed forever --
-# which is exactly what a target did the first time both compositors failed on
-# real hardware. Returning instead lets the caller decide, and the caller stops.
-start_cage() {
-    log "starting cage with $SELF --client-loop"
-    _cage_start="$(uptime_seconds)"
-    cage -d -- "$SELF" --client-loop
-    _cage_status=$?
-    _cage_ran="$(( $(uptime_seconds) - _cage_start ))"
-    err "cage exited with status ${_cage_status} after ${_cage_ran}s"
-
-    # A cage that dies immediately never came up at all. One that ran for a
-    # while ended a real session, and letting greetd restart that is correct.
-    [ "$_cage_ran" -ge "$CAGE_MIN_RUNTIME" ]
-}
-
-# Both plans failed to take the display. Returning here would hand control back
-# to greetd, which would start the session again, which would fail again: an
+# gamescope could not take the display. Returning here would hand control back to
+# greetd, which would start the session again, which would fail again: an
 # unbounded loop that buries its own diagnosis in repeated log spam. Hold
-# instead, so the journal's first failure is the one still on screen and tty2
-# stays usable.
+# instead, so the journal's first failure is the one still on screen.
+#
+# This is where the removed cage fallback used to lead, and the difference is the
+# point of ADR 0005. The old path reached a picture by silently becoming a
+# different appliance; this one stops and says why. On a machine whose only
+# triage surface is the journal, a failure that is legible beats one that is
+# survivable-but-mute.
 compositor_dead_end() {
-    err "no compositor could take the display"
-    err "gamescope and cage both failed to start -- the session is holding rather than looping"
+    err "gamescope could not take the display -- the session is holding rather than looping"
+    err "there is no fallback compositor by design (docs/adr/0005)"
     err "read the first failure above; recover over tty2 or devmode ssh"
     hold_forever
 }
-
-# Entry point for plan B: cage execs this script again with --client-loop as
-# its single client, and everything below is already done in the parent.
-if [ "${1:-}" = "--client-loop" ]; then
-    supervise_client
-    exit 0
-fi
 
 # XDG_RUNTIME_DIR comes from pam_systemd. If it is missing there is no logind
 # session, which means no seat, which means no DRM master and nothing that
@@ -542,17 +479,16 @@ mkdir -p "$(dirname "$GAMESCOPE_MODE_SAVE_FILE")"
 
 VK_DEVICE="$(detect_nvidia_vk_device || true)"
 if [ -n "$VK_DEVICE" ]; then
-    # "will be asked to prefer", and "(plan A only)", because the previous wording
-    # claimed a pin this script does not have. gamescope's --prefer-vk-device is a
-    # preference, not a pin: if the NVIDIA ICD fails to enumerate, gamescope takes
-    # whatever device it did find and says nothing about it. And start_cage reads
-    # neither this variable nor MARWANOS_OUTPUT_CONNECTOR, so under plan B the old
-    # line advertised a pin that was never applied -- misleading in exactly the
-    # journal someone reads when the wrong GPU rendered.
-    log "gamescope will be asked to prefer NVIDIA vulkan device $VK_DEVICE (plan A only)"
+    # "will be asked to prefer" rather than "pinned", because gamescope's
+    # --prefer-vk-device is a preference and not a pin: if the NVIDIA ICD fails to
+    # enumerate, gamescope takes whatever device it did find and says nothing
+    # about it. The wording matters in exactly the journal someone reads when the
+    # wrong GPU rendered. Measured working on 2026-08-05 -- the shell reported
+    # adapter "NVIDIA GeForce RTX 3060 Laptop GPU" (ADR 0005).
+    log "gamescope will be asked to prefer NVIDIA vulkan device $VK_DEVICE"
 else
     warn "no NVIDIA PCI display device found; the compositor will choose a device itself"
-    warn "on this chassis that may be the Intel iGPU, which would make any M1 result meaningless"
+    warn "on this chassis that may be the Intel iGPU, which is the wrong card entirely"
 fi
 
 # Pre-flight, and it is logging rather than control flow on purpose.
@@ -560,11 +496,11 @@ fi
 # gamescope with zero connected connectors on the device it opened is a FALSE
 # GREEN: it logs that it cannot find any connected connector, unsets the connector
 # and the mode, publishes a wlserver output described as a virtual screen, and
-# returns success -- so it stays up, writes the ready fd, and the cage fallback
-# never fires. With the internal panel disabled and no TV attached, that is
-# exactly the state this appliance boots into. The session cannot fix it, but a
-# black screen that says why in the journal is a different object from a black
-# screen that reports healthy.
+# returns success -- so it stays up and writes the ready fd. With the internal
+# panel disabled and no TV attached, that is exactly the state this appliance
+# boots into, and it is why compositor_dead_end is not reached by it. The session
+# cannot fix it, but a black screen that says why in the journal is a different
+# object from a black screen that reports healthy.
 if nvidia_output_connected; then
     log "an external display is connected to the NVIDIA card"
 else
@@ -572,46 +508,26 @@ else
     err "gamescope reports success in this state (virtual screen), so a green session here means nothing"
 fi
 
-# Plan B only. cage has no --prefer-output and no --prefer-vk-device (ADR 0004
-# finding 9), but wlroots underneath it reads WLR_DRM_DEVICES, and pinning that to
-# the NVIDIA node buys two separate things.
+# WLR_DRM_DEVICES used to be exported here, and it is gone with cage. It only
+# ever meant anything to wlroots, and nothing in this session runs wlroots any
+# more -- an export that pins a GPU for a compositor that never starts is not
+# harmless, it is a line someone reads later and reasons from.
 #
-# One: it drops the Intel device -- and with it the internal eDP panel -- from
-# wlroots' enumeration entirely, so there is one output and no layout to extend a
-# surface across. That is the 2026-08-05 defect, and this is the deterministic,
-# name-independent backstop for a `video=<internal>:d` karg that silently matched
-# nothing, which is a failure mode with no other warning.
+# The reasoning it carried is worth keeping, so it lives in ADR 0005: unset,
+# wlr_session_find_gpus() moves the PCI boot_vga device to index 0, which on this
+# hybrid chassis is the iGPU, so plan B would have composited on Intel and fed the
+# NVIDIA output by cross-GPU blits. That is one of the reasons gamescope won --
+# it can be pinned by PCI id with a flag, and cage cannot.
 #
-# Two, and this is the one nobody was looking for: with it unset,
-# wlr_session_find_gpus() reads the PCI boot_vga sysattr and moves that device to
-# index 0, which on a hybrid laptop is the iGPU. wlroots would then composite the
-# shell on Intel and treat the NVIDIA HDMI output as a secondary device fed by
-# cross-GPU blits -- the long-standing broken wlroots multi-GPU path -- which is
-# the same wrong-card false green ADR 0003 warns about, arriving through a door
-# plan B has no flag to close.
-#
-# Gated on nvidia_output_connected: see that function's comment for why pinning a
-# device with no connectors is a silent hang rather than an honest failure.
-if nvidia_output_connected && DRM_NODE="$(detect_nvidia_drm_node)"; then
-    export WLR_DRM_DEVICES="$DRM_NODE"
-    log "pinning wlroots to $WLR_DRM_DEVICES (plan B only)"
-else
-    warn "not pinning WLR_DRM_DEVICES; wlroots will auto-probe and may composite on the iGPU"
-fi
-
-COMPOSITOR="gamescope"
-if [ -r "$COMPOSITOR_FILE" ]; then
-    read -r COMPOSITOR < "$COMPOSITOR_FILE"
-    log "compositor pinned to '$COMPOSITOR' by $COMPOSITOR_FILE"
-fi
+# The internal panel is dropped by marwanos-panel.service, not by anything here.
+# detect_nvidia_drm_node() went with this block for the same reason; the node is
+# not needed now that the only consumer is gone.
 
 GAMESCOPE_PID=""
 trap 'stop_gamescope' EXIT INT TERM
 
-if [ "$COMPOSITOR" = "cage" ]; then
-    start_cage || compositor_dead_end
-elif start_gamescope; then
+if start_gamescope; then
     supervise_client
 else
-    start_cage || compositor_dead_end
+    compositor_dead_end
 fi
