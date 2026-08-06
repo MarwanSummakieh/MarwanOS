@@ -1,13 +1,26 @@
 extends Button
 
-## One tile in the grid.
+## One card on the home rail.
 ##
-## Built as a Button rather than a Panel because Button already is what a tile
+## Still called tile.gd because the plan, ADR 0006 and the session notes all use
+## that word for "the thing in the shell you move focus between"; renaming the
+## file would break more prose than it fixes.
+##
+## Built as a Button rather than a Panel because Button already is what a card
 ## needs to be: focus_mode defaults to FOCUS_ALL, and it turns a `ui_accept` press
 ## on the focused control into a `pressed` signal without any of that having to be
-## written here. A tile built on Panel or TextureRect would default to FOCUS_NONE
-## and never be reachable at all -- one of the quieter ways a grid ends up
-## un-navigable.
+## written here. A card built on Panel or TextureRect would default to FOCUS_NONE
+## and never be reachable at all -- one of the quieter ways a console UI ships
+## looking dead.
+##
+## SIZE IS THE SELECTION CHANNEL, NOT SCALE, and that is the substantive change
+## from the grid version. Scaling a control leaves its layout box the old size, so
+## a scaled card overlaps its neighbours instead of moving them. On a rail the
+## neighbours moving IS the effect -- the strip opens up around the selection --
+## so the card animates custom_minimum_size and lets the HBoxContainer re-flow.
+## The cost is a real layout pass per frame during the tween, which is nothing for
+## a dozen controls and is why this is affordable here and would not be in a list
+## of hundreds.
 ##
 ## The look is entirely theme overrides rather than a .tres theme resource. Godot
 ## serialises a theme as a resource the editor owns, and this repo would rather
@@ -16,11 +29,17 @@ extends Button
 
 const TvTheme = preload("res://src/tv_theme.gd")
 
+## Emitted whenever this card takes focus, so the root can move the rail and swap
+## the hero art. A signal rather than the root connecting to focus_entered
+## directly: the root wants the entry, not the node, and this keeps the card's
+## data private to the card.
+signal selected(entry: Dictionary)
+
 var entry: Dictionary = {}
 
 var _idle_box: StyleBoxFlat
 var _focus_box: StyleBoxFlat
-var _scale_tween: Tween
+var _size_tween: Tween
 
 
 func setup(new_entry: Dictionary) -> void:
@@ -29,113 +48,73 @@ func setup(new_entry: Dictionary) -> void:
 
 func _ready() -> void:
 	focus_mode = Control.FOCUS_ALL
-	custom_minimum_size = Vector2(0, TvTheme.TILE_MIN_HEIGHT)
-	size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	size_flags_vertical = Control.SIZE_EXPAND_FILL
+	custom_minimum_size = Vector2(TvTheme.CARD_SIZE, TvTheme.CARD_SIZE)
+
+	# Cards do not stretch. The rail is a fixed-size strip that slides; a card
+	# that expanded would make its width depend on how many entries exist, and the
+	# selected card's on-screen position is supposed to be a constant.
+	size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	size_flags_vertical = Control.SIZE_SHRINK_CENTER
 
 	# Button draws its own text centred, which is not the layout wanted here; the
-	# labels are children instead.
+	# label is a child instead.
 	text = ""
 
-	_idle_box = TvTheme.tile_idle_box()
-	_focus_box = TvTheme.tile_focus_box()
+	_idle_box = TvTheme.card_idle_box()
+	_focus_box = TvTheme.card_focus_box()
 
-	# Button draws one of normal/hover/pressed and then the focus box over it.
 	# Hover is bound to the same box as normal because there is no pointer on this
-	# machine and a mouse that wandered in should not light a tile up as if it
+	# machine and a mouse that wandered in should not light a card up as if it
 	# were focused.
 	add_theme_stylebox_override("normal", _idle_box)
 	add_theme_stylebox_override("hover", _idle_box)
 	add_theme_stylebox_override("pressed", _focus_box)
 	add_theme_stylebox_override("disabled", _idle_box)
-	add_theme_stylebox_override("focus", TvTheme.tile_focus_ring())
+	add_theme_stylebox_override("focus", TvTheme.card_focus_ring())
 
 	_build_contents()
 
 	focus_entered.connect(_on_focus_entered)
 	focus_exited.connect(_on_focus_exited)
 	pressed.connect(_on_pressed)
-	resized.connect(_recentre_pivot)
-	_recentre_pivot()
 
 
 func _build_contents() -> void:
-	var padding := MarginContainer.new()
-	padding.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	padding.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	padding.add_theme_constant_override("margin_left", TvTheme.TILE_PADDING)
-	padding.add_theme_constant_override("margin_right", TvTheme.TILE_PADDING)
-	padding.add_theme_constant_override("margin_top", TvTheme.TILE_PADDING)
-	padding.add_theme_constant_override("margin_bottom", TvTheme.TILE_PADDING)
-	add_child(padding)
-
-	var column := VBoxContainer.new()
-	column.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	column.add_theme_constant_override("separation", 10)
-	padding.add_child(column)
-
-	# Stands in for the icon Phase 1 loads from the daemon's cache. It expands, so
-	# it absorbs whatever height the grid gives the tile and the two text lines
-	# stay put at the bottom.
+	# Stands in for the icon Phase 1 loads from the daemon's cache. Full-bleed
+	# inside the card's rounded box rather than inset: real key art has no margin,
+	# and a card that frames its art in surface colour looks like a placeholder
+	# even once the art is real.
 	var art := ColorRect.new()
 	art.color = TvTheme.accent(str(entry.get("accent", "")))
-	art.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	art.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	art.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	column.add_child(art)
-
-	column.add_child(_label(
-		str(entry.get("title", "")),
-		TvTheme.SIZE_TILE_TITLE,
-		TvTheme.TEXT_PRIMARY))
-	column.add_child(_label(
-		str(entry.get("subtitle", "")),
-		TvTheme.SIZE_SUPPLEMENTAL,
-		TvTheme.TEXT_SECONDARY))
+	add_child(art)
 
 
-func _label(value: String, size: int, colour: Color) -> Label:
-	var label := Label.new()
-	label.text = value
-	label.add_theme_font_size_override("font_size", size)
-	label.add_theme_color_override("font_color", colour)
-	# Ellipsis rather than wrapping: a tile that grows a second line pushes the
-	# art around and makes the grid ragged. Real application names are long.
-	label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
-	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	return label
+## Grows or shrinks the card in the layout. See the class header for why this is
+## custom_minimum_size and not scale.
+func set_selected_size(is_selected: bool) -> void:
+	var target := float(TvTheme.CARD_FOCUSED_SIZE if is_selected else TvTheme.CARD_SIZE)
 
-
-## Scale is applied about the tile's own centre, so it grows in place instead of
-## sliding towards the top-left. The container resizes the tile whenever the
-## window does, hence the reconnect on `resized` rather than a one-off in _ready.
-func _recentre_pivot() -> void:
-	pivot_offset = size * 0.5
+	if _size_tween != null and _size_tween.is_valid():
+		_size_tween.kill()
+	_size_tween = create_tween()
+	_size_tween.set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
+	_size_tween.tween_property(
+		self, "custom_minimum_size", Vector2(target, target), TvTheme.RAIL_TWEEN_SECONDS)
 
 
 func _on_focus_entered() -> void:
-	# Channel two of three: a brighter surface under the ring. See TvTheme's
-	# header for why one channel is not enough on a television.
 	add_theme_stylebox_override("normal", _focus_box)
 	add_theme_stylebox_override("hover", _focus_box)
-	# Above its neighbours, so the scaled edges and the ring are never clipped by
-	# the tile drawn after it.
-	z_index = 1
-	_scale_to(TvTheme.FOCUS_SCALE)
+	set_selected_size(true)
+	selected.emit(entry)
 
 
 func _on_focus_exited() -> void:
 	add_theme_stylebox_override("normal", _idle_box)
 	add_theme_stylebox_override("hover", _idle_box)
-	z_index = 0
-	_scale_to(1.0)
-
-
-func _scale_to(factor: float) -> void:
-	if _scale_tween != null and _scale_tween.is_valid():
-		_scale_tween.kill()
-	_scale_tween = create_tween()
-	_scale_tween.set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
-	_scale_tween.tween_property(self, "scale", Vector2(factor, factor), TvTheme.FOCUS_TWEEN_SECONDS)
+	set_selected_size(false)
 
 
 func _on_pressed() -> void:

@@ -47,7 +47,15 @@ extends Node
 
 func _ready() -> void:
 	_assert_display_policy()
-	ShellLog.info("kiosk display policy applied (fullscreen, borderless, cursor hidden)")
+	if _windowed_for_desk():
+		# Said once, here, rather than from _assert_display_policy: that runs again
+		# on every focus-in, and a warning repeated three times in the first second
+		# reads like something going wrong repeatedly instead of a mode being set.
+		ShellLog.warn("%s is set: windowed with a cursor, at %dx%d. Kiosk policy NOT applied."
+			% [WINDOWED_ENV, DESK_WINDOW_SIZE.x, DESK_WINDOW_SIZE.y])
+		ShellLog.warn("this is a desk run; the appliance never sets that variable")
+	else:
+		ShellLog.info("kiosk display policy applied (fullscreen, borderless, cursor hidden)")
 	_log_display_geometry("at startup")
 
 	# A Wayland compositor's first xdg_toplevel configure can arrive after _ready,
@@ -76,8 +84,45 @@ func _notification(what: int) -> void:
 		_assert_display_policy()
 
 
+## Set to anything non-empty to run windowed with a visible cursor, for testing
+## the UI on a desk instead of on the appliance.
+##
+## This exists because the policy below is otherwise inescapable: fullscreen,
+## borderless and no cursor is correct on a machine whose only input is a
+## gamepad, and hostile on a developer's desktop, where it covers the screen with
+## no pointer and no window furniture to close. scripts/run-shell-wsl.sh sets it.
+##
+## Nothing in the appliance sets it. The session script does not export it, so on
+## the target this branch is unreachable -- it is not a runtime switch that a
+## misconfigured machine could trip into, it is a variable that only exists if a
+## human typed it. That is the same shape as D5's devmode flag and deliberately
+## not the same shape as the compositor lever ADR 0005 removed.
+const WINDOWED_ENV := "MARWANOS_SHELL_WINDOWED"
+
+## 16:9, because the design surface is 1920x1080 and a desk window that is not
+## 16:9 pillarboxes itself -- which would make every judgement about margins and
+## focus visibility a judgement about the wrong rectangle. Small enough to leave
+## the rest of the screen usable: MODE_WINDOWED alone kept the 3440x1440 size
+## Godot had already picked, so it was a window covering the whole display, which
+## is most of what was wrong with fullscreen in the first place.
+const DESK_WINDOW_SIZE := Vector2i(1600, 900)
+
+
+func _windowed_for_desk() -> bool:
+	return not OS.get_environment(WINDOWED_ENV).is_empty()
+
+
 func _assert_display_policy() -> void:
 	var window := get_window()
+
+	if _windowed_for_desk():
+		if window != null:
+			window.mode = Window.MODE_WINDOWED
+			window.borderless = false
+			window.size = DESK_WINDOW_SIZE
+		Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
+		return
+
 	if window != null:
 		window.mode = Window.MODE_FULLSCREEN
 		window.borderless = true
