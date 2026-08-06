@@ -7,21 +7,30 @@ what is stale.
 
 ---
 
-## The one thing that is waiting
+## Where this got to
 
-**One boot.** The stick was reflashed on 2026-08-06 and verified; it is carrying
-seven changes, none of which has ever run on hardware. Each row is a question that
-boot answers:
+**The seven-change stick booted on 2026-08-06, and the shell came up on the rail.**
+That is the first time any of it ran on hardware, and it worked on the first
+attempt. One defect came out of it — cards visibly cropped at the sides, fixed and
+reflashed the same day (see below) — and the rest of the boot has **not been read
+back yet**. The journal is on the stick and nobody has looked, which is the same
+position 2026-08-05 was in.
 
-| Change | What the boot should show |
+So these are still open, and one journal read closes most of them:
+
+| Change | What to look for |
 |---|---|
-| `setcap cap_sys_nice+ep` on gamescope | The `No CAP_SYS_NICE` line gone from the journal, and the perceptible lag with it |
+| `setcap cap_sys_nice+ep` on gamescope | The `No CAP_SYS_NICE` line gone, and the perceptible lag with it |
 | `video=eDP-1:d` karg ([ADR 0007](adr/0007-single-display-appliance.md)) | Lid panel dark from the first modeset — plymouth included, which no service could reach |
-| `console=ttyS0` dropped (`--no-default-kernel-args`) | No `serial-getty` respawn noise; M2's three-boot count may start |
+| `console=ttyS0` dropped | No `serial-getty` respawn noise; M2's three-boot count may start |
 | Portal mask | The eleven `xdg-desktop-portal-gtk` failures gone from `journalctl -p err` |
-| Session script: no cage fallback, no compositor lever (ADR 0005 consequences) | `cage` appears nowhere; a gamescope failure holds rather than silently switching |
-| The error screen | `pkill -9` the shell five times inside a minute → a designed frame, not a black TV |
-| The home rail (replaced the grid) | The couch test M3 still owes |
+| No cage fallback, no compositor lever | `cage` appears nowhere in the journal |
+| The error screen | Untested: needs `pkill -9` five times inside a minute |
+| Boot time | Exit criterion 1 is ≤15 s, and the last measured first frame was at 74 s |
+
+The rail-bleed fix on the current stick also adds a `rail band:` / `first card
+rests at x` pair to the journal, which says in numbers whether the layout landed
+where it was supposed to.
 
 **ADR 0007's "use a second stick" advice was deliberately set aside**, and the
 reason is worth recording rather than quietly ignoring. That advice protects
@@ -61,23 +70,28 @@ record in [ADR 0005](adr/0005-compositor-decision.md), which is **Accepted**:
 | **M0** — build/deploy loop | **Complete** (2026-08-02) |
 | **M1** — session + the A/B decision | **Complete** (2026-08-05). gamescope, [ADR 0005](adr/0005-compositor-decision.md) |
 | **M2** — silent boot | Partial. Both pending kargs are now **on the stick** (`console=ttyS0` dropped, `video=eDP-1:d` added) and verified in the UKI's command line, but unbooted. The three-boot camera count can start on this stick. The 31-second black gap is diagnosed-adjacent (compositor handover) but not formally closed |
-| **M3** — shell skeleton | Exit criteria 2 and 3 **passed on hardware** (as the grid). The home rail and the error screen are built and desk-verified only. Outstanding: couch test, controller hotplug, a real guard-trip of the error screen |
+| **M3** — shell skeleton | Exit criteria 2 and 3 **passed on hardware** (as the grid). **The home rail has now run on hardware too** (2026-08-06) — it drew and navigated; its one defect, cards cropped at the sides, is fixed and on the stick unbooted. Outstanding: couch test, controller hotplug, a real guard-trip of the error screen |
 | **M4** — guardrails + exit run | **Untouched** |
 
 ## The current stick
 
-**Reflashed 2026-08-06 and VERIFIED.** It carries `MarwanOS (Phase 0,
-0.0.202608052341)` — the home rail, the error screen, and both of M2's kernel-arg
-changes. Image file at `/var/tmp/rail-out/image/disk.raw`. Never booted.
+**Reflashed 2026-08-06 (second time that day) and VERIFIED.** It carries
+`MarwanOS (Phase 0, 0.0.202608060857)` — everything below plus the rail-bleed
+fix. Image file at `/var/tmp/rail2-out/image/disk.raw`. Not yet booted.
 
 ```
-boot UUID  : 37b88f9d-abd4-41cb-ae12-a307e15b4f56
-root UUID  : 01c4b345-29a9-4e81-95d9-92c664169cd9
+boot UUID  : 808ec849-43b5-4a0d-b9b2-98411a320c9a
+root UUID  : 6710ff47-66aa-4d32-b93c-3597e312c134
 ```
 
-Identify a stick by UUIDs, never by memory — every build has had its own, and the
-pre-2026-08-06 pair (`6487cf7d…` / `010befbf…`) belongs to the rollback image
-below, not to anything currently on a stick.
+Identify a stick by UUIDs, never by memory — every build has had its own, and
+there are now three sets in play:
+
+| UUIDs | Build | Where |
+|---|---|---|
+| `808ec849…` / `6710ff47…` | `0.0.202608060857`, rail bleed fixed | **on the stick now** |
+| `37b88f9d…` / `01c4b345…` | `0.0.202608052341`, booted and ran, cards cropped at the sides | `/var/tmp/rail-out/image/disk.raw` |
+| `6487cf7d…` / `010befbf…` | `0.0.202608051352`, the 2026-08-05 known-good | `/var/lib/marwanos-images/` |
 
 The command line baked into its UKI, which is the thing that cannot be edited at
 boot and therefore the thing worth reading before blaming anything else:
