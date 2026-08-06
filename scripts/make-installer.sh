@@ -110,8 +110,16 @@ $SUDO podman run \
     quay.io/centos-bootc/bootc-image-builder:latest \
     build \
     --type "${BIB_TYPE}" \
+    --no-default-kernel-args \
     --output /output \
     "${IMAGE_REF}"
+
+# --no-default-kernel-args is what drops bib's console=ttyS0 (M2). On hardware
+# with no serial port that karg makes serial-getty respawn forever, and it is a
+# text-on-console risk for the silent-boot gate. The image masks the unit as a
+# backstop, but the karg itself has no business on an appliance; a QEMU run that
+# wants kernel output on the serial line can add console=ttyS0 back per-stick
+# via make-usb.sh's EXTRA_KARGS.
 
 # bib does exit non-zero on failure, and set -e would already catch that. This
 # check stays as belt-and-braces: it turns "succeeded but produced nothing" into
