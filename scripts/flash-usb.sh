@@ -28,6 +28,29 @@
 # Unplug it physically while it is still attached to WSL. `usbipd detach`
 # hands it straight back to Windows and restarts the race.
 #
+# THERE IS A THIRD PATH, and it needs no detach and no human error. `usbipd
+# attach --wsl` lasts only as long as a WSL 2 distribution is RUNNING. WSL shuts
+# its distros down after a few minutes idle, and when the last one goes the vhci
+# connection drops, the stick reverts to `Shared`, and Windows enumerates it --
+# on its own schedule, with nobody having touched anything. Observed 2026-08-06:
+# a stick verified clean, left alone for the time it took to write a commit
+# message, and found with an invalid main partition table CRC and the entry
+# array moved to LBA 2016. The corruption signature is the giveaway, and sgdisk
+# reports it in as many words:
+#
+#   Warning: There is a gap between the main metadata (sector 1) and the main
+#   partition table (sector 2016).
+#
+# So a flash and a physical pull should be one continuous action. If they cannot
+# be -- an unattended run, or the stick is across the room -- hold a distro up
+# for the gap so the attach cannot lapse:
+#
+#   Start-Process wsl.exe -ArgumentList "-d","FedoraLinux-43","-e","sleep","14400" -WindowStyle Hidden
+#
+# and re-run with VERIFY_ONLY before trusting the stick regardless. The repair
+# (`sgdisk -e`) is cheap and lossless; discovering the problem 213 s into a boot
+# on a machine with no console is not.
+#
 # To re-check a stick that Windows may have touched, before trusting it:
 #   VERIFY_ONLY=yes ./scripts/flash-usb.sh <image> <device>
 # and if it comes back corrupt, `sgdisk -e <device>` repairs it in place --
