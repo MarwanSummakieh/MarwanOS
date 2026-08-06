@@ -9,9 +9,9 @@ what is stale.
 
 ## The one thing that is waiting
 
-**A rebuild, and a boot of it.** The 2026-08-05 stick answered its four questions
-(see "what the boots settled" below) and since then rebuild-only changes have
-stacked up in the image, none of which can be checked without burning a new stick:
+**One boot.** The stick was reflashed on 2026-08-06 and verified; it is carrying
+seven changes, none of which has ever run on hardware. Each row is a question that
+boot answers:
 
 | Change | What the boot should show |
 |---|---|
@@ -23,10 +23,16 @@ stacked up in the image, none of which can be checked without burning a new stic
 | The error screen | `pkill -9` the shell five times inside a minute → a designed frame, not a black TV |
 | The home rail (replaced the grid) | The couch test M3 still owes |
 
-The build is the standard pipeline below. Per ADR 0007, the `video=` karg goes onto
-a **second** stick with the current known-good one left untouched — the cmdline
-lives inside a UKI and cannot be edited at boot, and `video=` fails silently if the
-token is wrong.
+**ADR 0007's "use a second stick" advice was deliberately set aside**, and the
+reason is worth recording rather than quietly ignoring. That advice protects
+against a wrong `video=` token producing a machine with no picture and no way to
+edit the command line. It assumed losing the known-good *media* meant losing the
+recovery path. It does not: the Predator boots Windows off its internal drive, so
+a stick that does not work costs a reflash, not a machine — which is what ADR 0007
+decision 2 already says when it calls the failure "recoverable by pulling the
+stick". What actually had to be protected was the known-good **image**, and that
+is now preserved read-only on the SSD (see below). One stick, one rollback
+artifact.
 
 ## What the 2026-08-05 boots settled
 
@@ -54,30 +60,61 @@ record in [ADR 0005](adr/0005-compositor-decision.md), which is **Accepted**:
 |---|---|
 | **M0** — build/deploy loop | **Complete** (2026-08-02) |
 | **M1** — session + the A/B decision | **Complete** (2026-08-05). gamescope, [ADR 0005](adr/0005-compositor-decision.md) |
-| **M2** — silent boot | Partial. Both pending kargs are now in the repo (`console=ttyS0` dropped, `video=eDP-1:d` added), neither booted. The three-boot camera count starts on the next stick. The 31-second black gap is diagnosed-adjacent (compositor handover) but not formally closed |
+| **M2** — silent boot | Partial. Both pending kargs are now **on the stick** (`console=ttyS0` dropped, `video=eDP-1:d` added) and verified in the UKI's command line, but unbooted. The three-boot camera count can start on this stick. The 31-second black gap is diagnosed-adjacent (compositor handover) but not formally closed |
 | **M3** — shell skeleton | Exit criteria 2 and 3 **passed on hardware** (as the grid). The home rail and the error screen are built and desk-verified only. Outstanding: couch test, controller hotplug, a real guard-trip of the error screen |
 | **M4** — guardrails + exit run | **Untouched** |
 
 ## The current stick
 
-Flashed and verified with the pre-rail image `MarwanOS (Phase 0, 0.0.202608051352)`
-(built from `21151fc`), image file at `/var/tmp/panel-out/image/disk.raw`. It is the
-known-good fallback — leave it as it is and burn the next build onto a different
-stick. Identify any stick by UUIDs, not by memory:
+**Reflashed 2026-08-06 and VERIFIED.** It carries `MarwanOS (Phase 0,
+0.0.202608052341)` — the home rail, the error screen, and both of M2's kernel-arg
+changes. Image file at `/var/tmp/rail-out/image/disk.raw`. Never booted.
 
 ```
-boot UUID  : 6487cf7d-409b-4d85-bcfe-581fac9f98ab
-root UUID  : 010befbf-c39a-4792-8600-9fcd8b22929f
+boot UUID  : 37b88f9d-abd4-41cb-ae12-a307e15b4f56
+root UUID  : 01c4b345-29a9-4e81-95d9-92c664169cd9
+```
+
+Identify a stick by UUIDs, never by memory — every build has had its own, and the
+pre-2026-08-06 pair (`6487cf7d…` / `010befbf…`) belongs to the rollback image
+below, not to anything currently on a stick.
+
+The command line baked into its UKI, which is the thing that cannot be edited at
+boot and therefore the thing worth reading before blaming anything else:
+
+```
+… quiet splash loglevel=3 rd.udev.log_level=3 systemd.show_status=false
+plymouth.ignore-serial-consoles vt.global_cursor_default=0 video=eDP-1:d
+ostree=… usb-storage.quirks=346d:5678:u console=tty0
+```
+
+Read it back out of the stick itself with:
+
+```sh
+objcopy -O binary --only-section=.cmdline /path/to/esp/EFI/BOOT/BOOTX64.EFI /dev/stdout
 ```
 
 ```sh
-VERIFY_ONLY=yes scripts/flash-usb.sh /var/tmp/panel-out/image/disk.raw /dev/sde
+VERIFY_ONLY=yes scripts/flash-usb.sh /var/tmp/rail-out/image/disk.raw /dev/sde
+```
+
+### The rollback artifact
+
+`/var/lib/marwanos-images/known-good-0.0.202608051352-from-21151fc.raw` — the exact
+image that booted successfully three times on 2026-08-05, kept read-only (0444) so
+no build can point `OUT_DIR` at it. It is **already UKI-processed**, so putting it
+back is a plain write with no `make-usb.sh` step:
+
+```sh
+FLASH_CONFIRM=yes scripts/flash-usb.sh \
+    /var/lib/marwanos-images/known-good-0.0.202608051352-from-21151fc.raw /dev/sde
 ```
 
 **Pull sticks physically while still attached to WSL.** Windows rewrites the GPT of
 any removable disk it enumerates; it has corrupted this stick once already
 (recovered with `sgdisk -e`, no reflash needed — both GPT entry-array copies
-survive that failure).
+survive that failure). `usbipd detach` hands it straight back to Windows and
+restarts that race, which is why it is never the way to remove one.
 
 ### Reading a journal off a stick after a boot
 
