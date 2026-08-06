@@ -7,8 +7,8 @@ extends Node
 ## is_action_pressed(action, allow_echo = true), and a held arrow key produces OS
 ## key echo. A pad cannot use that. InputEventJoypadButton is only emitted on a
 ## state change, and the stick branch is gated on "just pressed", so holding the
-## d-pad or leaning on the stick moves focus exactly once. Crossing a 4x3 grid
-## then takes eleven separate presses.
+## d-pad or leaning on the stick moves focus exactly once. Crossing the home
+## rail's twelve cards then takes eleven separate presses.
 ##
 ## That failure mode is worth naming precisely, because it is invisible to every
 ## automated check: every line of code works as designed, ADR 0004's step-4 script
@@ -29,10 +29,10 @@ extends Node
 ## rule about who is in charge. The keyboard is deliberately not polled here --
 ## OS key echo already repeats it, and doing both would double the rate.
 
-## Long enough that a single deliberate press moves exactly one tile.
+## Long enough that a single deliberate press moves exactly one card.
 const INITIAL_DELAY := 0.40
 
-## Roughly eight tiles a second once it starts. Fast enough to cross the grid,
+## Roughly eight cards a second once it starts. Fast enough to cross the rail,
 ## slow enough to stop where you meant to.
 const REPEAT_INTERVAL := 0.12
 
@@ -109,8 +109,8 @@ func _repeat(direction: Vector2i) -> void:
 
 
 func _send(action: String) -> void:
-	# No focus owner means no grid on screen -- the launch placeholder is up, or
-	# the tree has not finished building. Repeating into that would move focus
+	# No focus owner means no home rail on screen -- the launch placeholder is up,
+	# or the tree has not finished building. Repeating into that would move focus
 	# behind whatever is covering it.
 	if get_viewport().gui_get_focus_owner() == null:
 		return

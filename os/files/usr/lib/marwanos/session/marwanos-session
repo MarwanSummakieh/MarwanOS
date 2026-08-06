@@ -225,22 +225,49 @@ resolve_client() {
 }
 
 # Nothing here ever exits into a text console. When the guard trips the session
-# holds the compositor up with an empty screen instead of returning, because
-# returning would hand control back to greetd, which would start the session,
-# which would start the client -- the same respawn loop one level up, running at
-# boot speed. M3 replaces the hold with the error screen. Until then the way
-# back in is devmode ssh, which is the only escape hatch D6 allows.
+# holds the compositor up instead of returning, because returning would hand
+# control back to greetd, which would start the session, which would start the
+# client -- the same respawn loop one level up, running at boot speed.
 hold_forever() {
     while :; do
         sleep 3600
     done
 }
 
+# M3's error screen, and the reason the hold above is no longer the last word.
+#
+# The guard tripping used to leave the compositor up with nothing drawn: a black
+# TV, indefinitely, on a machine with no console, no getty and no visible text.
+# Every other failure on this appliance announces itself in the journal; this one
+# announced itself as furniture.
+#
+# THE BAKED CLIENT, NEVER THE DEV OVERRIDE, and that is deliberate. D5's override
+# is the most likely thing to have just crashed five times -- it is whatever
+# someone scp'd onto the machine two minutes ago. The image's own binary is the
+# one with a build behind it, so it is the one asked to draw the apology.
+#
+# Not supervised, and not restarted if it dies. A respawn loop around the thing
+# that reports a respawn loop is how a diagnostic becomes the fault. One attempt;
+# if it exits or was never executable, fall through to the silent hold, which is
+# exactly the behaviour that was there before this existed. The journal has the
+# reason either way -- that is the part that never depended on a picture.
+show_error_screen() {
+    if [ ! -x "$BAKED_CLIENT" ]; then
+        err "no baked client to draw an error screen with; holding a blank screen"
+        hold_forever
+    fi
+
+    log "drawing the error screen with $BAKED_CLIENT"
+    MARWANOS_SHELL_ERROR_SCREEN=1 "$BAKED_CLIENT"
+    err "the error screen itself exited with status $? -- holding a blank screen"
+    hold_forever
+}
+
 # M3's supervision spec, scaffolded now because M1 is where the first client
 # runs and a session that died to a console would fail D6 the first time the
 # placeholder crashed.
 #
-# Restarts are immediate. "Back at the grid in under three seconds" is an exit
+# Restarts are immediate. "Back at the shell in under three seconds" is an exit
 # criterion, so there is no backoff worth tuning; the guard is the only brake.
 # The window is a fixed sixty seconds rather than a sliding one, deliberately:
 # a client that crashes four times a minute forever is still broken, but it is
@@ -255,7 +282,10 @@ supervise_client() {
 
         if [ ! -x "$_client" ]; then
             err "client $_client is missing or not executable"
-            hold_forever
+            # Worth trying: the usual cause is a dev override that was deleted or
+            # arrived without its executable bit, and show_error_screen reaches
+            # for the baked client, which is a different file entirely.
+            show_error_screen
         fi
 
         log "starting client $_client"
@@ -283,8 +313,8 @@ supervise_client() {
 
         if [ "$_crashes" -ge "$CRASH_LIMIT" ]; then
             err "client crashed $_crashes times in under ${CRASH_WINDOW}s; not respawning"
-            err "compositor is still up with an empty screen -- recover over devmode ssh"
-            hold_forever
+            err "the compositor is still up; drawing the error screen"
+            show_error_screen
         fi
     done
 }

@@ -27,14 +27,11 @@ extends RefCounted
 ## font size to 30 so a control that forgets to set one renders too big rather
 ## than invisibly small.
 ##
-## Interactive elements are at least 32 epx / 64 px tall. A tile is far above it.
+## Interactive elements are at least 32 epx / 64 px tall. A card is far above it.
 ##
 ## Colour stays inside RGB 16-235. TVs band and bloom at the extremes of the
 ## range, and the plan's risk table already treats TV colour behaviour as
 ## untrusted. Nothing here is pure black or pure white.
-##
-## Columns are capped at 6 by Microsoft's rule that traversal should take no more
-## than six clicks edge to edge. Four is what the placeholder catalogue uses.
 
 const BASE_WIDTH := 1920
 const BASE_HEIGHT := 1080
@@ -43,42 +40,75 @@ const BASE_HEIGHT := 1080
 const SAFE_MARGIN_X := 96
 const SAFE_MARGIN_Y := 54
 
-const GRID_COLUMNS := 4
-const GRID_SEPARATION := 32
+# ---------------------------------------------------------------------------
+# The console-style home rail
+#
+# A horizontal row of cards with one enlarged selection, rather than a grid. The
+# difference is not decoration: a rail has ONE axis, so left and right are the
+# only moves that mean anything and there is no ambiguity about where focus goes
+# next -- which is the property that makes a games console readable from a sofa
+# with a thumbstick. The grid's 2D neighbour table exists to paper over exactly
+# that ambiguity.
+#
+# The selected card sits at a FIXED x on screen and the rail slides underneath
+# it. Anchoring the selection rather than the strip is what stops the eye having
+# to re-find the cursor after every press.
 
-# Well above the 64 px interactive floor; the real height comes from the grid
-# filling the space between the header and the hint row.
-const TILE_MIN_HEIGHT := 200
-const TILE_PADDING := 18
-const TILE_CORNER_RADIUS := 14
+## Unfocused card. Square, because a square is the only aspect ratio that reads
+## the same whether the art is portrait key art or a square icon, and Phase 1
+## does not get to choose what AppStream hands it.
+const CARD_SIZE := 200
+
+## The selected card. Roughly 1.7x, which is the point where the size difference
+## is legible at three metres rather than merely present -- the same argument as
+## FOCUS_RING_WIDTH being a floor to multiply rather than a value to copy.
+const CARD_FOCUSED_SIZE := 340
+
+const CARD_GAP := 26
+const CARD_CORNER_RADIUS := 12
+
+## How long the rail takes to slide and the card to grow. Long enough to read as
+## motion, short enough that holding a direction does not feel like wading --
+## FocusRepeat's hold-repeat interval is the real ceiling on this.
+const RAIL_TWEEN_SECONDS := 0.18
+
+## The hero art behind everything, at rest. The art is a full-bleed wash of the
+## selected entry's accent; at full strength it would make white text illegible,
+## and the number is chosen so TEXT_PRIMARY stays above 4.5:1 against the
+## brightest accent in the placeholder catalogue.
+const HERO_DIM := 0.22
+
+## Height of the gradient that darkens the lower half, as a fraction of the
+## surface. Text sits inside it; the wash is only visible above.
+const HERO_GRADIENT_FRACTION := 0.62
+
+const SIZE_HERO_TITLE := 72
+const SIZE_TOPBAR := 28
 
 # The focus indicator runs on three channels at once, because colour alone is
 # unreliable on a TV and because WCAG 2.2 SC 2.4.13 asks for a >= 3:1 contrast
 # between the focused and unfocused states of the same pixels -- a state-change
 # ratio, which one channel struggles to carry. The channels are: a ring
-# (FOCUS_RING vs the tile beneath it is ~8:1), a brighter surface, and scale.
+# (FOCUS_RING vs the card beneath it is ~8:1), a brighter surface, and size --
+# the card growing from CARD_SIZE to CARD_FOCUSED_SIZE.
 #
 # WCAG's 2-CSS-px thickness figure is calibrated for a monitor at desk distance
 # and is invisible from a sofa. Take the contrast requirement as binding and the
 # thickness as a floor to multiply.
 const FOCUS_RING_WIDTH := 6
-const IDLE_BORDER_WIDTH := 2
-const FOCUS_SCALE := 1.05
-const FOCUS_TWEEN_SECONDS := 0.10
 
 const SIZE_WORDMARK := 56
-const SIZE_TILE_TITLE := 34
 const SIZE_BODY := 30
 const SIZE_SUPPLEMENTAL := 26
 
-## Vertical breathing room between the header, the grid and the hint row.
+## Vertical breathing room between the top bar, the title block, the rail and
+## the hint row.
 const SECTION_GAP := 28
 
 # RGB 16-235, light-on-dark, no hue carrying meaning on its own.
 const BACKGROUND := Color(0.078431, 0.086275, 0.101961, 1.0)
 const SURFACE := Color(0.149020, 0.164706, 0.196078, 1.0)
 const SURFACE_FOCUS := Color(0.290196, 0.321569, 0.376471, 1.0)
-const BORDER_IDLE := Color(0.227451, 0.250980, 0.290196, 1.0)
 const FOCUS_RING := Color(0.909804, 0.917647, 0.933333, 1.0)
 const TEXT_PRIMARY := Color(0.886275, 0.901961, 0.921569, 1.0)
 const TEXT_SECONDARY := Color(0.588235, 0.619608, 0.666667, 1.0)
@@ -86,36 +116,50 @@ const TEXT_ALERT := Color(0.921569, 0.690196, 0.360784, 1.0)
 const ACCENT_FALLBACK := Color(0.290196, 0.321569, 0.376471, 1.0)
 
 
-## The tile's resting background.
-static func tile_idle_box() -> StyleBoxFlat:
+## A rail card at rest. No border: on a rail the selection is carried by size and
+## by the ring, and a border on every card competes with both.
+static func card_idle_box() -> StyleBoxFlat:
 	var box := StyleBoxFlat.new()
 	box.bg_color = SURFACE
-	box.set_border_width_all(IDLE_BORDER_WIDTH)
-	box.border_color = BORDER_IDLE
-	box.set_corner_radius_all(TILE_CORNER_RADIUS)
+	box.set_corner_radius_all(CARD_CORNER_RADIUS)
 	return box
 
 
-## The tile's background while focused -- the brightness channel.
-static func tile_focus_box() -> StyleBoxFlat:
+## The selected card. Brighter surface plus the ring -- see the three-channel
+## comment above FOCUS_RING_WIDTH.
+static func card_focus_box() -> StyleBoxFlat:
 	var box := StyleBoxFlat.new()
 	box.bg_color = SURFACE_FOCUS
-	box.set_border_width_all(IDLE_BORDER_WIDTH)
-	box.border_color = BORDER_IDLE
-	box.set_corner_radius_all(TILE_CORNER_RADIUS)
+	box.set_corner_radius_all(CARD_CORNER_RADIUS)
 	return box
 
 
-## The focus ring, drawn over whichever background is current. draw_center is off
-## so this is purely an outline and the brightness channel stays independent of
-## it.
-static func tile_focus_ring() -> StyleBoxFlat:
+static func card_focus_ring() -> StyleBoxFlat:
 	var box := StyleBoxFlat.new()
 	box.draw_center = false
 	box.set_border_width_all(FOCUS_RING_WIDTH)
 	box.border_color = FOCUS_RING
-	box.set_corner_radius_all(TILE_CORNER_RADIUS)
+	box.set_corner_radius_all(CARD_CORNER_RADIUS)
 	return box
+
+
+## Top-to-bottom transparent-to-dark, so the title and rail keep their contrast
+## over any hero wash. A GradientTexture2D rather than a shader: it is one
+## resource, it costs nothing on llvmpipe, and it is reviewable as numbers.
+static func hero_gradient() -> GradientTexture2D:
+	var gradient := Gradient.new()
+	gradient.set_color(0, Color(BACKGROUND.r, BACKGROUND.g, BACKGROUND.b, 0.0))
+	gradient.set_color(1, Color(BACKGROUND.r, BACKGROUND.g, BACKGROUND.b, 0.96))
+
+	var texture := GradientTexture2D.new()
+	texture.gradient = gradient
+	texture.fill_from = Vector2(0, 0)
+	texture.fill_to = Vector2(0, 1)
+	# Small: it is stretched across the surface and the ramp is linear, so there
+	# is nothing for more texels to describe.
+	texture.width = 2
+	texture.height = 256
+	return texture
 
 
 ## The bordered square behind a button glyph in the hint row.
