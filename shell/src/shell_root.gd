@@ -73,6 +73,33 @@ func _ready() -> void:
 	_ensure_focus()
 
 	ShellLog.info("home rail ready with %d cards" % _tiles.size())
+	_log_rail_geometry()
+
+
+## Says where the rail actually ended up, for the same reason Kiosk logs the
+## window and screen geometry: this appliance has no console, so a layout that
+## lands in the wrong place is otherwise a thing you can only photograph.
+##
+## The two numbers that matter are the rail band, which should span the whole
+## output because the strip is full-bleed, and the selected card's left edge,
+## which should sit on SAFE_MARGIN_X. They are different numbers on purpose --
+## conflating them is exactly the bug this logging was added alongside, where the
+## strip was clipped to the safe area and cards were cut off at an invisible
+## interior line.
+func _log_rail_geometry() -> void:
+	# Deferred: containers have not laid out on the frame they are built, so
+	# every rect read here would be zero.
+	await get_tree().process_frame
+	if not is_instance_valid(_rail_viewport) or _tiles.is_empty():
+		return
+
+	var band := _rail_viewport.get_global_rect()
+	ShellLog.info("rail band: x %.0f..%.0f (width %.0f), height %.0f"
+		% [band.position.x, band.end.x, band.size.x, band.size.y])
+
+	var first: Control = _tiles[0]
+	ShellLog.info("first card rests at x %.0f (safe margin is %d)"
+		% [first.get_global_rect().position.x, TvTheme.SAFE_MARGIN_X])
 
 
 # ---------------------------------------------------------------------------
@@ -109,13 +136,23 @@ func _build() -> void:
 	scrim.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(scrim)
 
-	# The TV-safe inset. The hero and the scrim above may bleed past it; text,
-	# cards and focus rings never may, which is why everything else is inside.
+	# THE VERTICAL TV-SAFE INSET ONLY. The horizontal one is applied per row by
+	# _inset(), and the rail is deliberately the one row that does not get it.
+	#
+	# It used to be applied here, to everything at once, and that produced the
+	# defect this structure exists to fix: the rail's clip_contents clipped to
+	# this container's rect, so cards were guillotined at an invisible line 96 px
+	# in from each screen edge with empty background beyond it. A card has to
+	# leave the screen at the SCREEN's edge or the eye reads the cut as damage.
+	#
+	# The rail is background-class furniture, like the hero and the scrim above
+	# it: it may bleed. What must stay inside the safe area is the SELECTED card
+	# -- which is where the focus ring is and the only card anyone is reading --
+	# and that is handled by resting the selection at SAFE_MARGIN_X in
+	# _scroll_to_selected rather than by clipping the strip it sits on.
 	var safe := MarginContainer.new()
 	safe.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	safe.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	safe.add_theme_constant_override("margin_left", TvTheme.SAFE_MARGIN_X)
-	safe.add_theme_constant_override("margin_right", TvTheme.SAFE_MARGIN_X)
 	safe.add_theme_constant_override("margin_top", TvTheme.SAFE_MARGIN_Y)
 	safe.add_theme_constant_override("margin_bottom", TvTheme.SAFE_MARGIN_Y)
 	add_child(safe)
@@ -125,7 +162,7 @@ func _build() -> void:
 	column.add_theme_constant_override("separation", TvTheme.SECTION_GAP)
 	safe.add_child(column)
 
-	column.add_child(_build_topbar())
+	column.add_child(_inset(_build_topbar()))
 
 	# Pushes everything below it to the bottom of the surface. The rail sitting
 	# low is not a style choice: the hero art it is drawn over is the thing being
@@ -136,9 +173,22 @@ func _build() -> void:
 	spacer.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	column.add_child(spacer)
 
-	column.add_child(_build_title_block())
+	column.add_child(_inset(_build_title_block()))
 	column.add_child(_build_rail())
-	column.add_child(_build_hints())
+	column.add_child(_inset(_build_hints()))
+
+
+## Wraps a row in the horizontal TV-safe inset.
+##
+## Everything that is text or carries a focus ring goes through this. The rail
+## deliberately does not -- see the comment in _build().
+func _inset(control: Control) -> Control:
+	var margin := MarginContainer.new()
+	margin.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	margin.add_theme_constant_override("margin_left", TvTheme.SAFE_MARGIN_X)
+	margin.add_theme_constant_override("margin_right", TvTheme.SAFE_MARGIN_X)
+	margin.add_child(control)
+	return margin
 
 
 func _build_topbar() -> Control:
@@ -207,9 +257,12 @@ func _build_title_block() -> Control:
 
 
 func _build_rail() -> Control:
-	# A fixed-height window onto a strip that is wider than the screen. clip_
-	# contents is what makes the cards disappear at the edges instead of drawing
-	# over the safe margin; without it the strip is simply a very wide row.
+	# A fixed-height window onto a strip that is wider than the screen, spanning
+	# the FULL width of the output rather than the safe area. clip_contents is
+	# what makes a card vanish as it crosses the screen edge instead of drawing
+	# past it; without it the strip is simply a very wide row. Because this
+	# viewport now reaches the physical edges, that clip happens where the panel
+	# ends, which is the only place a cut is invisible.
 	_rail_viewport = Control.new()
 	_rail_viewport.custom_minimum_size = Vector2(0, TvTheme.CARD_FOCUSED_SIZE)
 	_rail_viewport.clip_contents = true
@@ -223,6 +276,11 @@ func _build_rail() -> Control:
 	# CARD_FOCUSED_SIZE opens in both directions rather than pushing downwards.
 	_rail.set_anchors_preset(Control.PRESET_LEFT_WIDE)
 	_rail.grow_vertical = Control.GROW_DIRECTION_BOTH
+	# Start where the first selection will settle, so the opening frame is
+	# already right. _scroll_to_selected waits a frame before it can measure, and
+	# without this the rail would draw once hard against the screen edge and then
+	# jump inwards -- a flinch on the very first frame the appliance ever shows.
+	_rail.position.x = TvTheme.SAFE_MARGIN_X
 	_rail_viewport.add_child(_rail)
 
 	return _rail_viewport
@@ -322,8 +380,13 @@ func _fade_hero_to(accent: Color) -> void:
 	_hero_tween.tween_property(_hero, "color", target, TvTheme.RAIL_TWEEN_SECONDS)
 
 
-## Slides the strip so the selected card's left edge sits at the viewport's left
-## edge. See the class header: the selection is what stays put.
+## Slides the strip so the selected card's left edge rests on the TV-safe margin.
+## See the class header: the selection is what stays put.
+##
+## SAFE_MARGIN_X, not zero, and that is what keeps the selection inside the safe
+## area now that the strip itself spans the full output. The viewport's left edge
+## is the screen's left edge; resting the selection there would push the focus
+## ring into the region a TV is allowed to overscan away.
 ##
 ## Deferred by one frame because the card that just took focus is mid-tween to
 ## its larger size, and the HBoxContainer has not re-flowed yet -- reading
@@ -337,7 +400,7 @@ func _scroll_to_selected() -> void:
 	if focused == null or not _tiles.has(focused):
 		return
 
-	var target_x := -focused.position.x
+	var target_x := TvTheme.SAFE_MARGIN_X - focused.position.x
 
 	if _rail_tween != null and _rail_tween.is_valid():
 		_rail_tween.kill()
