@@ -111,10 +111,29 @@ FLASH_CONFIRM=yes scripts/flash-usb.sh \
 ```
 
 **Pull sticks physically while still attached to WSL.** Windows rewrites the GPT of
-any removable disk it enumerates; it has corrupted this stick once already
-(recovered with `sgdisk -e`, no reflash needed — both GPT entry-array copies
-survive that failure). `usbipd detach` hands it straight back to Windows and
-restarts that race, which is why it is never the way to remove one.
+any removable disk it enumerates; it has now corrupted this stick **twice**
+(2026-08-05 and again on 2026-08-06, minutes after a clean verify). Both times
+`sgdisk -e` repaired it in place with no reflash — both GPT entry-array copies
+survive that failure, and the filesystems are never touched.
+
+The second time taught the thing the first one did not. **The attach lapses on its
+own.** `usbipd attach --wsl` holds only while a WSL 2 distribution is *running*,
+and WSL shuts its distros down when idle; when the last one goes, the stick
+reverts to `Shared` and Windows enumerates it with nobody having touched
+anything. So it is not only `usbipd detach` that hands the stick back — walking
+away does too.
+
+Treat a flash and the physical pull as one continuous action. If they cannot be,
+pin a distro open across the gap:
+
+```powershell
+Start-Process wsl.exe -ArgumentList "-d","FedoraLinux-43","-e","sleep","14400" -WindowStyle Hidden
+```
+
+and re-verify before booting regardless. The signature to recognise, from
+`sgdisk -v`, is a gap between the main metadata at sector 1 and the main
+partition table at sector 2016 — that is Windows caught mid-rewrite, not a dying
+stick.
 
 ### Reading a journal off a stick after a boot
 
