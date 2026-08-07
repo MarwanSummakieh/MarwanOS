@@ -22,8 +22,34 @@ extends RefCounted
 ## real library would make it impossible to tell, from a photograph of the TV,
 ## whether the rail was showing baked data or something it had actually enumerated.
 
+## The one real entry, and the only one carrying an "exec". It is FIRST so the
+## rail opens on it -- the spike's whole point is that pressing A on the card the
+## machine already has focused starts a real application, with no navigation in
+## between to confuse a failure with a missed input.
+##
+## `flatpak run` rather than a path: the app is a system flatpak installed by
+## marwanos-steam-install, and `flatpak run` is the entry point that sets up the
+## sandbox, the runtime and the environment. DISPLAY is inherited from the shell,
+## which is how it lands on gamescope (see Launcher._spawn).
+##
+## -silent starts Steam without its own splash window, which on a compositor
+## running --force-windows-fullscreen would otherwise be fullscreened for the
+## second or two before the real window exists.
+##
+## Phase 1 deletes this alongside the rest of the file: marwand enumerates real
+## installs and this entry stops being special-cased.
+const STEAM := {
+	"id": "com.valvesoftware.Steam",
+	"title": "Steam",
+	"subtitle": "Flatpak from Flathub -- the first real launch",
+	"accent": "#2A3F5A",
+	"exec": ["flatpak", "run", "com.valvesoftware.Steam", "-silent"],
+}
+
+
 static func entries() -> Array:
 	return [
+		STEAM,
 		{"id": "placeholder.01", "title": "Placeholder One", "subtitle": "Nothing is installed yet", "accent": "#3E6FA8"},
 		{"id": "placeholder.02", "title": "Placeholder Two", "subtitle": "Phase 1 fills this in", "accent": "#5B7F52"},
 		{"id": "placeholder.03", "title": "Placeholder Three", "subtitle": "From ListInstalled", "accent": "#8A5A78"},

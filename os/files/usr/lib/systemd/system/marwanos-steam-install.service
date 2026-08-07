@@ -1,0 +1,39 @@
+[Unit]
+# Installs Steam from Flathub on the first boot that has a network.
+#
+# Deliberately NOT ordered before greetd. The shell must come up whether or not
+# this unit ever succeeds -- a machine that shows a black screen because a
+# download is slow is exactly the failure this project keeps designing against.
+# So the rail is on the TV while Steam arrives behind it, and if the cable is
+# out the only consequence is a <3> line in the journal.
+Description=Install Steam from Flathub (first boot with a network)
+Documentation=file:///usr/lib/marwanos/steam-install
+After=network-online.target flatpak-add-fedora-repos.service
+Wants=network-online.target
+
+# The stamp is the whole idempotency story: once the install is proven, this
+# unit stops running at all rather than re-checking a 4 GiB download every boot.
+ConditionPathExists=!/var/marwanos/steam-installed
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/lib/marwanos/steam-install
+
+# Journal-shaped like everything else here, so `journalctl -t marwanos-steam`
+# is the whole story and the <N> prefixes survive as syslog priorities.
+StandardOutput=journal
+StandardError=journal
+SyslogLevelPrefix=true
+SyslogIdentifier=marwanos-steam
+
+# A multi-GB download over a slow link is not a hang. The default 90s would kill
+# it mid-transfer and leave a partial install behind.
+TimeoutStartSec=3600
+
+# Failure must never cascade. This unit not succeeding is a missing app, not a
+# broken appliance.
+Restart=no
+
+[Install]
+WantedBy=multi-user.target
