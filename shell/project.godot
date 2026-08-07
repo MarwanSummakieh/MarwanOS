@@ -58,12 +58,22 @@ window/size/viewport_height=1080
 window/size/mode=3
 window/size/borderless=true
 
-; One fixed 1920x1080 design surface, scaled to whatever the TV negotiated. Every
-; margin and type size in src/tv_theme.gd is expressed against it, so the 5%
-; TV-safe inset stays 5% at any output resolution instead of shrinking on a 4K
+; One fixed 1920x1080 design surface, scaled to whatever the display negotiated.
+; Every margin and type size in src/tv_theme.gd is expressed against it, so the
+; 5% safe inset stays 5% at any output resolution instead of shrinking on a 4K
 ; panel.
+;
+; aspect=expand, NOT keep, and the 2026-08-07 hardware boot is why. The target
+; is a 3440x1440 ultrawide (21:9). Under "keep" the shell drew 2560x1440 with a
+; 440 px black bar down each side -- a quarter of the panel unused, and the
+; journal said so in as many words ("stretch: drawing 2560x1440 with a 440 px
+; black bar each side"). "expand" keeps the 1080 design height and hands the
+; extra width to the layout instead of to bars, so the design surface becomes
+; ~2580x1080 on this panel and the rail simply shows more cards. Every screen
+; is built from anchors and containers against the safe inset, so nothing needs
+; to know the width changed.
 window/stretch/mode="canvas_items"
-window/stretch/aspect="keep"
+window/stretch/aspect="expand"
 
 ; display/display_server/driver.linuxbsd is deliberately absent, i.e. left at the
 ; default. Godot falls back in both directions -- an X11 project uses Wayland when
