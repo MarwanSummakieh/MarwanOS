@@ -1,0 +1,30 @@
+[Unit]
+# The wifi workflow's privileged half. See the script header for why the shell
+# is not allowed to do this itself, and what the request protocol is.
+#
+# After NetworkManager rather than network-online: this service TALKS to NM, so
+# it needs the daemon up, but it must not wait for a connection -- being unable
+# to connect is precisely the condition it exists to let someone fix.
+Description=Wi-Fi scan and join for the shell (/run/marwanos/wifi.*)
+Documentation=file:///usr/lib/marwanos/wifi
+After=NetworkManager.service
+Wants=NetworkManager.service
+
+[Service]
+Type=exec
+ExecStart=/usr/lib/marwanos/wifi
+
+# A wifi service that died silently would leave the screen showing a stale
+# network list with no way to notice -- worse than no list at all.
+Restart=always
+RestartSec=5
+
+# Journal-shaped like everything else here. Note the script never logs a
+# passphrase; see its header.
+StandardOutput=journal
+StandardError=journal
+SyslogLevelPrefix=true
+SyslogIdentifier=marwanos-wifi
+
+[Install]
+WantedBy=multi-user.target

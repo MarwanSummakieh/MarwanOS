@@ -597,12 +597,14 @@ RUN set -euxo pipefail; \
     chmod 0644 /usr/lib/systemd/system/marwanos-panel.service; \
     chmod 0644 /usr/lib/systemd/system/marwanos-netcheck.service; \
     chmod 0644 /usr/lib/systemd/system/marwanos-appscan.service; \
+    chmod 0644 /usr/lib/systemd/system/marwanos-wifi.service; \
     chmod 0644 "/usr/lib/systemd/system/marwanos-flatpak-install@.service"; \
     chmod 0755 /usr/lib/marwanos/session/marwanos-session; \
     chmod 0755 /usr/lib/marwanos/display/panel-policy; \
     chmod 0755 /usr/lib/marwanos/flatpak-install; \
     chmod 0755 /usr/lib/marwanos/netcheck; \
     chmod 0755 /usr/lib/marwanos/appscan; \
+    chmod 0755 /usr/lib/marwanos/wifi; \
     systemd-sysusers /usr/lib/sysusers.d/50-marwanos.conf; \
     for g in video render input; do \
         gid="$(getent group "$g" | cut -d: -f3)"; \
@@ -629,6 +631,8 @@ RUN set -euxo pipefail; \
         /usr/lib/systemd/system/multi-user.target.wants/marwanos-netcheck.service; \
     ln -sf ../marwanos-appscan.service \
         /usr/lib/systemd/system/multi-user.target.wants/marwanos-appscan.service; \
+    ln -sf ../marwanos-wifi.service \
+        /usr/lib/systemd/system/multi-user.target.wants/marwanos-wifi.service; \
     systemctl --no-reload mask getty@tty1.service autovt@tty1.service \
                                serial-getty@ttyS0.service; \
     ln -sf /dev/null /usr/lib/systemd/user/xdg-desktop-portal-gtk.service; \
@@ -652,11 +656,17 @@ RUN set -euxo pipefail; \
     test -x /usr/lib/marwanos/flatpak-install; \
     test -x /usr/lib/marwanos/netcheck; \
     test -x /usr/lib/marwanos/appscan; \
+    test -x /usr/lib/marwanos/wifi; \
     test -L /usr/lib/systemd/system/multi-user.target.wants/marwanos-panel.service; \
     test -L "/usr/lib/systemd/system/multi-user.target.wants/marwanos-flatpak-install@com.valvesoftware.Steam.service"; \
     test -L "/usr/lib/systemd/system/multi-user.target.wants/marwanos-flatpak-install@app.zen_browser.zen.service"; \
     test -L /usr/lib/systemd/system/multi-user.target.wants/marwanos-netcheck.service; \
     test -L /usr/lib/systemd/system/multi-user.target.wants/marwanos-appscan.service; \
+    test -L /usr/lib/systemd/system/multi-user.target.wants/marwanos-wifi.service; \
+    : "nmcli is the whole wifi workflow's mechanism -- the shell asks, this"; \
+    : "answers. A base image that stopped shipping it would leave the Wi-Fi"; \
+    : "screen permanently reporting no adapter on a machine with a working one."; \
+    command -v nmcli; \
     : "flatpak is the whole delivery mechanism for the Steam spike; a base image"; \
     : "that quietly stopped shipping it would fail at runtime on the target,"; \
     : "which is the one place with no way to read the error."; \
@@ -704,7 +714,40 @@ COPY --from=shell-export /out/ /
 
 RUN set -euxo pipefail; \
     test -x /usr/lib/marwanos/shell/marwanos-shell; \
-    test -s /usr/lib/marwanos/shell/marwanos-shell
+    test -s /usr/lib/marwanos/shell/marwanos-shell; \
+    : "THE SMOKE RUN, and it exists because of a bug that got all the way to a"; \
+    : "verification round: `0o600` is not valid GDScript, so an autoload failed"; \
+    : "to parse -- and NOTHING in this build noticed. The export packs a script"; \
+    : "with a parse error without complaint, the binary is the right size, the"; \
+    : "ELF is valid, and every assertion above passes. On the appliance the"; \
+    : "symptom is a shell that starts, looks correct, and has silently lost a"; \
+    : "whole feature; for a parse error in a different file it is the black TV"; \
+    : "this project keeps designing against."; \
+    : ""; \
+    : "--headless uses the dummy display server, so this needs no X and no GPU."; \
+    : "--quit exits after the first frame, by which point every autoload has"; \
+    : "run its _ready and every script has been parsed. HOME is forced because"; \
+    : "Godot creates a user data directory before it draws anything."; \
+    : ""; \
+    : "Only SCRIPT-level failures fail the build. The exit code is deliberately"; \
+    : "ignored: a headless start has plenty of benign reasons to be non-zero on"; \
+    : "a machine with no display, and making those fatal would be a flaky build"; \
+    : "that teaches people to distrust the check."; \
+    mkdir -p /tmp/shell-smoke; \
+    smoke_log=/tmp/shell-smoke/out.txt; \
+    HOME=/tmp/shell-smoke XDG_RUNTIME_DIR=/tmp/shell-smoke \
+        MARWANOS_SHELL_WINDOWED=1 \
+        /usr/lib/marwanos/shell/marwanos-shell \
+        --headless --quit --audio-driver Dummy > "$smoke_log" 2>&1 || true; \
+    cat "$smoke_log"; \
+    if grep -qE 'SCRIPT ERROR|Parse Error|Failed to load script|does not inherit from' "$smoke_log"; then \
+        echo "FATAL: the shell logged a script error on a headless start (above)."; \
+        echo "A parse error here means an autoload never instantiated."; \
+        exit 1; \
+    fi; \
+    grep -q 'home rail ready with' "$smoke_log" \
+        || { echo "FATAL: the shell started but never built its home rail."; exit 1; }; \
+    rm -rf /tmp/shell-smoke
 
 # These ARGs are declared here, not at the top, and the placement is load-bearing.
 # A changed ARG invalidates every layer after its declaration. MARWANOS_VERSION

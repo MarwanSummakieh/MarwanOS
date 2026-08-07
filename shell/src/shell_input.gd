@@ -1,7 +1,16 @@
 extends Node
 
-## The six actions the shell is allowed to use, defined here rather than in
+## The eight actions the shell is allowed to use, defined here rather than in
 ## project.godot.
+##
+## It was six until the on-screen keyboard landed (ADR 0006, fifth amendment).
+## Six was never a cap for its own sake -- it was the count that fell out of
+## "define exactly what is used, explicitly, at device -1" -- and the two added
+## are both confined to keyboard.gd, where the alternative was making every
+## backspace a trip across a 5x10 grid with a thumbstick. Nothing outside that
+## screen reads them, and neither is required for the shell to be navigable:
+## Shift and Delete are on-screen keys as well, so a pad missing these buttons
+## loses a shortcut rather than the feature.
 ##
 ## Why here. Godot serialises an InputMap override into project.godot as a
 ## one-line `Object(InputEventJoypadButton,"resource_name":"","device":0,...)`
@@ -48,6 +57,10 @@ const STICK_DEADZONE := 0.5
 ## exactly like a crash.
 const REQUIRED_JOYPAD_ACTIONS := [
 	"ui_up", "ui_down", "ui_left", "ui_right", "ui_accept", "ui_cancel",
+	# The keyboard's two. They are shortcuts rather than load-bearing, but the
+	# check exists to notice a binding that quietly vanished, and a pad that
+	# lost Square/Triangle should say so rather than boot silently.
+	"ui_shell_x", "ui_shell_y",
 ]
 
 
@@ -92,6 +105,24 @@ func _ready() -> void:
 	_define("ui_cancel", [
 		_key(KEY_ESCAPE),
 		_button(JOY_BUTTON_B),
+	], STICK_DEADZONE)
+
+	# The keyboard's two shortcuts. JOY_BUTTON_X is the left face button (Square
+	# on a DualSense), JOY_BUTTON_Y the top one (Triangle) -- Godot's mapping
+	# database normalises both pad layouts to these names. The keyboard bindings
+	# are what make the desk harness able to drive the screen at all.
+	#
+	# `ui_select` is still deliberately left alone: it is a built-in action on
+	# the same physical button as ui_shell_y, and nothing here reads it, so the
+	# appliance does not gain a second undocumented activate.
+	_define("ui_shell_x", [
+		_key(KEY_SHIFT),
+		_button(JOY_BUTTON_X),
+	], STICK_DEADZONE)
+
+	_define("ui_shell_y", [
+		_key(KEY_BACKSPACE),
+		_button(JOY_BUTTON_Y),
 	], STICK_DEADZONE)
 
 	_verify()
@@ -149,7 +180,11 @@ func _verify() -> void:
 		if not _has_joypad_binding(action):
 			missing.append(action)
 	if missing.is_empty():
-		ShellLog.info("input map ready; joypad bindings present on all six actions")
+		# Counted, not spelled out: the literal said "six" for a while after the
+		# map grew to eight, which is exactly the kind of quiet lie a journal
+		# should not contain on a machine where the journal is the only witness.
+		ShellLog.info("input map ready; joypad bindings present on all %d required actions"
+			% REQUIRED_JOYPAD_ACTIONS.size())
 		return
 	ShellLog.error(
 		"no joypad binding on %s -- the shell will be unusable from a controller"

@@ -438,3 +438,41 @@ Note the image no longer carries `console=ttyS0`; add it back per-run via
 - Both of the above were stated confidently — and wrongly — by research agents
   before anyone measured them. Keep the adversarial verify stage on any fan-out,
   and treat a measured run as the arbiter over a well-sourced claim.
+
+## Wi-Fi can be set up from the couch now (2026-08-07, same session)
+
+The 2026-08-07 boot failed to bring the radio up, and that exposed the real
+cost of "settings are read-only": **the appliance could not be repaired from
+itself.** Every recovery path needs a network, and giving it one meant a second
+computer and a hand-written NetworkManager profile. ADR 0006's **fifth
+amendment** reverses that, for Wi-Fi only.
+
+- **`marwanos-wifi`** (new service) owns every `nmcli` call. It writes
+  `/run/marwanos/wifi.state` (`no-device`, `rf-killed`, `idle`, `scanning`,
+  `connecting`, `connected`, `failed` + detail) and `/run/marwanos/wifi.networks`
+  (`ssid TAB signal TAB security TAB in-use`, deduped by SSID keeping the
+  strongest, sorted by signal).
+- **The shell asks by writing a file** — `/run/marwanos/wifi/request`, three
+  verbs (`scan`, `connect`, `forget`), one field per line. This is the first
+  seam here that goes both ways. It is deliberately narrow: no "run this", and
+  the SSID reaches `nmcli` as an argv element, never interpolated — anyone in
+  radio range can name an AP `; rm -rf /`.
+- **Passphrase handling**, stated plainly: it lives in that request file
+  (tmpfs, 0600, 0700 player-owned dir) between the shell writing it and the
+  service consuming and deleting it. Nothing logs it — the shell logs the SSID
+  and a character count; the service truncates nmcli's error text at the word
+  `password` because some failure paths echo it back.
+- **On-screen keyboard** (`keyboard.gd`): 5×10 grid plus Shift/Space/Delete/Done,
+  every key a real focusable Button with an explicit neighbour table. Moving
+  between rows of different widths maps by proportion, not index. Masked entry.
+  The input map grew from six actions to **eight** — `ui_shell_x` (Shift) and
+  `ui_shell_y` (Delete, and Forget on the network list), both shortcuts for
+  on-screen keys rather than requirements.
+- **`no-device` is a first-class screen**, not an empty list: it names Windows
+  Fast Startup as the likely cause and says what to do. That is this machine's
+  actual failure, and an empty list would send someone toward the router.
+- **`forget`** exists because a network saved with a wrong passphrase otherwise
+  fails on every boot with no way to clear it from the couch.
+
+Still read-only: every other settings row. This is one exception with a named
+justification, not a mutable settings surface.
