@@ -20,9 +20,9 @@ extends Node
 ##    d-pad and stick bindings answer to joypad index 0 and nothing else. Godot's
 ##    joypad index allocation has open bugs (godot#97539, godot#76879, godot#17566)
 ##    and a hotplug race can leave the only pad on index 1 -- at which point the
-##    grid renders perfectly and ignores the controller, which on an appliance
-##    with no terminal is indistinguishable from a hung shell. Every event added
-##    here is device -1.
+##    home rail renders perfectly and ignores the controller, which on an
+##    appliance with no terminal is indistinguishable from a hung shell. Every
+##    event added here is device -1.
 ##
 ## 2. THE ACTION BUTTONS. Sources disagree about whether 4.x binds A to
 ##    `ui_accept` and B to `ui_cancel` at all, and the answer has to be right on a
@@ -31,9 +31,9 @@ extends Node
 ##
 ## DEADZONE. ProjectSettings registers the built-in directional actions with
 ##    InputMap::DEFAULT_TOGGLE_DEADZONE (0.5), not the 0.2 that
-##    InputMap.add_action() uses. 0.5 is kept: a tile grid wants a deliberate push,
-##    and a worn stick that drifts past 0.2 would walk the focus on its own. It is
-##    a number to tune from the couch, which is why it is named.
+##    InputMap.add_action() uses. 0.5 is kept: a card rail wants a deliberate
+##    push, and a worn stick that drifts past 0.2 would walk the focus on its own.
+##    It is a number to tune from the couch, which is why it is named.
 ##
 ## `ui_select` (Triangle) is deliberately left alone. Nothing in this shell reads
 ## it, and adding A to it would give the appliance a second, undocumented activate.
@@ -152,7 +152,7 @@ func _verify() -> void:
 		ShellLog.info("input map ready; joypad bindings present on all six actions")
 		return
 	ShellLog.error(
-		"no joypad binding on %s -- the grid will be unusable from a controller"
+		"no joypad binding on %s -- the shell will be unusable from a controller"
 		% ", ".join(missing)
 	)
 

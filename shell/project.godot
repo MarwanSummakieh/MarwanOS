@@ -44,6 +44,7 @@ ShellInput="*res://src/shell_input.gd"
 PlayerOne="*res://src/player_one.gd"
 FocusRepeat="*res://src/focus_repeat.gd"
 Launcher="*res://src/launcher.gd"
+Settings="*res://src/settings.gd"
 
 [display]
 
