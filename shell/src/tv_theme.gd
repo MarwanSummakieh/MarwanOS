@@ -134,6 +134,11 @@ static func card_focus_box() -> StyleBoxFlat:
 	return box
 
 
+## The focus ring. draw_center is off so it is purely an outline and the
+## brightness channel stays independent of it. The card draws this on an overlay
+## child above its full-bleed art, NOT as Button's "focus" stylebox -- a Button
+## paints that box before its children, so the art would swallow it whole. See
+## tile.gd's _build_contents.
 static func card_focus_ring() -> StyleBoxFlat:
 	var box := StyleBoxFlat.new()
 	box.draw_center = false
