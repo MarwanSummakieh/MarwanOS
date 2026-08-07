@@ -65,11 +65,93 @@ func launch(entry: Dictionary) -> void:
 ## Phase 0's stand-in for running something else: a fullscreen scene that covers
 ## the home rail until it is dismissed. It exists to prove the seam and the focus
 ## handoff, not to look like anything.
+##
+## An entry carrying an "exec" array takes the other branch and starts a REAL
+## process -- see _spawn. That branch is a spike, not the architecture.
 func _run(entry: Dictionary) -> void:
+	var exec: Array = entry.get("exec", [])
+	if not exec.is_empty():
+		_spawn(exec)
+		return
+
 	_placeholder = LaunchPlaceholder.new()
 	_placeholder.entry = entry
 	_placeholder.closed.connect(_on_closed, CONNECT_ONE_SHOT)
 	get_tree().root.add_child(_placeholder)
+
+
+## ============================================================================
+## THE SPIKE, AND IT IS MARKED AS ONE.
+##
+## This answers exactly one question -- can this stack run a real application on
+## the appliance's compositor at all -- and it answers it the cheapest way that
+## is not a lie: spawn the process, watch the pid, put the rail back when it
+## dies. Steam is the first thing pointed at it.
+##
+## IT VIOLATES THE RULE THIS FILE'S HEADER STATES, deliberately and visibly. The
+## shell is a renderer; process supervision belongs in marwand, which is Phase 1
+## M1 and does not exist yet. Writing marwand to answer a feasibility question
+## would be building the answer before knowing whether the question has one. So
+## this stays until marwand lands and then it goes -- _run() sends `Launch` over
+## the WebSocket and this function is deleted whole, along with the poll timer.
+##
+## WHY IT SHOULD WORK. The shell is an X client on gamescope's XWayland, and a
+## child process inherits DISPLAY, so the app lands on the same compositor with
+## gamescope's --force-windows-fullscreen already pointed at it. That is the
+## same path Steam takes on a Deck. If it does not work, the journal says which
+## half failed rather than leaving a black screen to interpret.
+##
+## No stdout capture: the child inherits this process's descriptors, which
+## marwanos-session has already pointed at systemd-cat, so the app's own output
+## lands in the journal under the session's tag for free.
+## ============================================================================
+
+## How often to ask whether the launched process is still alive. Half a second
+## is far below the threshold where a person notices the rail coming back late,
+## and far above the cost of the check.
+const EXIT_POLL_SECONDS := 0.5
+
+var _pid: int = -1
+var _poll: Timer = null
+
+
+func _spawn(exec: Array) -> void:
+	var program := str(exec[0])
+	var args := PackedStringArray()
+	for i in range(1, exec.size()):
+		args.append(str(exec[i]))
+
+	ShellLog.info("spawning %s %s" % [program, " ".join(args)])
+	_pid = OS.create_process(program, args)
+
+	if _pid <= 0:
+		# The launch failed before anything drew. Handing the screen straight
+		# back is the honest response: the alternative is a hidden rail behind
+		# an application that never started, which on this machine is a black
+		# TV with no way out.
+		ShellLog.error("could not start %s -- returning to the rail" % program)
+		_on_closed()
+		return
+
+	ShellLog.info("started pid %d; watching for exit" % _pid)
+
+	_poll = Timer.new()
+	_poll.wait_time = EXIT_POLL_SECONDS
+	_poll.timeout.connect(_check_exit)
+	add_child(_poll)
+	_poll.start()
+
+
+func _check_exit() -> void:
+	if _pid > 0 and OS.is_process_running(_pid):
+		return
+	ShellLog.info("pid %d exited" % _pid)
+	_pid = -1
+	if is_instance_valid(_poll):
+		_poll.stop()
+		_poll.queue_free()
+		_poll = null
+	_on_closed()
 
 
 func _on_closed() -> void:

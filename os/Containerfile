@@ -568,6 +568,7 @@ RUN set -euxo pipefail; \
     chmod 0644 /usr/lib/systemd/system/marwanos-panel.service; \
     chmod 0755 /usr/lib/marwanos/session/marwanos-session; \
     chmod 0755 /usr/lib/marwanos/display/panel-policy; \
+    chmod 0755 /usr/lib/marwanos/steam-install; \
     systemd-sysusers /usr/lib/sysusers.d/50-marwanos.conf; \
     for g in video render input; do \
         gid="$(getent group "$g" | cut -d: -f3)"; \
@@ -581,12 +582,36 @@ RUN set -euxo pipefail; \
         /usr/lib/systemd/system/multi-user.target.wants/greetd.service; \
     ln -sf ../marwanos-panel.service \
         /usr/lib/systemd/system/multi-user.target.wants/marwanos-panel.service; \
+    ln -sf ../marwanos-steam-install.service \
+        /usr/lib/systemd/system/multi-user.target.wants/marwanos-steam-install.service; \
     systemctl --no-reload mask getty@tty1.service autovt@tty1.service \
                                serial-getty@ttyS0.service; \
     ln -sf /dev/null /usr/lib/systemd/user/xdg-desktop-portal-gtk.service; \
+    : "Services an appliance has no use for, masked to get userspace out of the"; \
+    : "way of the first frame. The 2026-08-07 boot spent 19.9s in userspace on"; \
+    : "a slow USB stick with no single offender -- it is the sum of many small"; \
+    : "units, so the fix is fewer units rather than a faster one. Each of these"; \
+    : "is inert on a machine with no modem, no NFS, no LVM, no SMART-capable"; \
+    : "disk and no mDNS to answer. chronyd is deliberately NOT here: the shell"; \
+    : "draws a clock. bluetooth is not here either -- Phase 3 wants it."; \
+    systemctl --no-reload mask \
+        ModemManager.service \
+        avahi-daemon.service \
+        smartd.service \
+        gssproxy.service \
+        rpc-statd-notify.service \
+        lvm2-monitor.service \
+        fedora-atomic-desktop-appstream-cache-refresh.service; \
     test -x /usr/lib/marwanos/session/marwanos-session; \
     test -x /usr/lib/marwanos/display/panel-policy; \
+    test -x /usr/lib/marwanos/steam-install; \
     test -L /usr/lib/systemd/system/multi-user.target.wants/marwanos-panel.service; \
+    test -L /usr/lib/systemd/system/multi-user.target.wants/marwanos-steam-install.service; \
+    : "flatpak is the whole delivery mechanism for the Steam spike; a base image"; \
+    : "that quietly stopped shipping it would fail at runtime on the target,"; \
+    : "which is the one place with no way to read the error."; \
+    command -v flatpak; \
+    test -L /etc/systemd/system/ModemManager.service; \
     test -f /usr/lib/systemd/logind.conf.d/50-marwanos-lid.conf; \
     test -L /etc/systemd/system/getty@tty1.service; \
     test -L /etc/systemd/system/autovt@tty1.service; \

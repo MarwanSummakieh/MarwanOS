@@ -1,0 +1,99 @@
+#!/usr/bin/env bash
+#
+# Install Steam from Flathub, unattended, on the first boot that has a network.
+#
+# WHY A ONESHOT AND NOT A COMMAND SOMEONE TYPES. This project's build host and
+# its target are the same machine (the Predator boots Windows off the internal
+# drive and MarwanOS off the stick), so at the moment MarwanOS is running there
+# is nobody to ssh in FROM. Every install step therefore has to be baked in
+# before the boot and read back out of the journal afterwards -- the same shape
+# as the 2026-08-05 diagnostic harness.
+#
+# WHY NOT IN THE IMAGE. A flatpak lands in /var/lib/flatpak, and /var is per
+# stick rather than part of the ostree commit -- so baking Steam into the
+# Containerfile would put ~3 GB into every image and still not survive as an
+# installed app. Installing at runtime is also what Phase 1 does for real
+# (marwand talks to Flathub), so this is the throwaway version of a permanent
+# path rather than a detour.
+#
+# ETHERNET IS REQUIRED. The Predator's wifi does not associate under MarwanOS
+# (ADR 0004), so with no cable this script finds no network, says so at <3>,
+# and exits without pretending otherwise. It does not mark itself done, so the
+# next boot with a cable retries.
+#
+set -uo pipefail
+
+TAG=marwanos-steam
+STAMP=/var/marwanos/steam-installed
+APP=com.valvesoftware.Steam
+FLATHUB=https://dl.flathub.org/repo/flathub.flatpakrepo
+
+info() { printf '<6>%s: %s\n' "$TAG" "$*"; }
+warn() { printf '<4>%s: %s\n' "$TAG" "$*"; }
+err()  { printf '<3>%s: %s\n' "$TAG" "$*" >&2; }
+
+if [ -e "$STAMP" ]; then
+    info "already installed (stamp $STAMP); nothing to do"
+    exit 0
+fi
+
+# Free space before anything. The root filesystem is 15.4 GiB with ~7 GiB of OS
+# on it, and Steam plus its runtime is 3-4 GiB -- worth refusing early and
+# loudly rather than filling the disk of a machine with no console.
+avail_mb=$(df -Pm /var | awk 'NR==2 {print $4}')
+info "free space on /var: ${avail_mb} MiB"
+if [ "${avail_mb:-0}" -lt 5000 ]; then
+    err "under 5 GiB free -- refusing to start a Steam install that would fill the disk"
+    exit 1
+fi
+
+# The network. NetworkManager-wait-online has already run by the time this unit
+# does, but "online" per NM is not the same as "Flathub answers", and a DNS or
+# route problem here is the difference between a 4 GiB download and a hang.
+info "waiting for Flathub to answer"
+reachable=""
+for attempt in $(seq 1 30); do
+    if curl -fsS --max-time 10 -o /dev/null "$FLATHUB"; then
+        reachable=yes
+        info "Flathub reachable after ${attempt} attempt(s)"
+        break
+    fi
+    sleep 5
+done
+
+if [ -z "$reachable" ]; then
+    err "no route to Flathub after 150s -- is the ethernet cable in?"
+    err "the Predator's wifi does not associate under MarwanOS (ADR 0004)"
+    ip -brief address 2>&1 | while read -r line; do err "  addr: $line"; done
+    exit 1
+fi
+
+info "adding the flathub remote"
+if ! flatpak remote-add --system --if-not-exists flathub "$FLATHUB"; then
+    err "flatpak remote-add failed"
+    exit 1
+fi
+
+# --noninteractive matters: without it flatpak asks which remote to use and
+# blocks forever on a machine with no keyboard attached to this process.
+info "installing $APP -- this is a multi-GB download, expect several minutes"
+if flatpak install --system --noninteractive --assumeyes flathub "$APP"; then
+    info "flatpak install reported success"
+else
+    err "flatpak install failed (exit $?)"
+    exit 1
+fi
+
+# Prove it rather than trust the exit code, in the spirit of the Containerfile's
+# assertions: the failure this catches is an install that half-happened.
+if ! flatpak info --system "$APP" >/dev/null 2>&1; then
+    err "$APP is not installed despite a successful exit -- not stamping"
+    exit 1
+fi
+
+install -d /var/marwanos
+date -u +'%Y-%m-%dT%H:%M:%SZ' > "$STAMP"
+
+info "installed: $(flatpak info --system "$APP" --show-ref 2>/dev/null)"
+info "free space now: $(df -Pm /var | awk 'NR==2 {print $4}') MiB"
+info "done"
