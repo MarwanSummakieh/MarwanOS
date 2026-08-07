@@ -25,6 +25,7 @@ extends Control
 const TvTheme = preload("res://src/tv_theme.gd")
 const Catalogue = preload("res://src/catalogue.gd")
 const Tile = preload("res://src/tile.gd")
+const SettingsTile = preload("res://src/settings_tile.gd")
 const ErrorScreen = preload("res://src/error_screen.gd")
 
 var _hero: ColorRect = null
@@ -60,6 +61,8 @@ func _ready() -> void:
 
 	Launcher.launch_started.connect(_on_launch_started)
 	Launcher.launch_finished.connect(_on_launch_finished)
+	Settings.settings_opened.connect(_on_settings_opened)
+	Settings.settings_closed.connect(_on_settings_closed)
 	PlayerOne.player_one_present.connect(_on_player_one_present)
 	PlayerOne.player_one_absent.connect(_on_player_one_absent)
 	_refresh_status()
@@ -289,35 +292,10 @@ func _build_rail() -> Control:
 func _build_hints() -> Control:
 	var hints := HBoxContainer.new()
 	hints.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	hints.add_theme_constant_override("separation", 36)
-	hints.add_child(_hint("A", "Open"))
-	hints.add_child(_hint("B", "Back"))
+	hints.add_theme_constant_override("separation", TvTheme.HINT_GAP)
+	hints.add_child(TvTheme.hint("A", "Open"))
+	hints.add_child(TvTheme.hint("B", "Back"))
 	return hints
-
-
-func _hint(glyph: String, action: String) -> Control:
-	var row := HBoxContainer.new()
-	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	row.add_theme_constant_override("separation", 12)
-
-	var badge := Label.new()
-	badge.text = glyph
-	badge.add_theme_font_size_override("font_size", TvTheme.SIZE_SUPPLEMENTAL)
-	badge.add_theme_color_override("font_color", TvTheme.TEXT_PRIMARY)
-	badge.add_theme_stylebox_override("normal", TvTheme.glyph_box())
-	badge.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	badge.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	row.add_child(badge)
-
-	var caption := Label.new()
-	caption.text = action
-	caption.add_theme_font_size_override("font_size", TvTheme.SIZE_SUPPLEMENTAL)
-	caption.add_theme_color_override("font_color", TvTheme.TEXT_SECONDARY)
-	caption.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	caption.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	row.add_child(caption)
-
-	return row
 
 
 func _populate() -> void:
@@ -327,6 +305,22 @@ func _populate() -> void:
 		tile.selected.connect(_on_card_selected)
 		_rail.add_child(tile)
 		_tiles.append(tile)
+
+	# The settings card rides at the end of the rail rather than living in the
+	# catalogue: it is shell furniture, and the catalogue file is deleted whole
+	# in Phase 1. Last and not first because the rail opens on the library --
+	# the thing the machine is for -- and settings is somewhere you go on
+	# purpose, not somewhere you land.
+	var settings_card := SettingsTile.new()
+	settings_card.setup({
+		"id": "shell.settings",
+		"title": "Settings",
+		"subtitle": "What this machine is running",
+		"accent": TvTheme.SETTINGS_CARD_ACCENT,
+	})
+	settings_card.selected.connect(_on_card_selected)
+	_rail.add_child(settings_card)
+	_tiles.append(settings_card)
 
 
 ## One axis, and the ends are hard stops. A card at either end points that
@@ -446,19 +440,39 @@ func _refresh_clock() -> void:
 
 
 func _on_launch_started(_entry: Dictionary) -> void:
+	_hand_screen_over()
+
+
+func _on_launch_finished(_entry: Dictionary) -> void:
+	_take_screen_back()
+
+
+func _on_settings_opened() -> void:
+	_hand_screen_over()
+
+
+func _on_settings_closed() -> void:
+	_take_screen_back()
+
+
+## Shared by the launch seam and the settings seam: from the rail's point of
+## view "something fullscreen is up" is one state, however it was reached, and
+## having one implementation is what guarantees the two seams cannot drift
+## apart in how they give the screen back.
+func _hand_screen_over() -> void:
 	# Captured before hiding: hiding a Control releases focus, so asking
 	# afterwards would always answer null.
 	_last_focused = get_viewport().gui_get_focus_owner()
 	hide()
 	# Hiding a Control stops it drawing and stops it receiving GUI input, but
-	# _unhandled_input keeps arriving regardless. The placeholder is a later
+	# _unhandled_input keeps arriving regardless. The covering screen is a later
 	# sibling and so is called first, and it consumes the press -- but relying on
 	# dispatch order for "B does not do two things at once" is the kind of
 	# assumption that breaks silently when a node is reparented.
 	set_process_unhandled_input(false)
 
 
-func _on_launch_finished(_entry: Dictionary) -> void:
+func _take_screen_back() -> void:
 	show()
 	set_process_unhandled_input(true)
 	_ensure_focus()

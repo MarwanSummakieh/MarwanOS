@@ -1,7 +1,7 @@
 # ADR 0006 — The shell skeleton, and where its binary comes from
 
 **Status:** Accepted (2026-08-06, after the shell ran on hardware — see the
-amendment at the end)
+first amendment; a second, later that day, records the settings page)
 **Date:** 2026-08-05
 **Relates to:** M3, and D5/D6 in [phase-0-plan.md](../phase-0-plan.md); the
 supervision loop scaffolded in [ADR 0004](0004-session-compositor-scaffold.md);
@@ -264,8 +264,10 @@ The tile grid is a grid of nothing. That is the milestone, not an omission:
   supervisor of foreign processes.
 - **No daemon and no IPC.** There is no `marwand`, no WebSocket, no JSON-RPC and
   no `proto/`. The shell is a pure renderer with nothing to render from yet.
-- **No icons, no artwork pipeline, no audio, no on-screen keyboard, no settings.**
-  Each has a phase.
+- **No icons, no artwork pipeline, no audio, no on-screen keyboard, ~~no
+  settings~~.** Each has a phase. *(Amended 2026-08-06: a read-only settings
+  page was pulled forward — see the second amendment below. Mutable settings
+  keep their phase.)*
 
 The reason for the discipline is that M3's acceptance criteria are about the
 appliance, not the UI: navigate from the couch, and `kill -9` the shell over SSH
@@ -378,3 +380,29 @@ this document describes the scaffold it happened to:
   the frame itself dies, the silent hold is exactly what it was. The residual
   case (a binary that fails before GDScript runs) is named in that file's
   header and deliberately not solved.
+
+## Amendment (2026-08-06, later): the skeleton grew a settings page
+
+Phase 0's non-goals excluded "any settings UI", and that exclusion was amended
+in phase-0-plan.md the same day at the owner's request. What was added respects
+this ADR's findings rather than stretching them:
+
+- **A second seam, not a bigger launch seam.** `settings.gd` copies the launch
+  seam's shape — one entry point, two signals, one surface at a time — and is a
+  separate autoload precisely because Phase 1 rewires `launcher.gd` to marwand.
+  A shell-internal screen swap sitting inside the launch seam would become an
+  RPC by accident; kept apart, `Launcher.launch` remains the only call into the
+  launch path. The home rail hands the screen over identically for both seams
+  (`_hand_screen_over` / `_take_screen_back` in `shell_root.gd`).
+- **Entered from the rail, not from a new button.** The one-axis argument
+  holds: the settings card (`settings_tile.gd`, extending `tile.gd`) is the
+  last card on the rail, shell furniture appended by `shell_root` rather than a
+  catalogue entry, so it survives the catalogue's Phase 1 deletion. The input
+  map still defines exactly six actions.
+- **Read-only, as a decision.** `settings_screen.gd` shows os-release, engine,
+  display server and mode, adapter, and the claimed controller — the things
+  otherwise answerable only via journalctl on a machine with no terminal. A row
+  that changed something would need somewhere to send the change; that
+  somewhere is marwand, so mutable settings arrive with Phase 1. Rows log
+  `read-only in Phase 0` on A rather than staying silent. Navigation is the
+  rail rotated 90°: one axis, hard stops, perpendicular pointed at self.
