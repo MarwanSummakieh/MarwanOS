@@ -25,12 +25,18 @@ signal closed()
 
 const TvTheme = preload("res://src/tv_theme.gd")
 const SettingsRow = preload("res://src/settings_row.gd")
+const ActionRow = preload("res://src/action_row.gd")
+const WifiScreen = preload("res://src/wifi_screen.gd")
 
 var _rows: Array = []
 var _controller_row: SettingsRow = null
 var _network_row: SettingsRow = null
 var _connection_row: SettingsRow = null
-var _wifi_row: SettingsRow = null
+## Typed as the SUBCLASS, not as SettingsRow: `activated` is declared on
+## ActionRow, and GDScript resolves signal access against the static type --
+## a SettingsRow-typed variable would fail to parse on `.activated.connect`.
+var _wifi_row: ActionRow = null
+var _wifi_screen: WifiScreen = null
 
 
 func _ready() -> void:
@@ -84,7 +90,16 @@ func _ready() -> void:
 	# of pretending.
 	_network_row = _add_row(list, "Network", _network_value())
 	_connection_row = _add_row(list, "Connection", _connection_value())
-	_wifi_row = _add_row(list, "Wi-Fi", _wifi_value())
+	# THE ONE ROW THAT DOES SOMETHING. Every other row on this screen answers a
+	# question; this one opens the Wi-Fi screen, because an appliance that
+	# cannot join a network cannot be fixed from the couch at all. See ADR
+	# 0006's fifth amendment for why that exception was made and where the
+	# line now sits.
+	_wifi_row = ActionRow.new()
+	_wifi_row.setup("Wi-Fi", _wifi_value())
+	_wifi_row.activated.connect(_on_wifi_row_pressed)
+	list.add_child(_wifi_row)
+	_rows.append(_wifi_row)
 
 	var spacer := Control.new()
 	spacer.size_flags_vertical = Control.SIZE_EXPAND_FILL
@@ -106,6 +121,9 @@ func _ready() -> void:
 	PlayerOne.player_one_absent.connect(_on_player_one_absent)
 	SystemStatus.network_changed.connect(_on_network_changed)
 	SystemStatus.network_info_changed.connect(_on_network_info_changed)
+	# The Wi-Fi row's value tracks the seam too, so joining a network updates
+	# the row behind the screen that joined it.
+	Wifi.state_changed.connect(_on_wifi_state_changed)
 
 	ShellLog.info("settings screen up with %d rows" % _rows.size())
 
@@ -137,6 +155,10 @@ func _build_hints() -> Control:
 	var hints := HBoxContainer.new()
 	hints.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	hints.add_theme_constant_override("separation", TvTheme.HINT_GAP)
+	# A is here now that one row does something. It is still true of only the
+	# Wi-Fi row -- every other row logs "read-only in Phase 0" -- but a hint row
+	# that omitted A would be telling someone the screen takes no input at all.
+	hints.add_child(TvTheme.hint("A", "Open"))
 	hints.add_child(TvTheme.hint("B", "Back"))
 	return hints
 
@@ -217,11 +239,53 @@ func _connection_value() -> String:
 ## when wifi carries the link, and otherwise where the credentials actually
 ## live. Joining a network from the couch needs an on-screen keyboard and a
 ## write path to NetworkManager -- both marwand, both Phase 1.
+## The row's value doubles as its affordance: it says what the Wi-Fi situation
+## is, and pressing A opens the screen that can change it.
 func _wifi_value() -> String:
-	var info := SystemStatus.network_info
-	if info.get_slice(" ", 0) == "wifi":
-		return info.substr("wifi".length()).strip_edges()
-	return "No on-screen setup yet -- profile lives on the stick"
+	match Wifi.state:
+		"no-device":
+			return "No adapter -- press A"
+		"rf-killed":
+			return "Switched off in hardware -- press A"
+		"connected":
+			return Wifi.detail if not Wifi.detail.is_empty() else "Connected"
+		_:
+			var info := SystemStatus.network_info
+			if info.get_slice(" ", 0) == "wifi":
+				return info.substr("wifi".length()).strip_edges()
+			return "Set up a network -- press A"
+
+
+## Opens the Wi-Fi screen as a child of this one. A child rather than a third
+## seam: it is a page WITHIN settings, it returns here when it closes, and the
+## home rail underneath must keep seeing exactly one surface come and go.
+func _on_wifi_row_pressed() -> void:
+	if _wifi_screen != null:
+		return
+	_wifi_screen = WifiScreen.new()
+	_wifi_screen.closed.connect(_on_wifi_screen_closed)
+	add_child(_wifi_screen)
+	# Deaf while it is up, so one B press does not close both screens.
+	set_process_unhandled_input(false)
+	ShellLog.info("wifi screen opened from settings")
+
+
+func _on_wifi_screen_closed() -> void:
+	_close_wifi_screen.call_deferred()
+
+
+func _close_wifi_screen() -> void:
+	if _wifi_screen == null:
+		return
+	var screen := _wifi_screen
+	_wifi_screen = null
+	remove_child(screen)
+	screen.queue_free()
+	set_process_unhandled_input(true)
+	_refresh_network_rows()
+	if _wifi_row != null:
+		_wifi_row.grab_focus()
+	ShellLog.info("wifi screen closed")
 
 
 func _refresh_network_rows() -> void:
@@ -238,6 +302,10 @@ func _on_network_changed(_state: String) -> void:
 
 
 func _on_network_info_changed(_info: String) -> void:
+	_refresh_network_rows()
+
+
+func _on_wifi_state_changed(_state: String, _detail: String) -> void:
 	_refresh_network_rows()
 
 

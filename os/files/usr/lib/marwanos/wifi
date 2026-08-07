@@ -1,0 +1,479 @@
+#!/usr/bin/env bash
+#
+# The wifi workflow's privileged half: everything that touches NetworkManager.
+#
+# WHY THIS EXISTS AT ALL, given settings were deliberately read-only. ADR 0006's
+# second amendment said mutable settings wait for marwand, because a row that
+# CHANGES something needs somewhere to send the change and building a temporary
+# path for that is the growth the shell is supposed to refuse. That reasoning
+# held right up until the machine could not get on a network, at which point
+# "read-only" meant an appliance that cannot be made to work at all without a
+# second computer and a text editor. The owner asked for the workflow; ADR 0006's
+# fifth amendment records the reversal.
+#
+# WHAT IT DOES NOT CHANGE: the shell still does not touch NetworkManager, spawn
+# nmcli, or hold a socket. It writes a REQUEST file and reads STATE files. That
+# is the same seam as everything else here, run backwards for the first time --
+# and it is deliberately the narrowest possible reverse channel: three verbs,
+# no shell interpolation of anything the shell sends, no general "run this".
+#
+#   the shell writes  /run/marwanos/wifi/request   (0600, player-owned dir)
+#   this writes       /run/marwanos/wifi.state     one word + detail
+#                     /run/marwanos/wifi.networks  one network per line
+#
+# THE REQUEST FILE HOLDS A PASSWORD IN CLEARTEXT, briefly. That is worth stating
+# rather than hiding. /run is a tmpfs, so it never reaches the stick; the file is
+# 0600 in a 0700 directory; this consumes and deletes it before doing anything
+# else with it; and nothing here ever logs its contents -- the journal gets the
+# SSID and never the secret. The alternative on a machine with one user and no
+# terminal would be a D-Bus agent, which is marwand's job and not a reason to
+# leave the appliance unable to join a network.
+#
+# NM OWNS PERSISTENCE. The profile lives in
+# /etc/NetworkManager/system-connections/ as a keyfile, 0600 root:root, and NM
+# brings it up on subsequent boots without anything here running. So this
+# script is only needed to CHANGE the network, never to keep one.
+#
+# This script WRITES that keyfile itself rather than letting `nmcli device wifi
+# connect` do it, and the reason is the passphrase: nmcli would take it as a
+# command-line argument, and /proc/<pid>/cmdline is world-readable, so every
+# process running as `player` (the shell, Steam, the browser) could read it
+# while the connect ran. See do_connect.
+#
+set -uo pipefail
+
+TAG=marwanos-wifi
+RUN_DIR=/run/marwanos
+REQ_DIR="$RUN_DIR/wifi"
+REQ="$REQ_DIR/request"
+STATE="$RUN_DIR/wifi.state"
+NETWORKS="$RUN_DIR/wifi.networks"
+## Where a consumed request is moved before being read. In RUN_DIR, which is
+## root-owned -- see the loop for why the move matters.
+CONSUMED="$RUN_DIR/request.consumed"
+NM_PROFILE_DIR=/etc/NetworkManager/system-connections
+
+# How often to look for a request. A person has just pressed A on a network and
+# is watching the screen, so this is the latency of the whole feature; half a
+# second is under what reads as lag and costs nothing on an idle appliance.
+POLL=0.5
+
+# How often to re-scan on our own while the wifi screen is open. Scanning is not
+# free (it takes the radio off-channel), so this is slow enough not to disturb a
+# connection and fast enough that a network switched on in the room shows up.
+RESCAN_SECONDS=20
+
+# ALL THREE WRITE TO STDERR, and that is a correctness requirement rather than
+# a convention. Several functions here return data through command substitution
+# -- `$(scan_networks ...)` is parsed as records -- so a log line written to
+# stdout from inside one of them becomes a row in the network list. That is not
+# hypothetical: the control-character rejection below is a warn() inside
+# scan_networks, and on stdout it produced a network named "<4>marwanos-wifi:
+# ignoring a network...". systemd captures stderr and stdout identically here
+# and SyslogLevelPrefix parses the <N> on both, so the journal is unchanged.
+info() { printf '<6>%s: %s\n' "$TAG" "$*" >&2; }
+warn() { printf '<4>%s: %s\n' "$TAG" "$*" >&2; }
+err()  { printf '<3>%s: %s\n' "$TAG" "$*" >&2; }
+
+install -d -m 0755 "$RUN_DIR" || { err "cannot create $RUN_DIR"; exit 1; }
+# 0700 and owned by the session user: the shell must be able to drop a request
+# here, and nothing else on the system has any business reading a file that
+# briefly holds a passphrase.
+#
+# FATAL rather than logged-and-continue. Without this directory the shell can
+# never ask for anything, so the loop below would run forever answering
+# nothing -- `active (running)` with the feature dead, and one <3> line at boot
+# as the only evidence on a machine with no console. Exiting lets
+# Restart=always make the failure loud and repeated instead.
+install -d -m 0700 -o player -g player "$REQ_DIR" \
+    || { err "cannot create $REQ_DIR -- the shell could never ask for anything"; exit 1; }
+
+
+## One word plus optional detail, for the shell to render. Atomic via rename,
+## logged-not-fatal on failure, same contract as every other state file here.
+##
+## States: no-device, rf-killed, idle, scanning, connecting, connected, failed.
+## The detail is free text the shell may show verbatim -- an error from NM is
+## more useful on the TV than a word this script invented for it.
+state() {
+    local word="$1" detail="${2:-}"
+    { printf '%s\t%s\n' "$word" "$detail" > "$STATE.tmp" && mv -f "$STATE.tmp" "$STATE"; } \
+        || err "cannot write $STATE"
+}
+
+
+## The wifi interface NetworkManager is willing to talk about, or nothing.
+##
+## Asking NM rather than looking for wlan* in /sys: a device the driver failed
+## to probe (this machine's whole 2026-08-07 problem -- iwlwifi returning
+## ETIMEDOUT) leaves no interface for NM to report, which is exactly the
+## condition the UI needs to distinguish from "no networks found".
+wifi_device() {
+    timeout 20 nmcli -t -f DEVICE,TYPE device status 2>/dev/null \
+        | grep ':wifi$' | head -n 1 | cut -d: -f1
+}
+
+
+## nmcli -t escapes colons inside values as `\:`. Undo that for display.
+unescape() { printf '%s' "${1//\\:/:}"; }
+
+
+## The visible networks, best signal first, as
+##   <ssid>TAB<signal>TAB<security>TAB<in-use>
+##
+## SSID IS REQUESTED LAST AND PARSED AS "EVERYTHING AFTER THE THIRD COLON".
+## An SSID may legally contain a colon; IN-USE, SIGNAL and SECURITY cannot. So
+## ordering the fields this way turns a genuinely ambiguous parse into an
+## unambiguous one, without needing to walk the string looking for unescaped
+## separators.
+scan_networks() {
+    local device="$1" line rest in_use signal security ssid
+    local out=""
+
+    while IFS= read -r line; do
+        [ -n "$line" ] || continue
+
+        # A record must have at least the three separators the parse below
+        # assumes. Without this check a colon-free line -- which an AP named
+        # with an embedded NEWLINE produces, since nmcli -t does not escape
+        # newlines and `read` then splits it into two records -- leaves every
+        # `${x#*:}` returning the whole string unchanged, so all four fields
+        # become the same text and a phantom network appears that a person can
+        # press A on.
+        case "$line" in
+            *:*:*:*) ;;
+            *) warn "ignoring an unparseable network record"; continue ;;
+        esac
+
+        in_use="${line%%:*}";   rest="${line#*:}"
+        signal="${rest%%:*}";   rest="${rest#*:}"
+        security="${rest%%:*}"; ssid="${rest#*:}"
+
+        # Signal is the one field with a known shape, and checking it catches
+        # the residue of any mis-split the pattern above let through.
+        case "$signal" in
+            ''|*[!0-9]*) warn "ignoring a network record with a non-numeric signal"; continue ;;
+        esac
+
+        ssid="$(unescape "$ssid")"
+        # A hidden network reports an empty SSID. There is nothing to show and
+        # nothing to press, and joining one needs a name typed by hand -- out of
+        # scope here, and listing a blank row would just be a dead card.
+        [ -n "$ssid" ] || continue
+
+        # REJECT CONTROL CHARACTERS AT INGEST. An 802.11 SSID is up to 32
+        # arbitrary octets, so a hostile access point may legally be named with
+        # a tab or a newline in it -- and both of this workflow's file formats
+        # are line-and-tab delimited. A tab would forge extra fields in
+        # wifi.networks; a newline would split one network into two records
+        # here, and on the way back would turn the shell's three-line request
+        # into four, so that a crafted SSID could shift a passphrase into the
+        # argument slot of a different verb. Dropping such a network entirely
+        # is the right trade: it cannot be joined, but nothing anyone names
+        # their AP can restructure a file this code later reads.
+        case "$ssid" in
+            *[[:cntrl:]]*)
+                warn "ignoring a network whose name contains control characters"
+                continue
+                ;;
+        esac
+
+        [ -n "$security" ] || security="open"
+        [ "$in_use" = "*" ] && in_use="yes" || in_use="no"
+
+        out="${out}${ssid}	${signal}	${security}	${in_use}
+"
+    done < <(timeout 30 nmcli -t -f IN-USE,SIGNAL,SECURITY,SSID device wifi list ifname "$device" 2>/dev/null)
+
+    printf '%s' "$out"
+}
+
+
+## Deduplicate by SSID, keeping the strongest. One physical network with three
+## access points is three rows out of nmcli and one thing a person wants to
+## join; showing it three times makes the list look broken.
+write_networks() {
+    local raw="$1" ssid line out=""
+    # An associative array, NOT a string of "|ssid|" fragments. `|` is a legal
+    # SSID character, so with the old sentinel an access point named `X|Y`
+    # poisoned the accumulator such that the SEPARATE, legitimate networks `X`
+    # and `Y` were both deduped away -- and because the list is processed
+    # strongest-first, an attacker merely closer to the TV than the owner's
+    # router could make the owner's own network silently vanish from the couch.
+    # A real key/value structure has no sentinel to collide with.
+    local -A seen=()
+
+    while IFS= read -r line; do
+        [ -n "$line" ] || continue
+        ssid="${line%%	*}"
+        [ -n "${seen[$ssid]+x}" ] && continue
+        seen[$ssid]=1
+        out="${out}${line}
+"
+    done < <(printf '%s' "$raw" | sort -t"$(printf '\t')" -k2,2rn)
+
+    { printf '%s' "$out" > "$NETWORKS.tmp" && mv -f "$NETWORKS.tmp" "$NETWORKS"; } \
+        || err "cannot write $NETWORKS"
+}
+
+
+do_scan() {
+    local device="$1" rescan="${2:-yes}"
+    state scanning
+    # --rescan yes forces the radio to actually look rather than returning a
+    # cached list. It is what makes "I just turned the router on" work.
+    timeout 30 nmcli device wifi rescan ifname "$device" >/dev/null 2>&1
+    [ "$rescan" = "yes" ] && sleep 2
+    write_networks "$(scan_networks "$device")"
+    state idle
+}
+
+
+## GKeyFile value escaping. NetworkManager's keyfile parser interprets `\n`,
+## `\t`, `\r` and `\\` inside a value, so a passphrase containing a literal
+## backslash would otherwise be silently mangled into something that does not
+## authenticate -- and the failure would look like a wrong password.
+##
+## Leading and trailing spaces are NOT recoverable in this format: GKeyFile
+## strips whitespace around `=`. A passphrase that begins or ends with a space
+## cannot be stored this way. That is a real limitation, stated rather than
+## hidden; it is also one NetworkManager itself has for keyfile-stored secrets.
+keyfile_escape() {
+    local value="$1"
+    value="${value//\\/\\\\}"
+    printf '%s' "$value"
+}
+
+
+## Join a network, WITHOUT the passphrase ever appearing in a command line.
+##
+## THIS IS THE WHOLE REASON THIS FUNCTION IS NOT ONE nmcli CALL. The obvious
+## form -- `nmcli device wifi connect "$ssid" password "$pw"` -- puts the
+## passphrase in that process's argv, and /proc/<pid>/cmdline is mode 0444.
+## Any process on this machine can read it while the connect runs: the shell,
+## Steam, and the browser all run as `player`. Bolting the request file shut at
+## 0600 and then handing the same secret to a world-readable interface would
+## have been security theatre.
+##
+## So the profile is written as a NetworkManager keyfile by this root process,
+## 0600 root:root, which is exactly where and how NM would have stored the
+## secret itself -- and then brought up by id. The only thing that reaches an
+## argv is the SSID, which was never secret.
+do_connect() {
+    local device="$1" ssid="$2" password="$3"
+
+    info "connecting to '$ssid'"
+    state connecting "$ssid"
+
+    # The filename is sanitised to a safe charset; the SSID's real value lives
+    # INSIDE the file, where it does not have to survive being a path. This is
+    # also what stops an SSID containing `/` or `..` from choosing where the
+    # file lands.
+    local safe="${ssid//[^A-Za-z0-9._-]/_}"
+    local profile="$NM_PROFILE_DIR/marwanos-${safe}.nmconnection"
+
+    install -d -m 0755 "$NM_PROFILE_DIR" 2>/dev/null
+
+    # Written to a 0600 temp file FIRST, so the secret is never briefly
+    # readable at the default umask between create and chmod.
+    local tmp="${profile}.tmp"
+    rm -f "$tmp"
+    ( umask 077; : > "$tmp" ) || { err "cannot create $tmp"; state failed "cannot write profile"; return; }
+
+    {
+        printf '[connection]\n'
+        printf 'id=%s\n' "$(keyfile_escape "$ssid")"
+        printf 'type=wifi\n'
+        printf 'interface-name=%s\n' "$device"
+        printf '\n[wifi]\n'
+        printf 'mode=infrastructure\n'
+        printf 'ssid=%s\n' "$(keyfile_escape "$ssid")"
+        if [ -n "$password" ]; then
+            printf '\n[wifi-security]\n'
+            printf 'key-mgmt=wpa-psk\n'
+            printf 'psk=%s\n' "$(keyfile_escape "$password")"
+        fi
+        printf '\n[ipv4]\nmethod=auto\n'
+        printf '\n[ipv6]\nmethod=auto\n'
+    } >> "$tmp"
+
+    chmod 0600 "$tmp" 2>/dev/null
+    mv -f "$tmp" "$profile" || { err "cannot install $profile"; state failed "cannot write profile"; return; }
+
+    # NM only notices a hand-written keyfile after a reload.
+    timeout 20 nmcli connection reload >/dev/null 2>&1
+
+    local output rc
+    output="$(timeout 90 nmcli connection up id "$ssid" 2>&1)"
+    rc=$?
+
+    # REDACT THE LITERAL SECRET rather than guessing which word NM used to
+    # introduce it. The previous version cut the message at "password", which
+    # does nothing to `802-11-wireless-security.psk: '<secret>' is not valid` --
+    # and this string does not merely reach the journal, it reaches
+    # wifi.state and from there the TELEVISION, via the screen's failure line.
+    local message="${output%%$'\n'*}"
+    if [ -n "$password" ]; then
+        message="${message//"$password"/***}"
+    fi
+
+    if [ $rc -eq 0 ]; then
+        info "connected to '$ssid'"
+        state connected "$ssid"
+        write_networks "$(scan_networks "$device")"
+    else
+        warn "could not connect to '$ssid': $message"
+        state failed "$message"
+    fi
+}
+
+
+## Drop a saved network. The reason this exists at all is recoverability: a
+## wrong passphrase saves a profile that then fails on every boot, and without
+## a way to delete it from the couch the appliance is stuck needing a second
+## computer -- which is the whole thing this workflow exists to avoid.
+## VALIDATED AGAINST WI-FI PROFILES ONLY. The request file's writer is
+## unprivileged, so without this check any process running as `player` could
+## delete ANY NetworkManager profile by name -- the ethernet connection, a VPN
+## -- simply by asking. Restricting the verb to `802-11-wireless` keeps the
+## reverse channel's authority equal to what the screen actually offers.
+do_forget() {
+    local ssid="$1" found=""
+
+    while IFS=: read -r name type; do
+        [ "$type" = "802-11-wireless" ] || continue
+        [ "$(unescape "$name")" = "$ssid" ] || continue
+        found=yes
+        break
+    done < <(timeout 20 nmcli -t -f NAME,TYPE connection show 2>/dev/null)
+
+    if [ -z "$found" ]; then
+        warn "refusing to forget a name that is not a saved wifi network"
+        state failed "no saved Wi-Fi network by that name"
+        return
+    fi
+
+    info "forgetting '$ssid'"
+    if timeout 20 nmcli connection delete id "$ssid" >/dev/null 2>&1; then
+        state idle "forgot $ssid"
+    else
+        state failed "could not forget $ssid"
+    fi
+}
+
+
+# ---------------------------------------------------------------------------
+# The loop
+# ---------------------------------------------------------------------------
+
+last_scan=0
+last_device_check=0
+device=""
+
+while :; do
+    now="$(date +%s)"
+
+    # Re-ask for the device periodically rather than once at start: this radio
+    # is the one that fails to probe, and a boot where it appears late (or a
+    # rfkill toggled by the Acer WMI key) should not need a service restart.
+    if [ $((now - last_device_check)) -ge 5 ]; then
+        last_device_check="$now"
+        device="$(wifi_device)"
+    fi
+
+    # THE DRAIN COMES FIRST, BEFORE the device check, and that ordering is a
+    # fix rather than a detail. It used to sit after, so in the no-device state
+    # -- the state this machine actually has, and the reason this screen exists
+    # -- every request was ignored AND LEFT ON DISK. A passphrase typed just as
+    # the radio was rfkilled would have sat in /run until reboot, contradicting
+    # this file's own promise to consume it immediately.
+    #
+    # THE MOVE IS THE SECURITY BOUNDARY. `player` owns REQ_DIR, so it can swap
+    # `request` for a symlink or a FIFO between any test and any read: a check
+    # here would be a TOCTOU, and a FIFO would block this single-threaded loop
+    # in open() forever -- wifi dead until reboot, with the unit still
+    # "running" so Restart=always never fires. rename(2) does not follow
+    # symlinks and does not open anything, so moving the file into root-owned
+    # RUN_DIR first settles what we are about to read before we read it.
+    if mv -f "$REQ" "$CONSUMED" 2>/dev/null; then
+        verb=""; arg1=""; arg2=""
+        if [ -L "$CONSUMED" ] || [ ! -f "$CONSUMED" ]; then
+            # Whatever was moved is not a regular file. Nothing is read from
+            # it -- in particular its contents never reach the journal.
+            warn "discarding a request that was not a regular file"
+            rm -f "$CONSUMED"
+        else
+            { IFS= read -r verb; IFS= read -r arg1; IFS= read -r arg2; } < "$CONSUMED" 2>/dev/null
+        fi
+        rm -f "$CONSUMED"
+
+        # Answer rather than swallow when there is no radio: the screen is
+        # already showing why, and a request that vanished silently is
+        # indistinguishable from a shell that never sent one.
+        if [ -z "$device" ] && [ -n "$verb" ]; then
+            warn "cannot serve a '$([ "$verb" = connect ] && echo connect || echo request)' with no wifi device"
+            verb=""
+        fi
+
+        case "$verb" in
+            scan)
+                do_scan "$device"
+                ;;
+            connect)
+                # arg1 = ssid, arg2 = passphrase (may be empty for an open net)
+                if [ -n "$arg1" ]; then
+                    do_connect "$device" "$arg1" "$arg2"
+                else
+                    state failed "no network name given"
+                fi
+                ;;
+            forget)
+                [ -n "$arg1" ] && do_forget "$arg1"
+                ;;
+            "")
+                ;;
+            *)
+                # The verb itself is NOT logged. Everything in this file came
+                # from outside this script, and a line of unexpected content is
+                # exactly the thing not to copy into the journal.
+                warn "ignoring a request with an unrecognised verb"
+                ;;
+        esac
+        # Deliberately after every branch: a fresh request may already be
+        # waiting, and sleeping first would add latency to a queued press.
+        last_scan="$(date +%s)"
+        continue
+    fi
+
+    if [ -z "$device" ]; then
+        # THE STATE THIS MACHINE ACTUALLY HAS. Distinguished from "no networks"
+        # on purpose -- an empty list invites someone to stand closer to the
+        # router, and this tells them the truth instead. See docs/handoff.md on
+        # Windows Fast Startup holding the CNVi radio.
+        if timeout 20 nmcli radio wifi 2>/dev/null | grep -q disabled; then
+            state rf-killed
+        else
+            state no-device
+        fi
+        : > "$NETWORKS.tmp" && mv -f "$NETWORKS.tmp" "$NETWORKS"
+        sleep 2
+        continue
+    fi
+
+    # Keep the list warm on our own so the screen has something to show the
+    # instant it opens, rather than a spinner every time.
+    if [ $((now - last_scan)) -ge $RESCAN_SECONDS ]; then
+        last_scan="$now"
+        write_networks "$(scan_networks "$device")"
+        # Only claim idle if nothing more interesting is true. Reading the
+        # current word back is cheaper than tracking it in a variable that
+        # every branch above would have to remember to update.
+        current="$(cut -f1 < "$STATE" 2>/dev/null)"
+        case "$current" in
+            connected|connecting|failed) ;;
+            *) state idle ;;
+        esac
+    fi
+
+    sleep "$POLL"
+done

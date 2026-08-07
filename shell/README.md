@@ -33,8 +33,13 @@ shell/
     launcher.gd          THE LAUNCH SEAM                 (autoload Launcher)
     launch_placeholder.gd  what "launch" shows in Phase 0
     settings.gd          THE SETTINGS SEAM               (autoload Settings)
-    settings_screen.gd   the read-only settings page
+    settings_screen.gd   the settings page (read-only except Wi-Fi)
     settings_row.gd      one row on it
+    action_row.gd        a row that does something rather than answering
+    wifi.gd              THE WIFI SEAM: the only one that also WRITES
+                                                        (autoload Wifi)
+    wifi_screen.gd       networks in range, and joining one
+    keyboard.gd          on-screen keyboard, pad-driven
     stores.gd            THE STORES SEAM                 (autoload Stores)
     stores_screen.gd     side tabs + the store page they render
     store_tab.gd         one tab in that column

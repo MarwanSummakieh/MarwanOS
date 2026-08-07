@@ -3,7 +3,8 @@
 **Status:** Accepted (2026-08-06, after the shell ran on hardware — see the
 first amendment; a second, later that day, records the settings page; a third,
 2026-08-07, records the PS5-shaped top bar and the stores screen; a fourth,
-same day, retires the placeholder catalogue for a real app list)
+same day, retires the placeholder catalogue for a real app list; a fifth
+**reverses the read-only rule** for Wi-Fi and adds an on-screen keyboard)
 **Date:** 2026-08-05
 **Relates to:** M3, and D5/D6 in [phase-0-plan.md](../phase-0-plan.md); the
 supervision loop scaffolded in [ADR 0004](0004-session-compositor-scaffold.md);
@@ -497,3 +498,67 @@ now lists what is actually installed, the way a desktop's app launcher does.
   this rail will not list them however many are installed; that needs Steam
   library integration, which is marwand's. What this amendment delivers is
   honest about which of the two it is.
+
+## Amendment (2026-08-07, fifth): settings stop being read-only, for Wi-Fi only
+
+The second amendment made the settings page read-only and said why: "a row that
+changed something would need somewhere to send the change, and building a
+second, temporary path for that is exactly the growth launcher.gd's header says
+belongs in the daemon." That reasoning was sound and it is now overridden,
+because it had a consequence nobody priced in — **an appliance that cannot join
+a network cannot be repaired from the couch at all.** Every recovery path this
+project has (bootc upgrade, devmode ssh, the Flathub installs) needs a network,
+and the only way to give it one was a second computer, a text editor and a
+per-stick NetworkManager profile written by hand. On 2026-08-07 the radio
+failed to appear and that price came due. The owner asked for the workflow.
+
+What the reversal does and does not concede:
+
+- **The shell still does not touch NetworkManager.** `marwanos-wifi` owns every
+  `nmcli` call, every profile, and the passphrase's entire lifetime. The shell
+  writes one small file — a verb and at most two arguments — into a directory
+  that exists for that purpose. This is the same file-based seam as the status
+  and app scanners, run backwards for the first time.
+- **The reverse channel is deliberately not general.** Three verbs (`scan`,
+  `connect`, `forget`), no "run this", and nothing the shell sends is ever
+  interpolated into a command string. An SSID is attacker-chosen data — anyone
+  in radio range can name an access point `; rm -rf /` — so it crosses into
+  `nmcli` as an argv element and never as text in a command, and the script
+  contains no `eval` and no `sh -c` — verified by inspection and by exercising
+  the parser against a mocked `nmcli` during development, not by a committed
+  test (this repo has no test runner).
+- **The passphrase never reaches a command line either.** `nmcli device wifi
+  connect … password …` would put it in `/proc/<pid>/cmdline`, which is mode
+  0444 — readable by every process running as `player`, which is the shell,
+  Steam and the browser. So `do_connect` writes the NetworkManager keyfile
+  itself, 0600 root:root, and brings the profile up by id; the only thing that
+  reaches an argv is the SSID, which was never secret. Bolting the request
+  file shut and then handing the same secret to a world-readable interface
+  would have been theatre.
+- **The passphrase is handled honestly rather than hidden.** It sits in
+  `/run/marwanos/wifi/request` (tmpfs, 0600, in a 0700 player-owned directory)
+  for the moment between the shell writing it and the service consuming and
+  deleting it. Nothing logs it: the shell logs the SSID and a character count,
+  and the service truncates `nmcli`'s error text at the word `password`
+  because some failure paths echo the secret back. A D-Bus secret agent would
+  avoid the file entirely and is marwand's job; it is not a reason to leave the
+  appliance unable to join a network.
+- **`forget` exists for a specific failure.** A network saved with a wrong
+  passphrase fails on every subsequent boot, and without a way to delete it
+  from the couch the machine is stuck needing the second computer again — the
+  exact thing this amendment removes.
+- **The input map grew from six actions to eight.** `ui_shell_x` (Shift) and
+  `ui_shell_y` (Delete/Forget) exist because typing a passphrase on a 5×10 grid
+  with a thumbstick made every correction a journey. Both are shortcuts only:
+  Shift and Delete are also on-screen keys, so a pad without those buttons
+  loses convenience rather than the feature.
+- **"No adapter" is a first-class screen, not an empty list.** This is the
+  state this hardware actually has when Windows Fast Startup holds the CNVi
+  radio, and an empty network list would send someone to stand closer to the
+  router for a problem living in another operating system. The screen names the
+  cause and the fix.
+
+**What is still read-only:** everything else on the settings page. This is one
+exception with a named justification, not the beginning of a mutable settings
+surface. The next row that wants to change something should wait for marwand
+unless it can make the same argument this one did.
