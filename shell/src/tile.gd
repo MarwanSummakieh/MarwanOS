@@ -39,6 +39,7 @@ var entry: Dictionary = {}
 
 var _idle_box: StyleBoxFlat
 var _focus_box: StyleBoxFlat
+var _ring: Panel
 var _size_tween: Tween
 
 
@@ -57,7 +58,7 @@ func _ready() -> void:
 	size_flags_vertical = Control.SIZE_SHRINK_CENTER
 
 	# Button draws its own text centred, which is not the layout wanted here; the
-	# label is a child instead.
+	# card is art only, and the title lives in the hero block above the rail.
 	text = ""
 
 	_idle_box = TvTheme.card_idle_box()
@@ -70,7 +71,12 @@ func _ready() -> void:
 	add_theme_stylebox_override("hover", _idle_box)
 	add_theme_stylebox_override("pressed", _focus_box)
 	add_theme_stylebox_override("disabled", _idle_box)
-	add_theme_stylebox_override("focus", TvTheme.card_focus_ring())
+	# NOT the ring. Button paints its focus stylebox in its own draw pass, and
+	# children paint after their parent -- so the full-bleed art in
+	# _build_contents would cover every pixel of a ring drawn here. The ring is
+	# the overlay child built after the art instead; this override only stops
+	# Button drawing its default focus box invisibly underneath it.
+	add_theme_stylebox_override("focus", StyleBoxEmpty.new())
 
 	_build_contents()
 
@@ -90,6 +96,18 @@ func _build_contents() -> void:
 	art.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(art)
 
+	# The ring rides above the art as the last child, because siblings paint in
+	# tree order and the art is full-bleed: anything drawn before it -- including
+	# the Button's own focus stylebox -- is entirely behind an opaque rectangle.
+	# Toggled by the focus handlers below, since a plain child knows nothing of
+	# the theme system's focus state.
+	_ring = Panel.new()
+	_ring.add_theme_stylebox_override("panel", TvTheme.card_focus_ring())
+	_ring.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_ring.visible = false
+	_ring.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(_ring)
+
 
 ## Grows or shrinks the card in the layout. See the class header for why this is
 ## custom_minimum_size and not scale.
@@ -107,6 +125,7 @@ func set_selected_size(is_selected: bool) -> void:
 func _on_focus_entered() -> void:
 	add_theme_stylebox_override("normal", _focus_box)
 	add_theme_stylebox_override("hover", _focus_box)
+	_ring.visible = true
 	set_selected_size(true)
 	selected.emit(entry)
 
@@ -114,6 +133,7 @@ func _on_focus_entered() -> void:
 func _on_focus_exited() -> void:
 	add_theme_stylebox_override("normal", _idle_box)
 	add_theme_stylebox_override("hover", _idle_box)
+	_ring.visible = false
 	set_selected_size(false)
 
 
