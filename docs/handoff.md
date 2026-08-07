@@ -98,6 +98,46 @@ record in [ADR 0005](adr/0005-compositor-decision.md), which is **Accepted**:
   measurement that would settle it — a replug under cage — is gone with the cage
   path unless someone resurrects it for diagnosis.
 
+## The wifi was never a driver problem (2026-08-07)
+
+Everything written before today assumed this chassis simply does not do wifi
+under MarwanOS, and treated ethernet as the only way in. That was a symptom
+recorded as a hardware limitation. The 2026-08-07 journal says otherwise:
+
+```
+iwlwifi 0000:00:14.3: probe with driver iwlwifi failed with error -110
+```
+
+`-110` is `ETIMEDOUT` — the radio never answered the driver. It is not a missing
+module and not missing firmware: the image carries **189 iwlwifi firmware
+files**, `iwlwifi-mvm-firmware`, `wpa_supplicant`, and NetworkManager's wifi
+plugin, all confirmed present by inspecting the runtime image directly. Nothing
+needs adding.
+
+`0000:00:14.3` is Intel CNVi wifi integrated into the PCH, and the host Windows
+install has **`HiberbootEnabled = 1`** — Fast Startup on. Windows "Shut down" is
+then a hybrid shutdown that hibernates the kernel session rather than powering
+off, and the device is still claimed when MarwanOS boots. NetworkManager never
+gets a wifi interface at all, which is exactly what the journal shows.
+
+Two consequences worth carrying:
+
+- **The fix is on the Windows side, not in the image.** `powercfg /h off`, or
+  untick Fast Startup in Power Options. "Restart" also does a genuine power
+  cycle where "Shut down" does not, which is a useful one-off.
+- **Credentials are a separate gap.** Even with a working radio there is no
+  connection profile anywhere in the image, and there is no keyboard UI to enter
+  one. A profile is written per-stick into the deployment's
+  `/etc/NetworkManager/system-connections/` after flashing, `0600 root:root`, and
+  deliberately never committed or baked into an image.
+
+**Not yet proven.** Fast Startup is the best-supported explanation and fits all
+the evidence, but the arbiter is a boot that shows a wifi device appearing. If
+it still fails, the next suspects are the Acer WMI killswitch NetworkManager
+spotted (`rfkill0` on `acer-wmi`) and wifi disabled in firmware setup. USB
+tethering from a phone needs no credentials and no settings change, and remains
+the zero-setup fallback.
+
 ## Milestone state
 
 | | State |
@@ -261,7 +301,8 @@ Each of these is documented at length where it bites; this is only the index.
 | `usermod -aG` silently no-ops when the group is only in `/usr/lib/group` | `os/Containerfile`, the sysusers block |
 | Piping `lsinitrd` into `grep -q` under `pipefail` exits 141 | `os/Containerfile`, the initramfs assertions |
 | `MARWANOS_*` ARGs must stay at the bottom, or a timestamped version invalidates dnf and dracut every build (515s vs 70s) | `os/Containerfile` |
-| The Predator's wifi does not associate under MarwanOS, so root SSH recovery needs ethernet | [ADR 0004](adr/0004-session-compositor-scaffold.md) |
+| ~~The Predator's wifi does not associate under MarwanOS~~ — **misdiagnosed; see below** | [ADR 0004](adr/0004-session-compositor-scaffold.md) |
+| Windows Fast Startup leaves the CNVi wifi claimed, so `iwlwifi` probe times out | this file, 2026-08-07 |
 
 ### VM harness
 
