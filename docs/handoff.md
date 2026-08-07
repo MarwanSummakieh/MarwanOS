@@ -1,6 +1,6 @@
 # Handoff — where MarwanOS is right now
 
-**Written 2026-08-06.** This file is *current state*, not a record. It is meant to be
+**Written 2026-08-07.** This file is *current state*, not a record. It is meant to be
 rewritten or deleted, unlike [phase-0-plan.md](phase-0-plan.md) and the ADRs, which
 are the durable documents. If it disagrees with them, they win — and this file is
 what is stale.
@@ -9,12 +9,39 @@ what is stale.
 
 ## Where this got to
 
-**The seven-change stick booted on 2026-08-06, and the shell came up on the rail.**
-That is the first time any of it ran on hardware, and it worked on the first
-attempt. One defect came out of it — cards visibly cropped at the sides, fixed and
-reflashed the same day (see below) — and the rest of the boot has **not been read
-back yet**. The journal is on the stick and nobody has looked, which is the same
-position 2026-08-05 was in.
+**The 2026-08-06 reflash never booted.** It went to a dracut emergency shell, and
+the stick's own filesystems say why: nothing on any partition had been written
+since the flash, `/var/log` was empty, and the XFS log was clean enough to mount
+`norecovery` — so root was never mounted read-write and the failure was in the
+initramfs. The GPT was corrupt in exactly the documented Windows-mid-rewrite
+signature (main partition table CRC bad, backup fine, the sector-1-to-2016 gap),
+with the kernel enumerating zero partitions while `blkid` still saw `PTTYPE=gpt`.
+The attach had lapsed on its own again. **There was no journal to read** — that
+absence is the whole finding, and it means the seven-change questions below are
+still open, now three days old.
+
+**Everything is merged into `main` (`53aab6d`).** `main` had been seven commits
+behind since the PR #2 merge; it is now current, and branching off it is correct
+again. Three things landed on top of the rail work:
+
+- **A settings page**, behind its own seam (`settings.gd`), entered from the last
+  card on the rail. Read-only by design — os-release, engine, display server and
+  mode, adapter, claimed controller — because a row that changed something would
+  need marwand to send the change to. Phase 0's "any settings UI" non-goal is
+  struck through in phase-0-plan.md and ADR 0006 carries the second amendment.
+- **The rail's resting position is arithmetic, not a measurement.** The old code
+  waited a frame and read the focused card's live position; under held repeat
+  (0.12 s) the neighbours were still shrinking (0.18 s), so the target came out
+  short and the end card settled hard against the screen edge — outside the safe
+  area the rail-bleed fix exists to protect.
+- **The card focus ring had never drawn a single pixel.** It was a Button "focus"
+  stylebox, and the full-bleed art child painted over it. It is an overlay child
+  now, which is also the version that survives Phase 1's real textures.
+
+All three were verified together on an Xvfb harness (invisible, no desktop
+involvement): 13 cards, ring at 4914 px where it drew 0, the selection resting at
+the safe margin under 60 ms traversal bursts, and the settings flow opening and
+closing with focus restored. **None of it has been seen on the TV.**
 
 So these are still open, and one journal read closes most of them:
 
@@ -30,7 +57,15 @@ So these are still open, and one journal read closes most of them:
 
 The rail-bleed fix on the current stick also adds a `rail band:` / `first card
 rests at x` pair to the journal, which says in numbers whether the layout landed
-where it was supposed to.
+where it was supposed to. On this build expect `home rail ready with 13 cards`
+(twelve placeholders plus settings) and `first card rests at x 96`.
+
+**Pull the stick physically while it is still attached to WSL, and go straight to
+the boot.** The 2026-08-06 stick was verified clean and then never booted,
+because the attach lapsed while it sat and Windows rewrote its GPT unprompted.
+That is now three corruptions from the same cause. If the flash and the pull
+cannot be one continuous action, hold a distro up across the gap and re-run
+`VERIFY_ONLY=yes` before trusting it.
 
 **ADR 0007's "use a second stick" advice was deliberately set aside**, and the
 reason is worth recording rather than quietly ignoring. That advice protects
@@ -70,26 +105,28 @@ record in [ADR 0005](adr/0005-compositor-decision.md), which is **Accepted**:
 | **M0** — build/deploy loop | **Complete** (2026-08-02) |
 | **M1** — session + the A/B decision | **Complete** (2026-08-05). gamescope, [ADR 0005](adr/0005-compositor-decision.md) |
 | **M2** — silent boot | Partial. Both pending kargs are now **on the stick** (`console=ttyS0` dropped, `video=eDP-1:d` added) and verified in the UKI's command line, but unbooted. The three-boot camera count can start on this stick. The 31-second black gap is diagnosed-adjacent (compositor handover) but not formally closed |
-| **M3** — shell skeleton | Exit criteria 2 and 3 **passed on hardware** (as the grid). **The home rail has now run on hardware too** (2026-08-06) — it drew and navigated; its one defect, cards cropped at the sides, is fixed and on the stick unbooted. Outstanding: couch test, controller hotplug, a real guard-trip of the error screen |
+| **M3** — shell skeleton | Exit criteria 2 and 3 **passed on hardware** (as the grid). The home rail ran on hardware 2026-08-06 — it drew and navigated. Since then, all desk-verified and **unbooted**: the crop fix, a settings page, the rail resting-position fix, and a focus ring that had never drawn. Outstanding: couch test, controller hotplug, a real guard-trip of the error screen |
 | **M4** — guardrails + exit run | **Untouched** |
 
 ## The current stick
 
-**Reflashed 2026-08-06 (second time that day) and VERIFIED.** It carries
-`MarwanOS (Phase 0, 0.0.202608060857)` — everything below plus the rail-bleed
-fix. Image file at `/var/tmp/rail2-out/image/disk.raw`. Not yet booted.
+**Reflashed 2026-08-07 from `main` @ `53aab6d` and VERIFIED.** It carries
+`MarwanOS (Phase 0, 0.0.202608070940)` — the rail-bleed fix plus the settings
+page, the rail resting fix and the focus ring. Image file at
+`/var/tmp/settings-out/image/disk.raw`. Not yet booted.
 
 ```
-boot UUID  : 808ec849-43b5-4a0d-b9b2-98411a320c9a
-root UUID  : 6710ff47-66aa-4d32-b93c-3597e312c134
+boot UUID  : 29a49b23-a3d0-40d8-b4ee-2f637bdcd022
+root UUID  : 87325747-0665-470c-adb9-ec808bdf081d
 ```
 
 Identify a stick by UUIDs, never by memory — every build has had its own, and
-there are now three sets in play:
+there are now four sets in play:
 
 | UUIDs | Build | Where |
 |---|---|---|
-| `808ec849…` / `6710ff47…` | `0.0.202608060857`, rail bleed fixed | **on the stick now** |
+| `29a49b23…` / `87325747…` | `0.0.202608070940`, settings + rail resting + ring | **on the stick now** |
+| `808ec849…` / `6710ff47…` | `0.0.202608060857`, rail bleed fixed — **never booted**, GPT corrupted before it could | `/var/tmp/rail2-out/image/disk.raw` |
 | `37b88f9d…` / `01c4b345…` | `0.0.202608052341`, booted and ran, cards cropped at the sides | `/var/tmp/rail-out/image/disk.raw` |
 | `6487cf7d…` / `010befbf…` | `0.0.202608051352`, the 2026-08-05 known-good | `/var/lib/marwanos-images/` |
 
