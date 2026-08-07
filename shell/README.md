@@ -26,15 +26,23 @@ shell/
     shell_input.gd       the six actions, at device -1   (autoload ShellInput)
     player_one.gd        which pad is player one, hotplug (autoload PlayerOne)
     focus_repeat.gd      held-direction repeat for a pad (autoload FocusRepeat)
+    system_status.gd     THE STATUS SEAM: renders state files the system
+                         writes, probes nothing         (autoload SystemStatus)
+    installed.gd         what is installed, from the system's own scan
+                                                        (autoload Installed)
     launcher.gd          THE LAUNCH SEAM                 (autoload Launcher)
     launch_placeholder.gd  what "launch" shows in Phase 0
     settings.gd          THE SETTINGS SEAM               (autoload Settings)
     settings_screen.gd   the read-only settings page
     settings_row.gd      one row on it
-    settings_tile.gd     the rail card that opens it
+    stores.gd            THE STORES SEAM                 (autoload Stores)
+    stores_screen.gd     side tabs + the store page they render
+    store_tab.gd         one tab in that column
+    glyphs.gd            the bar's icons, drawn with primitives
+    icon_button.gd       a focusable icon (the store bag, the gear)
     shell_root.gd        the grid screen
     tile.gd              one tile
-    catalogue.gd         placeholder entries; Phase 1 replaces this
+    catalogue.gd         the store list; Phase 1 replaces this
     tv_theme.gd          every number the shell draws with
 ```
 

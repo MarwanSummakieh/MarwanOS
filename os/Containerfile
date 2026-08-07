@@ -353,6 +353,35 @@ RUN --mount=type=cache,dst=/var/cache/libdnf5,sharing=locked \
     getcap /usr/bin/gamescope | grep -q cap_sys_nice \
         || { echo "setcap did not take on gamescope"; exit 1; }
 
+# THE BROWSER IS ZEN, AND IT IS NOT AN RPM.
+#
+# The ublue base image ships Firefox -- 295 MB plus 49 MB of langpacks, on a
+# root filesystem with about 7 GiB spare. Nothing here asked for it and the
+# appliance's browser is Zen, installed as a flatpak on first boot by
+# marwanos-flatpak-install@app.zen_browser.zen.service, so the RPM is both
+# unwanted and the largest single thing in the image that nothing uses.
+#
+# WHY REMOVED RATHER THAN HIDDEN. marwanos-appscan lists what is installed, by
+# design and with no deny-list for "things we would rather you did not see" --
+# so an image that still carried Firefox would put it on the rail, and the only
+# alternatives would be lying in the scanner or shipping a browser the owner
+# did not choose. Deleting the package makes the scanner's honesty free.
+#
+# firefox-langpacks is named explicitly because it REQUIRES firefox, so dnf
+# would otherwise refuse the removal rather than cascade it. Only that one
+# package depends on Firefox here -- checked with `rpm -q --whatrequires`
+# before this line existed -- so nothing else follows it out.
+#
+# Zen is not installed here for the reason no flatpak is: /var is per-stick and
+# outside the ostree commit, so a baked-in flatpak would bloat every image and
+# still not survive as an installed app. See flatpak-install's header.
+RUN --mount=type=cache,dst=/var/cache/libdnf5,sharing=locked \
+    set -euxo pipefail; \
+    dnf -y remove firefox firefox-langpacks; \
+    dnf clean all; \
+    ! rpm -q firefox; \
+    ! test -f /usr/share/applications/org.mozilla.firefox.desktop
+
 # CAP_SYS_NICE on gamescope, and it is a measured fix rather than a precaution.
 #
 # Without it gamescope says so itself, on every boot:
@@ -566,9 +595,14 @@ RUN set -euxo pipefail; \
          /usr/share/plymouth/themes/marwanos \
          -type f -exec chmod 0644 {} +; \
     chmod 0644 /usr/lib/systemd/system/marwanos-panel.service; \
+    chmod 0644 /usr/lib/systemd/system/marwanos-netcheck.service; \
+    chmod 0644 /usr/lib/systemd/system/marwanos-appscan.service; \
+    chmod 0644 "/usr/lib/systemd/system/marwanos-flatpak-install@.service"; \
     chmod 0755 /usr/lib/marwanos/session/marwanos-session; \
     chmod 0755 /usr/lib/marwanos/display/panel-policy; \
-    chmod 0755 /usr/lib/marwanos/steam-install; \
+    chmod 0755 /usr/lib/marwanos/flatpak-install; \
+    chmod 0755 /usr/lib/marwanos/netcheck; \
+    chmod 0755 /usr/lib/marwanos/appscan; \
     systemd-sysusers /usr/lib/sysusers.d/50-marwanos.conf; \
     for g in video render input; do \
         gid="$(getent group "$g" | cut -d: -f3)"; \
@@ -582,8 +616,19 @@ RUN set -euxo pipefail; \
         /usr/lib/systemd/system/multi-user.target.wants/greetd.service; \
     ln -sf ../marwanos-panel.service \
         /usr/lib/systemd/system/multi-user.target.wants/marwanos-panel.service; \
-    ln -sf ../marwanos-steam-install.service \
-        /usr/lib/systemd/system/multi-user.target.wants/marwanos-steam-install.service; \
+    : "The apps the appliance ships with, each an instance of the templated"; \
+    : "installer. A .wants symlink whose NAME carries the instance is how"; \
+    : "systemd enables a template without an [Install] alias per app --"; \
+    : "the link name is what %i resolves from, and the target is the"; \
+    : "template itself. Adding an app is one more line here."; \
+    ln -sf ../marwanos-flatpak-install@.service \
+        "/usr/lib/systemd/system/multi-user.target.wants/marwanos-flatpak-install@com.valvesoftware.Steam.service"; \
+    ln -sf ../marwanos-flatpak-install@.service \
+        "/usr/lib/systemd/system/multi-user.target.wants/marwanos-flatpak-install@app.zen_browser.zen.service"; \
+    ln -sf ../marwanos-netcheck.service \
+        /usr/lib/systemd/system/multi-user.target.wants/marwanos-netcheck.service; \
+    ln -sf ../marwanos-appscan.service \
+        /usr/lib/systemd/system/multi-user.target.wants/marwanos-appscan.service; \
     systemctl --no-reload mask getty@tty1.service autovt@tty1.service \
                                serial-getty@ttyS0.service; \
     ln -sf /dev/null /usr/lib/systemd/user/xdg-desktop-portal-gtk.service; \
@@ -604,13 +649,22 @@ RUN set -euxo pipefail; \
         fedora-atomic-desktop-appstream-cache-refresh.service; \
     test -x /usr/lib/marwanos/session/marwanos-session; \
     test -x /usr/lib/marwanos/display/panel-policy; \
-    test -x /usr/lib/marwanos/steam-install; \
+    test -x /usr/lib/marwanos/flatpak-install; \
+    test -x /usr/lib/marwanos/netcheck; \
+    test -x /usr/lib/marwanos/appscan; \
     test -L /usr/lib/systemd/system/multi-user.target.wants/marwanos-panel.service; \
-    test -L /usr/lib/systemd/system/multi-user.target.wants/marwanos-steam-install.service; \
+    test -L "/usr/lib/systemd/system/multi-user.target.wants/marwanos-flatpak-install@com.valvesoftware.Steam.service"; \
+    test -L "/usr/lib/systemd/system/multi-user.target.wants/marwanos-flatpak-install@app.zen_browser.zen.service"; \
+    test -L /usr/lib/systemd/system/multi-user.target.wants/marwanos-netcheck.service; \
+    test -L /usr/lib/systemd/system/multi-user.target.wants/marwanos-appscan.service; \
     : "flatpak is the whole delivery mechanism for the Steam spike; a base image"; \
     : "that quietly stopped shipping it would fail at runtime on the target,"; \
     : "which is the one place with no way to read the error."; \
     command -v flatpak; \
+    : "curl is how both flatpak-install and netcheck ask whether Flathub"; \
+    : "answers; a base image without it would make the network indicator"; \
+    : "permanently say offline while the machine sat happily connected."; \
+    command -v curl; \
     test -L /etc/systemd/system/ModemManager.service; \
     test -f /usr/lib/systemd/logind.conf.d/50-marwanos-lid.conf; \
     test -L /etc/systemd/system/getty@tty1.service; \

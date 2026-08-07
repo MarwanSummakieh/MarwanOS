@@ -1,65 +1,51 @@
 extends RefCounted
 
-## Phase 0's placeholder library.
+## The stores the shell knows about.
 ##
-## Phase 1 deletes this file. The home rail is populated from marwand's
-## `ListInstalled` over JSON-RPC instead (docs/phase-1-plan.md, M2), and the
-## daemon joins Flatpak refs against AppStream data to produce display name,
-## summary and icon.
+## THIS FILE USED TO HOLD TWELVE PLACEHOLDER LIBRARY ENTRIES. They were honest
+## scaffolding -- they made the rail wider than the screen, so the slide, the
+## clipping at both edges and hold-to-repeat traversal were all exercised
+## before there was anything real to put there -- and they are gone now that
+## the rail lists what is actually installed (see installed.gd and
+## marwanos-appscan). A shipped appliance showing "Placeholder Seven" is a lie
+## about what the machine has on it, and an empty rail is not: it says
+## "nothing is installed", which on a fresh stick is true.
 ##
-## The dictionary shape below is deliberately the shape that RPC returns -- an
-## opaque id, a title, a one-line summary, and something to draw -- so swapping
-## the source changes this file and nothing in the rail. `accent` stands in for
-## `icon` for now: real icons arrive as a texture the daemon has cached, and the
-## card learns to load one asynchronously in Phase 1 M2. A flat colour is what a
-## card with no icon yet has to fall back to anyway, so it is not throwaway.
-##
-## Twelve entries -- enough that the rail is wider than the screen, so the slide,
-## the clipping at both edges and the hold-to-repeat traversal all get exercised
-## by the placeholder data rather than discovered in Phase 1.
-##
-## The names are obviously placeholders on purpose. Something that looked like a
-## real library would make it impossible to tell, from a photograph of the TV,
-## whether the rail was showing baked data or something it had actually enumerated.
+## What remains is the store list, and it is still hand-written because there
+## is exactly one store and no mechanism that could discover a second. Phase 1
+## deletes this file too: marwand serves both the store list and the installed
+## list over JSON-RPC.
 
-## The one real entry, and the only one carrying an "exec". It is FIRST so the
-## rail opens on it -- the spike's whole point is that pressing A on the card the
-## machine already has focused starts a real application, with no navigation in
-## between to confuse a failure with a missed input.
+## The one real entry, and the only one carrying an "exec". It lives in the
+## STORES list rather than on the rail since the third amendment (ADR 0006):
+## the rail is the library, and a store is somewhere you go on purpose --
+## through the bag icon in the top bar, PS5-fashion. The stores screen renders
+## a page for it (title, wash, description, live install state) and pressing A
+## there launches this exec.
 ##
 ## `flatpak run` rather than a path: the app is a system flatpak installed by
-## marwanos-steam-install, and `flatpak run` is the entry point that sets up the
+## marwanos-flatpak-install, and `flatpak run` is the entry point that sets up the
 ## sandbox, the runtime and the environment. DISPLAY is inherited from the shell,
 ## which is how it lands on gamescope (see Launcher._spawn).
 ##
-## -silent starts Steam without its own splash window, which on a compositor
-## running --force-windows-fullscreen would otherwise be fullscreened for the
-## second or two before the real window exists.
+## The steam://store argument opens the client on its storefront, which is the
+## page the person asked for by pressing A on a STORE tab -- the client
+## bootstraps first if it has to, and that is what the page's install line has
+## already told them to expect.
 ##
 ## Phase 1 deletes this alongside the rest of the file: marwand enumerates real
-## installs and this entry stops being special-cased.
-const STEAM := {
-	"id": "com.valvesoftware.Steam",
+## installs and stores stop being a hand-written list.
+const STEAM_STORE := {
+	"id": "store.steam",
 	"title": "Steam",
-	"subtitle": "Flatpak from Flathub -- the first real launch",
+	"tagline": "Valve's storefront and library, installed from Flathub",
+	"description": "Browse and buy on the Steam store, and pull your library"
+		+ " down to this machine. Pressing A opens Steam itself, fullscreen,"
+		+ " on its storefront; quitting Steam lands back on this page.",
 	"accent": "#2A3F5A",
-	"exec": ["flatpak", "run", "com.valvesoftware.Steam", "-silent"],
+	"exec": ["flatpak", "run", "com.valvesoftware.Steam", "steam://store"],
 }
 
 
-static func entries() -> Array:
-	return [
-		STEAM,
-		{"id": "placeholder.01", "title": "Placeholder One", "subtitle": "Nothing is installed yet", "accent": "#3E6FA8"},
-		{"id": "placeholder.02", "title": "Placeholder Two", "subtitle": "Phase 1 fills this in", "accent": "#5B7F52"},
-		{"id": "placeholder.03", "title": "Placeholder Three", "subtitle": "From ListInstalled", "accent": "#8A5A78"},
-		{"id": "placeholder.04", "title": "Placeholder Four", "subtitle": "Sorted most recent first", "accent": "#A87A3E"},
-		{"id": "placeholder.05", "title": "Placeholder Five", "subtitle": "Icon comes from AppStream", "accent": "#4E7C82"},
-		{"id": "placeholder.06", "title": "Placeholder Six", "subtitle": "A deliberately long summary line", "accent": "#6E5AA0"},
-		{"id": "placeholder.07", "title": "Placeholder Seven", "subtitle": "Tests title truncation", "accent": "#A05A52"},
-		{"id": "placeholder.08", "title": "Placeholder Eight", "subtitle": "Rail grows with the library", "accent": "#4A6B8A"},
-		{"id": "placeholder.09", "title": "Placeholder Nine", "subtitle": "No store in Phase 0", "accent": "#7A8046"},
-		{"id": "placeholder.10", "title": "Placeholder Ten", "subtitle": "No library in Phase 0", "accent": "#8C6A46"},
-		{"id": "placeholder.11", "title": "Placeholder Eleven", "subtitle": "Launch is a scene swap", "accent": "#566E96"},
-		{"id": "placeholder.12", "title": "Placeholder Twelve", "subtitle": "Settings sits after this", "accent": "#6A5F7E"},
-	]
+static func stores() -> Array:
+	return [STEAM_STORE]

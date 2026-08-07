@@ -1,0 +1,171 @@
+#!/usr/bin/env bash
+#
+# Install one Flathub application, unattended, on the first boot that has a
+# network. The application id is the only argument, which is what lets one
+# script and one templated unit serve every app the appliance ships with.
+#
+# THIS REPLACED marwanos-steam-install, WHICH DID THIS FOR EXACTLY ONE APP.
+# The second app (Zen, the browser) made the choice explicit: either a near
+# copy of a 100-line script with one identifier changed, or the identifier
+# becomes a parameter. Two copies of an installer drift -- one gains a retry
+# or a disk-space check the other does not -- and the drift is invisible until
+# the boot where the wrong one runs.
+#
+# WHY A ONESHOT AND NOT A COMMAND SOMEONE TYPES. This project's build host and
+# its target are the same machine (the Predator boots Windows off the internal
+# drive and MarwanOS off the stick), so at the moment MarwanOS is running there
+# is nobody to ssh in FROM. Every install step therefore has to be baked in
+# before the boot and read back out of the journal afterwards.
+#
+# WHY NOT IN THE IMAGE. A flatpak lands in /var/lib/flatpak, and /var is per
+# stick rather than part of the ostree commit -- so baking these into the
+# Containerfile would put gigabytes into every image and still not survive as
+# installed apps. Installing at runtime is also what Phase 1 does for real
+# (marwand talks to Flathub), so this is the throwaway version of a permanent
+# path rather than a detour.
+#
+# A NETWORK IS REQUIRED, and the machine may not have one. With no route to
+# Flathub this says so at <3> and exits without pretending otherwise. It does
+# not stamp, so the next boot with a network retries.
+#
+set -uo pipefail
+
+APP="${1:-}"
+if [ -z "$APP" ]; then
+    printf '<3>marwanos-install: no application id given\n' >&2
+    exit 1
+fi
+
+TAG="marwanos-install"
+STATE_DIR=/run/marwanos
+STATE="$STATE_DIR/install.$APP.state"
+STAMP="/var/marwanos/installed.$APP"
+FLATHUB=https://dl.flathub.org/repo/flathub.flatpakrepo
+
+info() { printf '<6>%s[%s]: %s\n' "$TAG" "$APP" "$*"; }
+err()  { printf '<3>%s[%s]: %s\n' "$TAG" "$APP" "$*" >&2; }
+
+
+## What the TV calls this application while it is still arriving.
+##
+## An app that is not installed yet has no desktop entry, so there is nothing
+## to read a name out of -- and "app.zen_browser.zen" is not a name to show
+## someone on a sofa. The table is small because the set of apps the image
+## ships with is small and hand-picked; anything not in it falls back to its
+## id, which is ugly but true. Phase 1 gets this from AppStream, which is
+## exactly the metadata this table stands in for.
+display_name() {
+    case "$1" in
+        com.valvesoftware.Steam) printf 'Steam' ;;
+        app.zen_browser.zen)     printf 'Zen Browser' ;;
+        *)                       printf '%s' "$1" ;;
+    esac
+}
+
+
+## Where this install stands, for the shell: one line, `<state>TAB<name>`.
+##
+## The name rides along because the shell shows a card for an app that is
+## still downloading, and until the install lands there is no other source for
+## it. Removed on success -- from then on the desktop entry is the truth and
+## the stamp is the durable record.
+##
+## /run empties every boot, so a stale word cannot outlive the boot that wrote
+## it. Atomic via rename: the shell polls this and must never read half a line.
+## A failed write is logged rather than fatal -- narration must not be able to
+## kill the thing it narrates.
+state() {
+    install -d "$STATE_DIR" || true
+    { printf '%s\t%s\n' "$1" "$(display_name "$APP")" > "$STATE.tmp" \
+        && mv -f "$STATE.tmp" "$STATE"; } \
+        || err "cannot write $STATE (state '$1') -- the TV will not learn this"
+}
+
+
+if [ -e "$STAMP" ]; then
+    info "already installed (stamp $STAMP); nothing to do"
+    rm -f "$STATE"
+    exit 0
+fi
+
+# Free space before anything. The root filesystem is 15.4 GiB with ~7 GiB of OS
+# on it, and these apps run to gigabytes -- worth refusing early and loudly
+# rather than filling the disk of a machine with no console.
+avail_mb=$(df -Pm /var | awk 'NR==2 {print $4}')
+info "free space on /var: ${avail_mb} MiB"
+if [ "${avail_mb:-0}" -lt 3000 ]; then
+    err "under 3 GiB free -- refusing to start an install that would fill the disk"
+    # Its own word, not "failed": this is the one failure with a physical
+    # remedy (a bigger stick), and "go read the journal" is exactly the wrong
+    # thing to tell a person standing in front of a machine with no console.
+    state no-space
+    exit 1
+fi
+
+# The network. NetworkManager-wait-online has already run by the time this unit
+# does, but "online" per NM is not the same as "Flathub answers", and a DNS or
+# route problem here is the difference between a large download and a hang.
+info "waiting for Flathub to answer"
+state waiting-network
+reachable=""
+for attempt in $(seq 1 30); do
+    if curl -fsS --max-time 10 -o /dev/null "$FLATHUB"; then
+        reachable=yes
+        info "Flathub reachable after ${attempt} attempt(s)"
+        break
+    fi
+    sleep 5
+done
+
+if [ -z "$reachable" ]; then
+    err "no route to Flathub after 150s -- is there a network?"
+    err "if wifi is missing, see docs/handoff.md on Windows Fast Startup"
+    ip -brief address 2>&1 | while read -r line; do err "  addr: $line"; done
+    # A distinct word from waiting-network: this unit has now given up until
+    # the next boot, and the card should say so rather than promise a wait
+    # that is no longer happening.
+    state no-network
+    exit 1
+fi
+
+# From here to success is one phase as far as the TV is concerned. remote-add
+# is seconds; the install is the minutes the word exists to explain.
+state downloading
+
+info "adding the flathub remote"
+if ! flatpak remote-add --system --if-not-exists flathub "$FLATHUB"; then
+    err "flatpak remote-add failed"
+    state failed
+    exit 1
+fi
+
+# --noninteractive matters: without it flatpak asks which remote to use and
+# blocks forever on a machine with no keyboard attached to this process.
+info "installing $APP -- this is a large download, expect several minutes"
+if flatpak install --system --noninteractive --assumeyes flathub "$APP"; then
+    info "flatpak install reported success"
+else
+    err "flatpak install failed (exit $?)"
+    state failed
+    exit 1
+fi
+
+# Prove it rather than trust the exit code, in the spirit of the Containerfile's
+# assertions: the failure this catches is an install that half-happened.
+if ! flatpak info --system "$APP" >/dev/null 2>&1; then
+    err "$APP is not installed despite a successful exit -- not stamping"
+    state failed
+    exit 1
+fi
+
+install -d /var/marwanos
+date -u +'%Y-%m-%dT%H:%M:%SZ' > "$STAMP"
+
+# Stamp first, then clear the state: the shell treats the stamp as overriding
+# whatever the state file says, so this order can only ever show "installed"
+# a poll early rather than a gap where the card claims nothing.
+rm -f "$STATE"
+
+info "installed: $(flatpak info --system "$APP" --show-ref 2>/dev/null)"
+info "free space now: $(df -Pm /var | awk 'NR==2 {print $4}') MiB"
+info "done"

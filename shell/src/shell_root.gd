@@ -25,7 +25,8 @@ extends Control
 const TvTheme = preload("res://src/tv_theme.gd")
 const Catalogue = preload("res://src/catalogue.gd")
 const Tile = preload("res://src/tile.gd")
-const SettingsTile = preload("res://src/settings_tile.gd")
+const IconButton = preload("res://src/icon_button.gd")
+const Glyphs = preload("res://src/glyphs.gd")
 const ErrorScreen = preload("res://src/error_screen.gd")
 
 var _hero: ColorRect = null
@@ -35,6 +36,10 @@ var _clock: Label = null
 var _rail_viewport: Control = null
 var _rail: HBoxContainer = null
 var _status: Label = null
+var _open_hint: Control = null
+var _wifi: Glyphs = null
+var _store_button: IconButton = null
+var _gear_button: IconButton = null
 
 var _tiles: Array = []
 var _last_focused: Control = null
@@ -58,14 +63,23 @@ func _ready() -> void:
 	_build()
 	_populate()
 	_wire_focus_neighbours()
+	_refresh_empty_state()
 
 	Launcher.launch_started.connect(_on_launch_started)
 	Launcher.launch_finished.connect(_on_launch_finished)
-	Settings.settings_opened.connect(_on_settings_opened)
-	Settings.settings_closed.connect(_on_settings_closed)
+	Settings.settings_opened.connect(_on_surface_opened)
+	Settings.settings_closed.connect(_on_surface_closed)
+	Stores.stores_opened.connect(_on_surface_opened)
+	Stores.stores_closed.connect(_on_surface_closed)
 	PlayerOne.player_one_present.connect(_on_player_one_present)
 	PlayerOne.player_one_absent.connect(_on_player_one_absent)
+	SystemStatus.network_changed.connect(_on_network_changed)
+	Installed.apps_changed.connect(_on_apps_changed)
 	_refresh_status()
+	# SystemStatus polled once in its own _ready, which ran before this one, so
+	# this is the current answer rather than a default -- the first frame the
+	# TV shows already carries the wifi glyph if the machine has said Offline.
+	_on_network_changed(SystemStatus.network)
 
 	_start_clock()
 
@@ -75,7 +89,6 @@ func _ready() -> void:
 	# looking dead.
 	_ensure_focus()
 
-	ShellLog.info("home rail ready with %d cards" % _tiles.size())
 	_log_rail_geometry()
 
 
@@ -220,10 +233,42 @@ func _build_topbar() -> Control:
 	_status.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	bar.add_child(_status)
 
-	var gap := Control.new()
-	gap.custom_minimum_size = Vector2(TvTheme.SECTION_GAP, 0)
-	gap.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	bar.add_child(gap)
+	bar.add_child(_bar_gap())
+
+	# The bar's icon cluster, PS5-fashion (ADR 0006, third amendment): the
+	# store and the gear are the two FOCUSABLE things outside the rail -- up
+	# from any card lands on the store -- and the wifi glyph and clock after
+	# them are indicators, not controls. The order puts the two buttons
+	# together so left/right between them never crosses a non-focusable.
+	_store_button = IconButton.new()
+	_store_button.setup("store", "Store")
+	_store_button.activated.connect(Stores.open)
+	bar.add_child(_store_button)
+
+	bar.add_child(_bar_gap())
+
+	_gear_button = IconButton.new()
+	_gear_button.setup("gear", "Settings")
+	_gear_button.activated.connect(Settings.open)
+	bar.add_child(_gear_button)
+
+	bar.add_child(_bar_gap())
+
+	# The network's answer as a glyph next to the time, from SystemStatus. In
+	# the bar for the same reason the controller state is: connectivity coming
+	# and going should never take the home screen away, only annotate it.
+	# Hidden when the system has made no claim -- a desk run, or a boot too
+	# early for netcheck to have answered -- because drawing a struck wifi fan
+	# on a machine that merely has not said yet would be the indicator lying in
+	# the direction that causes cable-wiggling.
+	_wifi = Glyphs.new()
+	_wifi.custom_minimum_size = Vector2(TvTheme.SIZE_TOPBAR + 10, TvTheme.SIZE_TOPBAR + 10)
+	_wifi.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	_wifi.visible = false
+	_wifi.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	bar.add_child(_wifi)
+
+	bar.add_child(_bar_gap())
 
 	_clock = Label.new()
 	_clock.add_theme_font_size_override("font_size", TvTheme.SIZE_TOPBAR)
@@ -233,6 +278,13 @@ func _build_topbar() -> Control:
 	bar.add_child(_clock)
 
 	return bar
+
+
+func _bar_gap() -> Control:
+	var gap := Control.new()
+	gap.custom_minimum_size = Vector2(TvTheme.SECTION_GAP, 0)
+	gap.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	return gap
 
 
 func _build_title_block() -> Control:
@@ -294,46 +346,54 @@ func _build_hints() -> Control:
 	var hints := HBoxContainer.new()
 	hints.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	hints.add_theme_constant_override("separation", TvTheme.HINT_GAP)
-	hints.add_child(TvTheme.hint("A", "Open"))
+	# Kept as a member because it is hidden when the rail is empty -- see
+	# _refresh_empty_state. B stays: it is inert at the rail but the glyph is
+	# how a person learns that, and the top bar's icons still take an A.
+	_open_hint = TvTheme.hint("A", "Open")
+	hints.add_child(_open_hint)
 	hints.add_child(TvTheme.hint("B", "Back"))
 	return hints
 
 
+## Builds the rail from what is actually installed.
+##
+## No shell furniture and no placeholders: the settings card became the top
+## bar's gear, Steam moved into the stores screen, and the twelve placeholder
+## entries are deleted (ADR 0006, third and fourth amendments). What is left is
+## the machine's own application list, from Installed.
 func _populate() -> void:
-	for entry in Catalogue.entries():
+	for entry in Installed.apps:
 		var tile := Tile.new()
-		tile.setup(entry)
+		# duplicate() so a tile can never write back into the list the seam
+		# hands out -- Installed rebuilds that list on every rescan, and a tile
+		# holding a reference into it would be reading a dictionary that the
+		# next scan replaced underneath it.
+		tile.setup(entry.duplicate())
 		tile.selected.connect(_on_card_selected)
 		_rail.add_child(tile)
 		_tiles.append(tile)
 
-	# The settings card rides at the end of the rail rather than living in the
-	# catalogue: it is shell furniture, and the catalogue file is deleted whole
-	# in Phase 1. Last and not first because the rail opens on the library --
-	# the thing the machine is for -- and settings is somewhere you go on
-	# purpose, not somewhere you land.
-	var settings_card := SettingsTile.new()
-	settings_card.setup({
-		"id": "shell.settings",
-		"title": "Settings",
-		"subtitle": "What this machine is running",
-		"accent": TvTheme.SETTINGS_CARD_ACCENT,
-	})
-	settings_card.selected.connect(_on_card_selected)
-	_rail.add_child(settings_card)
-	_tiles.append(settings_card)
+	# Logged HERE rather than in _ready, so a rail rebuilt by a rescan says so
+	# too. It used to be logged once at startup, which meant the journal of a
+	# machine where an install had landed still described the rail as it was at
+	# boot -- and this line is the shell's primary "the rail exists and has
+	# this much on it" assertion, both for a person reading journalctl and for
+	# the Xvfb harness.
+	ShellLog.info("home rail ready with %d cards" % _tiles.size())
 
 
-## One axis, and the ends are hard stops. A card at either end points that
-## neighbour at itself, so pushing further does nothing rather than wrapping.
-## Wrapping is a defensible choice and this is not it -- a selection that
-## teleports from one end of the rail to the other when you lean on the stick
-## reads as a glitch.
+## The rail keeps its one-axis argument -- left and right between cards, hard
+## stops at the ends, no wrapping (a selection that teleports across the rail
+## when you lean on the stick reads as a glitch). What the third amendment
+## added is ONE move off that axis: up, from any card, lands on the store icon
+## -- the PS5 shape, where the bar is a second row rather than decoration. Down
+## from the bar returns to the rail; _scroll_to_selected keeps the buttons'
+## down-neighbour pointed at the selected card, so the round trip up-and-down
+## lands where the person left rather than at the rail's start.
 ##
-## Up and down are pointed at self as well. There is nothing above or below the
-## rail to reach yet, and leaving them empty would let Control's geometric focus
-## search find the hint row or the top bar, neither of which is focusable but both
-## of which could become so later. Explicit is a table someone can read.
+## Everything is still an explicit table someone can read. Down from a card and
+## up from the bar stay pointed at self, so Control's geometric search can
+## never wander into the hint row.
 func _wire_focus_neighbours() -> void:
 	var count := _tiles.size()
 	for index in count:
@@ -343,8 +403,25 @@ func _wire_focus_neighbours() -> void:
 
 		tile.focus_neighbor_left = tile.get_path_to(_tiles[left])
 		tile.focus_neighbor_right = tile.get_path_to(_tiles[right])
-		tile.focus_neighbor_top = tile.get_path_to(tile)
+		tile.focus_neighbor_top = tile.get_path_to(_store_button)
 		tile.focus_neighbor_bottom = tile.get_path_to(tile)
+
+	_store_button.focus_neighbor_left = _store_button.get_path_to(_store_button)
+	_store_button.focus_neighbor_right = _store_button.get_path_to(_gear_button)
+	_store_button.focus_neighbor_top = _store_button.get_path_to(_store_button)
+
+	_gear_button.focus_neighbor_left = _gear_button.get_path_to(_store_button)
+	_gear_button.focus_neighbor_right = _gear_button.get_path_to(_gear_button)
+	_gear_button.focus_neighbor_top = _gear_button.get_path_to(_gear_button)
+
+	if count > 0:
+		_store_button.focus_neighbor_bottom = _store_button.get_path_to(_tiles[0])
+		_gear_button.focus_neighbor_bottom = _gear_button.get_path_to(_tiles[0])
+	else:
+		# Nothing below the bar on an empty rail. Pointed at self rather than
+		# left unset, so Control's geometric search cannot find the hint row.
+		_store_button.focus_neighbor_bottom = _store_button.get_path_to(_store_button)
+		_gear_button.focus_neighbor_bottom = _gear_button.get_path_to(_gear_button)
 
 
 # ---------------------------------------------------------------------------
@@ -411,17 +488,45 @@ func _scroll_to_selected() -> void:
 	_rail_tween.set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
 	_rail_tween.tween_property(_rail, "position:x", target_x, TvTheme.RAIL_TWEEN_SECONDS)
 
+	# Keep the bar's way back pointed at the selection, so up-then-down is a
+	# round trip rather than a teleport to the rail's start.
+	var selected: Control = _tiles[index]
+	_store_button.focus_neighbor_bottom = _store_button.get_path_to(selected)
+	_gear_button.focus_neighbor_bottom = _gear_button.get_path_to(selected)
+
 
 func _ensure_focus() -> void:
-	if _tiles.is_empty():
-		return
 	if get_viewport().gui_get_focus_owner() != null:
 		return
 	if is_instance_valid(_last_focused):
 		_last_focused.grab_focus()
-	else:
+	elif not _tiles.is_empty():
 		var first: Control = _tiles[0]
 		first.grab_focus()
+	elif _store_button != null:
+		# An empty rail is the normal state of a fresh machine, and it must not
+		# be a dead end: with no card to focus, the store icon is both the only
+		# focusable thing left and exactly where someone with nothing installed
+		# needs to go.
+		_store_button.grab_focus()
+
+
+## The rail's two moods: a library, or a machine with nothing on it yet.
+##
+## The empty state is not an error screen and deliberately does not look like
+## one. A fresh stick has nothing installed, which is a correct and expected
+## condition -- so the title block says what is true and points at the way out,
+## and the hint row stops promising an A press that has no card to land on.
+func _refresh_empty_state() -> void:
+	var empty := _tiles.is_empty()
+
+	if empty:
+		_title.text = "No apps installed"
+		_subtitle.text = "Open the Store above to install something"
+		_fade_hero_to(TvTheme.ACCENT_FALLBACK)
+
+	if _open_hint != null:
+		_open_hint.visible = not empty
 
 
 # ---------------------------------------------------------------------------
@@ -453,25 +558,35 @@ func _on_launch_started(_entry: Dictionary) -> void:
 
 
 func _on_launch_finished(_entry: Dictionary) -> void:
+	# A launch can start FROM the stores screen, in which case that screen is
+	# what the person should land back on when the app quits -- not the rail
+	# grabbing focus to a card that is drawn underneath an open surface. The
+	# surface's own close is what restores the rail.
+	if Stores.is_open() or Settings.is_open():
+		return
 	_take_screen_back()
 
 
-func _on_settings_opened() -> void:
+func _on_surface_opened() -> void:
 	_hand_screen_over()
 
 
-func _on_settings_closed() -> void:
+func _on_surface_closed() -> void:
 	_take_screen_back()
 
 
-## Shared by the launch seam and the settings seam: from the rail's point of
+## Shared by the launch seam and both shell surfaces: from the rail's point of
 ## view "something fullscreen is up" is one state, however it was reached, and
-## having one implementation is what guarantees the two seams cannot drift
-## apart in how they give the screen back.
+## having one implementation is what guarantees the seams cannot drift apart
+## in how they give the screen back.
 func _hand_screen_over() -> void:
 	# Captured before hiding: hiding a Control releases focus, so asking
-	# afterwards would always answer null.
-	_last_focused = get_viewport().gui_get_focus_owner()
+	# afterwards would always answer null. Captured only while VISIBLE: a
+	# launch that starts from inside the stores screen arrives here with the
+	# rail already hidden, and overwriting the remembered card with a store
+	# tab would strand focus on a freed control when the rail finally returns.
+	if visible:
+		_last_focused = get_viewport().gui_get_focus_owner()
 	hide()
 	# Hiding a Control stops it drawing and stops it receiving GUI input, but
 	# _unhandled_input keeps arriving regardless. The covering screen is a later
@@ -507,6 +622,84 @@ func _refresh_status() -> void:
 	else:
 		_status.text = "Reconnect the controller"
 		_status.add_theme_color_override("font_color", TvTheme.TEXT_ALERT)
+
+
+## An install or a removal landed while the rail was on screen. Rebuilding is
+## the whole response: the rail is a rendering of the list, so the list
+## changing means it is redrawn rather than patched.
+##
+## FOCUS IS RE-ESTABLISHED BY IDENTITY, NOT BY INDEX. The tiles about to be
+## freed include the focused one, and the replacement list may be longer,
+## shorter or reordered -- so the card the person was on is looked up again by
+## its app id. Only when that app is genuinely gone does focus fall back to the
+## start of the rail. Keeping the index instead would silently move the
+## selection to a different app whenever one was installed ahead of it.
+func _on_apps_changed(_apps: Array) -> void:
+	var focused_id := ""
+	var owner := get_viewport().gui_get_focus_owner()
+	if owner != null and _tiles.has(owner):
+		focused_id = str(owner.entry.get("id", ""))
+
+	for tile in _tiles:
+		_rail.remove_child(tile)
+		tile.queue_free()
+	_tiles.clear()
+	# The remembered card is one of the tiles just freed; leaving it set would
+	# have _ensure_focus grab a freed node.
+	_last_focused = null
+
+	_populate()
+	_wire_focus_neighbours()
+	_refresh_empty_state()
+
+	# Only touch focus if the rail is the surface on screen. A rescan while the
+	# stores screen is up must not pull focus out from under it.
+	if not visible:
+		return
+
+	# Nor may it pull focus off the TOP BAR. An install landing while someone
+	# is sitting on the store or gear icon -- which is exactly where they are
+	# after closing the stores screen, and exactly when an install is likely to
+	# finish -- must not yank the selection down into the rail mid-press.
+	# `focused_id` is empty precisely when focus was not on a card, so it is
+	# also the test for "leave it alone".
+	if focused_id.is_empty():
+		if get_viewport().gui_get_focus_owner() == null:
+			_ensure_focus()
+		return
+
+	var restored: Control = null
+	for tile in _tiles:
+		if str(tile.entry.get("id", "")) == focused_id:
+			restored = tile
+			break
+	if restored == null and not _tiles.is_empty():
+		restored = _tiles[0]
+
+	if restored != null:
+		restored.grab_focus()
+	else:
+		# The rail emptied out from under the selection -- the last app was
+		# removed. _ensure_focus sends focus up to the store icon, which is
+		# where someone with nothing installed needs to be anyway.
+		_ensure_focus()
+
+
+func _on_network_changed(state: String) -> void:
+	if _wifi == null:
+		return
+	match state:
+		"online":
+			_wifi.visible = true
+			_wifi.kind = "wifi"
+			_wifi.color = TvTheme.TEXT_SECONDARY
+		"offline":
+			_wifi.visible = true
+			_wifi.kind = "wifi-off"
+			_wifi.color = TvTheme.TEXT_ALERT
+		_:
+			# No claim from the system, no glyph on the screen. See _build_topbar.
+			_wifi.visible = false
 
 
 func _unhandled_input(event: InputEvent) -> void:

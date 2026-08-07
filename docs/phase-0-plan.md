@@ -2,13 +2,22 @@
 
 > **Goal:** Cold boot to a controller-navigable fullscreen shell with no text, no cursor, no login, no desktop, and no reachable escape hatch — plus a one-command path to deploy a new build. Nothing else. If this works, everything after it is features.
 
-**Non-goals:** library, store, guide overlay, Proton, Bluetooth, sleep/resume, ~~any settings UI~~. Updates happen via `bootc` CLI over SSH; that's fine for now.
+**Non-goals:** library, ~~store~~, guide overlay, Proton, Bluetooth, sleep/resume, ~~any settings UI~~. Updates happen via `bootc` CLI over SSH; that's fine for now.
 
 > **Amended 2026-08-06:** a **read-only** settings page was pulled into M3 at the
 > owner's request — a rail card opening a screen that shows what the appliance is
 > running (image, engine, display, adapter, controller) and changes nothing.
 > Mutable settings remain out of scope until `marwand` exists to apply them; the
 > shell stays a renderer. Record: ADR 0006's second amendment.
+
+> **Amended 2026-08-07:** a **stores screen** was pulled forward at the owner's
+> request, and the entry points moved to a PS5-style top bar (store and gear
+> icons; wifi glyph by the clock). What "store" means here is narrower than the
+> non-goal ever was: side tabs plus a page the shell renders itself (name, wash,
+> description, live install state), with A launching the store application
+> fullscreen through the launch seam. There is no browsing, buying, or catalogue
+> inside the shell — that is the store app's own job, and Phase 1's marwand
+> enumerates the store list. Record: ADR 0006's third amendment.
 
 ## Hardware prerequisites
 

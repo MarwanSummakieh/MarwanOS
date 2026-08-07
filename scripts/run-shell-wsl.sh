@@ -9,6 +9,17 @@
 # rail -- the same binary and the same variable marwanos-session uses when the
 # crash guard gives up, so what you see is what the TV would show.
 #
+# STATUS_DIR=/some/dir mounts a directory of status-file fixtures and points
+# MARWANOS_SHELL_STATUS_DIR at it, so the top bar's network word and the Steam
+# card's install narration can be exercised without an appliance. Drop any of
+# network.state (`online`/`offline`), network.info (`wifi HomeNet`),
+# apps.tsv (six tab-separated fields: id, name, comment, icon, exec, state),
+# install.<app-id>.state (`<state>TAB<display name>`) or
+# installed.<app-id> (any content) into the directory -- the shell re-reads
+# them every 2 s, so editing the files while the window is up shows the
+# transitions live. Without
+# STATUS_DIR nothing is mounted and the shell makes no claims, same as before.
+#
 # WHAT THIS IS AND IS NOT. It exports the real Godot project with the real
 # toolchain and runs the real binary, so what you see is what the appliance
 # ships. It is NOT the appliance: there is no session, no compositor, no
@@ -108,8 +119,18 @@ RENDER_ARGS=(--rendering-method gl_compatibility)
 TTY_FLAGS=()
 [[ -t 0 && -t 1 ]] && TTY_FLAGS=(-it)
 
+# The fixture lever. :ro because the shell only ever reads these files --
+# writes come from the person editing the fixtures on the host, which the
+# bind mount passes straight through.
+STATUS_ARGS=()
+if [[ -n "${STATUS_DIR:-}" ]]; then
+    [[ -d "$STATUS_DIR" ]] || die "STATUS_DIR=$STATUS_DIR is not a directory"
+    STATUS_ARGS=(-e MARWANOS_SHELL_STATUS_DIR=/status -v "${STATUS_DIR}:/status:ro")
+fi
+
 # --network=none because the shell has no business reaching anything, and a
-# desk run is the cheapest place to keep that true.
+# desk run is the cheapest place to keep that true -- the status seam reads
+# files precisely so this flag never has to soften.
 exec podman run --rm "${TTY_FLAGS[@]}" \
     --network=none \
     -e DISPLAY="$DISPLAY" \
@@ -117,6 +138,7 @@ exec podman run --rm "${TTY_FLAGS[@]}" \
     -e XDG_RUNTIME_DIR=/godothome \
     -e MARWANOS_SHELL_WINDOWED=1 \
     -e MARWANOS_SHELL_ERROR_SCREEN="${ERROR_SCREEN:-}" \
+    "${STATUS_ARGS[@]}" \
     --tmpfs /godothome:rw,mode=1777 \
     -v /tmp/.X11-unix/X0:/tmp/.X11-unix/X0 \
     -v "${BIN_OUT}:/usr/lib/marwanos/shell/marwanos-shell:ro" \

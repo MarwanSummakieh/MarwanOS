@@ -1,0 +1,338 @@
+#!/usr/bin/env bash
+#
+# Enumerate the applications actually installed on this machine, the way a
+# desktop's app launcher does, and write them where the shell can render them.
+#
+# WHY THIS EXISTS. The home rail used to show twelve hard-coded placeholders.
+# They were honest scaffolding -- they proved the rail slid, clipped and
+# traversed before there was anything real to put on it -- but a shipped
+# appliance showing "Placeholder Seven" is a lie about what is installed. This
+# replaces them with the truth, and the truth on a fresh stick is often
+# "nothing", which the shell draws as an empty state rather than hiding.
+#
+# WHY A SYSTEM SERVICE AND NOT A SCAN IN THE SHELL. Same rule as netcheck: the
+# shell is a renderer. It has no business walking XDG directories, parsing
+# desktop entries or resolving icon themes, and the desk harness runs it under
+# --network=none with no /usr/share/applications worth reading anyway. The
+# system answers; the shell draws. This also retires cleanly -- Phase 1's
+# marwand does exactly this job over JSON-RPC (`ListInstalled`, joined against
+# AppStream), and when it lands this file and its unit are deleted whole.
+#
+# THE FILTER IS GNOME'S, because "like the apps launcher" is the brief and
+# because the rules are the freedesktop spec's rather than invented here:
+# Type=Application, not NoDisplay, not Hidden, and TryExec (if given) must
+# resolve. Terminal=true is ALSO excluded, which GNOME does not do -- and that
+# is deliberate. This appliance ships no terminal emulator, so launching htop
+# would spawn a process with nowhere to draw: a card that does nothing when
+# pressed, which is the exact failure this project keeps designing against.
+#
+# STORE APPS ARE EXCLUDED. Steam has its own page under the stores screen, so
+# listing it on the rail as well would give one thing two homes. Phase 1 makes
+# this a property of the app record rather than a list of ids here.
+#
+set -uo pipefail
+
+TAG=marwanos-appscan
+STATE_DIR=/run/marwanos
+APPS="$STATE_DIR/apps.tsv"
+
+# How often to look for a CHANGE. The scan itself only re-runs when one of the
+# watched directories has a newer mtime, so this is a stat of a handful of
+# directories, not a re-parse -- cheap enough at this interval on a USB stick,
+# and fast enough that an app installed while the rail is on screen shows up
+# without anyone rebooting.
+INTERVAL=10
+
+# Where applications come from, in the freedesktop order. The flatpak export
+# directory is the one that matters after first boot: it is where Steam and
+# anything else installed from Flathub lands.
+APP_DIRS=(
+    /usr/share/applications
+    /usr/local/share/applications
+    /var/lib/flatpak/exports/share/applications
+    /var/home/player/.local/share/applications
+    /var/home/player/.local/share/flatpak/exports/share/applications
+)
+
+# Icon theme roots, searched in this order. hicolor is the spec's fallback
+# theme and the one flatpak exports into.
+ICON_ROOTS=(
+    /var/lib/flatpak/exports/share/icons/hicolor
+    /var/home/player/.local/share/flatpak/exports/share/icons/hicolor
+    /usr/share/icons/hicolor
+)
+
+# Largest first: the cards are 200-340 px on a 1080p design surface, so a
+# 256 px icon is the smallest that is not visibly soft when a card grows.
+ICON_SIZES=(512x512 256x256 128x128 96x96 64x64 48x48)
+
+# Applications that have another home in the shell and must not also sit on
+# the rail.
+EXCLUDE_IDS=(com.valvesoftware.Steam)
+
+info() { printf '<6>%s: %s\n' "$TAG" "$*"; }
+err()  { printf '<3>%s: %s\n' "$TAG" "$*" >&2; }
+
+install -d "$STATE_DIR" || err "cannot create $STATE_DIR -- the rail will stay empty"
+
+
+## Reads one key from the [Desktop Entry] group of a desktop file.
+##
+## Pure bash rather than awk or a config parser, for two reasons: it keeps this
+## script testable in environments without awk, and the parsing rules that
+## matter are ones a general parser gets WRONG for this format -- only the
+## first group counts (a [Desktop Action] group below it may repeat Name and
+## Exec with different values), and localised keys like `Name[de]` must not
+## satisfy a request for `Name`.
+desktop_get() {
+    local file="$1" key="$2" line in_entry=0
+    while IFS= read -r line || [ -n "$line" ]; do
+        case "$line" in
+            '[Desktop Entry]') in_entry=1; continue ;;
+            '['*)              [ "$in_entry" = 1 ] && return 0; continue ;;
+        esac
+        [ "$in_entry" = 1 ] || continue
+        case "$line" in
+            "$key="*) printf '%s' "${line#*=}"; return 0 ;;
+        esac
+    done < "$file"
+    return 0
+}
+
+
+## Absolute path to a PNG for an icon name, or nothing.
+##
+## PNG only, deliberately. Godot loads PNG at runtime with certainty; SVG
+## support depends on module availability and would turn a missing icon into a
+## missing card. An app whose only icon is scalable falls back to the flat
+## accent wash, which is what a card with no icon has always drawn.
+icon_path() {
+    local name="$1" root size candidate
+
+    [ -n "$name" ] || return 0
+
+    # An absolute path is allowed by the spec and used by a few packages.
+    case "$name" in
+        /*)
+            case "$name" in
+                *.png) [ -f "$name" ] && printf '%s' "$name" ;;
+            esac
+            return 0
+            ;;
+    esac
+
+    for root in "${ICON_ROOTS[@]}"; do
+        [ -d "$root" ] || continue
+        for size in "${ICON_SIZES[@]}"; do
+            candidate="$root/$size/apps/$name.png"
+            [ -f "$candidate" ] && { printf '%s' "$candidate"; return 0; }
+        done
+    done
+
+    for candidate in "/usr/share/pixmaps/$name.png"; do
+        [ -f "$candidate" ] && { printf '%s' "$candidate"; return 0; }
+    done
+
+    return 0
+}
+
+
+## Turns a desktop Exec= into a command line the launcher can spawn.
+##
+## Field codes (%u %U %f %F %i %c %k and the rest) are dropped: they are
+## placeholders for documents and icons that a launcher substitutes, and this
+## appliance always launches an app with no arguments. A flatpak export is
+## rewritten to `flatpak run <id>` from its X-Flatpak key rather than trusting
+## the exported Exec line, which points at a wrapper path in the export
+## directory that only exists while the export does.
+exec_line() {
+    local file="$1" flatpak_id exec_raw word out=""
+
+    flatpak_id="$(desktop_get "$file" X-Flatpak)"
+    if [ -n "$flatpak_id" ]; then
+        printf 'flatpak run %s' "$flatpak_id"
+        return 0
+    fi
+
+    exec_raw="$(desktop_get "$file" Exec)"
+    [ -n "$exec_raw" ] || return 0
+
+    for word in $exec_raw; do
+        case "$word" in
+            %*) continue ;;
+            *)  out="${out:+$out }$word" ;;
+        esac
+    done
+    [ -n "$out" ] || return 0
+
+    # Resolve the program to an absolute path. Desktop entries routinely give
+    # a bare name (Firefox ships `Exec=firefox`), which works for a launcher
+    # that inherits a login shell's PATH -- and the shell spawns through
+    # execvp, so it would in fact work here too. Resolving anyway means the
+    # rail cannot be broken later by a PATH that differs between greetd's
+    # session and this unit's, and it makes the journal line name the actual
+    # binary rather than a word.
+    local program="${out%% *}" rest_args="" resolved
+    case "$out" in
+        *" "*) rest_args="${out#* }" ;;
+    esac
+    case "$program" in
+        /*) ;;
+        *)
+            resolved="$(command -v "$program" 2>/dev/null)"
+            [ -n "$resolved" ] && program="$resolved"
+            ;;
+    esac
+    printf '%s' "${program}${rest_args:+ $rest_args}"
+}
+
+
+## One TSV record per installed application, or nothing at all.
+##
+## Tab-separated because every field except the name is a path or an id, and a
+## name containing a tab is not a thing that exists. The shell splits on tabs
+## and treats a short record as a malformed one rather than guessing.
+scan() {
+    local dir file id name comment icon exec_cmd nodisplay hidden type terminal tryexec excluded
+
+    for dir in "${APP_DIRS[@]}"; do
+        [ -d "$dir" ] || continue
+        for file in "$dir"/*.desktop; do
+            [ -f "$file" ] || continue
+
+            id="$(basename "$file" .desktop)"
+
+            excluded=""
+            for skip in "${EXCLUDE_IDS[@]}"; do
+                [ "$id" = "$skip" ] && { excluded=yes; break; }
+            done
+            [ -n "$excluded" ] && continue
+
+            type="$(desktop_get "$file" Type)"
+            [ "$type" = "Application" ] || continue
+
+            nodisplay="$(desktop_get "$file" NoDisplay)"
+            [ "$nodisplay" = "true" ] && continue
+
+            hidden="$(desktop_get "$file" Hidden)"
+            [ "$hidden" = "true" ] && continue
+
+            # See the header: a terminal app on a machine with no terminal is a
+            # card that does nothing.
+            terminal="$(desktop_get "$file" Terminal)"
+            [ "$terminal" = "true" ] && continue
+
+            # TryExec is the spec's own "is this actually installed" check, and
+            # it is what stops a leftover desktop file from advertising a
+            # binary that was removed underneath it.
+            tryexec="$(desktop_get "$file" TryExec)"
+            if [ -n "$tryexec" ]; then
+                case "$tryexec" in
+                    /*) [ -x "$tryexec" ] || continue ;;
+                    *)  command -v "$tryexec" >/dev/null 2>&1 || continue ;;
+                esac
+            fi
+
+            name="$(desktop_get "$file" Name)"
+            [ -n "$name" ] || continue
+
+            exec_cmd="$(exec_line "$file")"
+            [ -n "$exec_cmd" ] || continue
+
+            comment="$(desktop_get "$file" Comment)"
+            [ -n "$comment" ] || comment="$(desktop_get "$file" GenericName)"
+
+            icon="$(icon_path "$(desktop_get "$file" Icon)")"
+
+            printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
+                "$id" "$name" "$comment" "$icon" "$exec_cmd" "installed"
+        done
+    done
+}
+
+
+## Applications that are on their way but not here yet.
+##
+## marwanos-flatpak-install writes `<state>TAB<name>` per app it is working on,
+## and deletes the file once the install is proven. Emitting those as records
+## is what stops a first boot looking broken: the browser is a several-hundred-
+## megabyte download, and without this the rail would sit empty for minutes
+## with nothing anywhere saying why -- which is the exact complaint that
+## started this whole line of work.
+##
+## They carry no icon and no exec, because neither exists yet. The shell
+## renders them as cards that describe themselves and refuse to launch.
+pending() {
+    local file id line state name
+
+    for file in "$STATE_DIR"/install.*.state; do
+        [ -f "$file" ] || continue
+
+        id="${file##*/install.}"
+        id="${id%.state}"
+
+        IFS= read -r line < "$file" || continue
+        state="${line%%$'\t'*}"
+        name="${line#*$'\t'}"
+        [ -n "$state" ] || continue
+        # A file with no tab in it leaves name equal to the whole line; falling
+        # back to the id is better than showing a state word as a title.
+        [ "$name" = "$line" ] && name="$id"
+
+        printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$id" "$name" "" "" "" "$state"
+    done
+}
+
+
+## A cheap value that changes when anything worth rescanning does. Compared
+## against the previous one so the parse only runs when something moved.
+##
+## The install state files are in here by CONTENT, not by mtime, and that is
+## the difference between a rail that narrates an install and one that shows
+## one stale word for the whole download: a state file's mtime changes on
+## every rewrite, but so does its content, and reading four short lines is
+## cheaper than being wrong. The application directories stay on mtime because
+## re-parsing a hundred desktop entries every ten seconds is exactly what the
+## signature exists to avoid.
+signature() {
+    local dir file
+    for dir in "${APP_DIRS[@]}"; do
+        if [ -d "$dir" ]; then
+            printf '%s:%s ' "$dir" "$(stat -c %Y "$dir" 2>/dev/null || echo 0)"
+        fi
+    done
+    for file in "$STATE_DIR"/install.*.state; do
+        [ -f "$file" ] && printf '%s:%s ' "$file" "$(cat "$file" 2>/dev/null)"
+    done
+}
+
+
+last_signature=""
+while :; do
+    now="$(signature)"
+    if [ "$now" != "$last_signature" ]; then
+        last_signature="$now"
+
+        # Sorted by name so the rail's order is stable across rescans -- a rail
+        # whose cards reshuffle when an unrelated app is installed would move
+        # the selection out from under the person holding the pad. Pending
+        # entries sort in among the installed ones rather than clustering at
+        # one end, so an app does not jump across the rail at the moment its
+        # install finishes.
+        listing="$( { scan; pending; } | sort -t"$(printf '\t')" -k2,2f)"
+        count=0
+        [ -n "$listing" ] && count="$(printf '%s\n' "$listing" | wc -l)"
+
+        info "scan found $count application(s), including pending installs"
+
+        # Atomic via rename: the shell polls this file and must never read a
+        # half-written listing. Logged rather than fatal, same as netcheck --
+        # under `set -uo pipefail` without -e the failure would otherwise be
+        # discarded and the journal would claim a scan that never landed.
+        { printf '%s' "${listing:+$listing$'\n'}" > "$APPS.tmp" \
+            && mv -f "$APPS.tmp" "$APPS"; } \
+            || err "cannot write $APPS -- the rail will not see this scan"
+    fi
+
+    sleep "$INTERVAL"
+done

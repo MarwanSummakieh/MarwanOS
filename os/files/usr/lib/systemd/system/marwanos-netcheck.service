@@ -1,0 +1,32 @@
+[Unit]
+# Writes `online`/`offline` to /run/marwanos/network.state for the shell's top
+# bar. See the script header for why this is a system service and not a probe
+# inside the shell.
+#
+# Deliberately NOT ordered after network-online.target: this unit is the thing
+# that reports whether the network is there, and waiting for the network before
+# saying "offline" would be waiting for the answer before asking the question.
+# It starts as early as multi-user allows and says offline until that stops
+# being true.
+Description=Report Flathub reachability for the shell (/run/marwanos/network.state)
+Documentation=file:///usr/lib/marwanos/netcheck
+
+[Service]
+Type=exec
+ExecStart=/usr/lib/marwanos/netcheck
+
+# The loop only exits if something kills it, and a machine whose network
+# indicator silently stopped updating is worse than one with no indicator --
+# the frozen answer looks like a fresh one.
+Restart=always
+RestartSec=5
+
+# Journal-shaped like everything else here, so `journalctl -t marwanos-netcheck`
+# is the whole story and the <N> prefixes survive as syslog priorities.
+StandardOutput=journal
+StandardError=journal
+SyslogLevelPrefix=true
+SyslogIdentifier=marwanos-netcheck
+
+[Install]
+WantedBy=multi-user.target
