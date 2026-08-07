@@ -28,6 +28,9 @@ const SettingsRow = preload("res://src/settings_row.gd")
 
 var _rows: Array = []
 var _controller_row: SettingsRow = null
+var _network_row: SettingsRow = null
+var _connection_row: SettingsRow = null
+var _wifi_row: SettingsRow = null
 
 
 func _ready() -> void:
@@ -73,6 +76,15 @@ func _ready() -> void:
 	_add_row(list, "Display", _display_value())
 	_add_row(list, "Renderer", RenderingServer.get_video_adapter_name())
 	_controller_row = _add_row(list, "Controller", _controller_value())
+	# The network rows answer from the status seam, live -- the same files the
+	# top bar's wifi glyph renders, at more length. Read-only like every row:
+	# JOINING a network needs a keyboard UI and somewhere to send credentials,
+	# and both are marwand's (the per-stick NetworkManager profile is the
+	# Phase 0 mechanism -- see docs/handoff.md). The Wi-Fi row says so instead
+	# of pretending.
+	_network_row = _add_row(list, "Network", _network_value())
+	_connection_row = _add_row(list, "Connection", _connection_value())
+	_wifi_row = _add_row(list, "Wi-Fi", _wifi_value())
 
 	var spacer := Control.new()
 	spacer.size_flags_vertical = Control.SIZE_EXPAND_FILL
@@ -92,6 +104,8 @@ func _ready() -> void:
 
 	PlayerOne.player_one_present.connect(_on_player_one_present)
 	PlayerOne.player_one_absent.connect(_on_player_one_absent)
+	SystemStatus.network_changed.connect(_on_network_changed)
+	SystemStatus.network_info_changed.connect(_on_network_info_changed)
 
 	ShellLog.info("settings screen up with %d rows" % _rows.size())
 
@@ -165,6 +179,66 @@ func _controller_value() -> String:
 	if PlayerOne.has_controller():
 		return PlayerOne.pad_name
 	return "Not connected"
+
+
+func _network_value() -> String:
+	match SystemStatus.network:
+		"online":
+			return "Online -- Flathub answers"
+		"offline":
+			return "Offline"
+		_:
+			return "Unknown -- the system has not said"
+
+
+## netcheck's one-line link description, made readable: "wifi HomeNet" becomes
+## "Wi-Fi -- HomeNet". The raw first word decides the family; everything after
+## it is the connection's name and passes through untouched.
+func _connection_value() -> String:
+	var info := SystemStatus.network_info
+	if info.is_empty():
+		return "Unknown"
+	var kind := info.get_slice(" ", 0)
+	var name := info.substr(kind.length()).strip_edges()
+	match kind:
+		"wifi":
+			return "Wi-Fi -- %s" % name if not name.is_empty() else "Wi-Fi"
+		"ethernet":
+			return "Ethernet -- %s" % name if not name.is_empty() else "Ethernet"
+		"link":
+			return "Link on %s" % name if not name.is_empty() else "Link up"
+		"none":
+			return "No link"
+		_:
+			return info
+
+
+## What a wifi SETTINGS row can honestly say in Phase 0: the network's name
+## when wifi carries the link, and otherwise where the credentials actually
+## live. Joining a network from the couch needs an on-screen keyboard and a
+## write path to NetworkManager -- both marwand, both Phase 1.
+func _wifi_value() -> String:
+	var info := SystemStatus.network_info
+	if info.get_slice(" ", 0) == "wifi":
+		return info.substr("wifi".length()).strip_edges()
+	return "No on-screen setup yet -- profile lives on the stick"
+
+
+func _refresh_network_rows() -> void:
+	if _network_row != null:
+		_network_row.set_value(_network_value())
+	if _connection_row != null:
+		_connection_row.set_value(_connection_value())
+	if _wifi_row != null:
+		_wifi_row.set_value(_wifi_value())
+
+
+func _on_network_changed(_state: String) -> void:
+	_refresh_network_rows()
+
+
+func _on_network_info_changed(_info: String) -> void:
+	_refresh_network_rows()
 
 
 func _refresh_controller() -> void:

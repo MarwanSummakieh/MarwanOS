@@ -67,6 +67,13 @@ const CARD_FOCUSED_SIZE := 340
 const CARD_GAP := 26
 const CARD_CORNER_RADIUS := 12
 
+## Inset from a card's edge to its icon, at CARD_SIZE. An app icon sits inside
+## the card's wash the way a launcher tile's does -- roughly two thirds of the
+## card, so the wash reads as a frame rather than a border. A fixed pixel inset
+## means the icon grows with the card when it takes focus, which is what keeps
+## the selection's size channel working.
+const CARD_ICON_INSET := 34
+
 ## How long the rail takes to slide and the card to grow. Long enough to read as
 ## motion, short enough that holding a direction does not feel like wading --
 ## FocusRepeat's hold-repeat interval is the real ceiling on this.
@@ -84,6 +91,53 @@ const HERO_GRADIENT_FRACTION := 0.62
 
 const SIZE_HERO_TITLE := 72
 const SIZE_TOPBAR := 28
+
+# ---------------------------------------------------------------------------
+# The top bar's icon buttons (PS5-shaped: store and settings live in the bar)
+#
+# The bar stopped being pure text when the settings entry moved off the rail at
+# the owner's request (ADR 0006, third amendment): store and settings are now
+# focusable icons on the right of the bar, PS5-fashion, and the rail gained a
+# second axis -- up from any card lands on the store icon. The icons are drawn
+# with primitives in glyphs.gd rather than shipped as textures: an icon font or
+# a PNG would be the repo's first binary asset, and three glyphs' worth of arcs
+# and rectangles is reviewable the way every other number here is.
+
+## Exactly the interactive floor from the header. The glyph inside is smaller;
+## the box is the focus target and the thing the ring draws around.
+const TOPBAR_ICON_SIZE := 64
+
+## Inset from the icon box's edge to the glyph's drawing area. Chosen so the
+## glyph reads at three metres without the box crowding it.
+const TOPBAR_ICON_PAD := 14
+
+## Line weight for glyph strokes. Matches the focus ring's weight so the two
+## read as one family of marks.
+const TOPBAR_GLYPH_WIDTH := 4.0
+
+# ---------------------------------------------------------------------------
+# The stores screen
+#
+# Side tabs on the left, the selected store's page rendered on the right --
+# the PS Store shape. The page is drawn BY THE SHELL (title, art wash,
+# description, live install state); pressing A launches the store application
+# itself fullscreen, because embedding a foreign client's window inside a
+# Godot control is compositor work this stack does not do. See ADR 0006's
+# third amendment.
+
+## Width of the tab column. Wide enough for a store name at SIZE_BODY with the
+## row's padding, narrow enough that the page keeps most of the safe width.
+const STORE_TAB_WIDTH := 420
+
+## Gap between the tab column and the page pane.
+const STORE_PAGE_GAP := 40
+
+## Padding inside the page pane, between its rounded edge and its content.
+const STORE_PAGE_PAD := 48
+
+## Height of the accent wash band at the top of a store page -- stands in for
+## key art the same way the rail's hero wash does.
+const STORE_PAGE_HERO_HEIGHT := 220
 
 # The focus indicator runs on three channels at once, because colour alone is
 # unreliable on a TV and because WCAG 2.2 SC 2.4.13 asks for a >= 3:1 contrast
@@ -126,13 +180,8 @@ const SETTINGS_ROW_GAP := 14
 ## Horizontal padding inside a row, between its rounded edge and its text.
 const SETTINGS_ROW_PAD := 28
 
-## The settings card's accent on the home rail -- deliberately the muted end of
-## the placeholder palette, so shell furniture recedes next to library content.
-## A hex string rather than a Color because it travels in the same entry shape
-## as catalogue data, but it lives HERE and not in catalogue.gd: the catalogue
-## is deleted in Phase 1 and this card survives it, so this is the one accent
-## with a permanent claim on the one-place rule.
-const SETTINGS_CARD_ACCENT := "#55606E"
+## (The settings card's accent lived here until the third amendment moved
+## settings into the top bar as a gear icon; the constant went with the card.)
 
 # RGB 16-235, light-on-dark, no hue carrying meaning on its own.
 const BACKGROUND := Color(0.078431, 0.086275, 0.101961, 1.0)
@@ -273,9 +322,32 @@ static func hint(glyph: String, caption_text: String) -> Control:
 	return row
 
 
-## Catalogue entries carry their accent as a hex string so the placeholder data
+## Store entries carry their accent as a hex string so the hand-written data
 ## stays plain text. An unparseable value is a typo, not a reason to draw nothing.
 static func accent(hex: String) -> Color:
 	if Color.html_is_valid(hex):
 		return Color.html(hex)
 	return ACCENT_FALLBACK
+
+
+## The wash behind an installed app's icon, derived from its id.
+##
+## An enumerated application has no accent to carry -- a desktop entry has an
+## icon and nothing resembling a brand colour -- but a rail of identically
+## coloured cards loses the "which one am I on" cue that the hero wash gives
+## the rail for free. Deriving from the id rather than randomising means a card
+## keeps its colour across rescans and reboots, so the rail stays a place with
+## a remembered shape rather than one that repaints itself every boot.
+##
+## Muted on purpose: these sit UNDER an icon, so the wash is a backdrop rather
+## than the subject, and it must not fight a colourful icon drawn on top.
+const APP_ACCENTS := [
+	"#3E5C7A", "#4A6B52", "#7A4E63", "#8A6A3E",
+	"#456B70", "#5E5183", "#8A524A", "#4A5E7E",
+]
+
+
+static func accent_for_id(id: String) -> Color:
+	if id.is_empty():
+		return ACCENT_FALLBACK
+	return accent(APP_ACCENTS[absi(id.hash()) % APP_ACCENTS.size()])

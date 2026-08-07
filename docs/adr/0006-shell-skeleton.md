@@ -1,7 +1,9 @@
 # ADR 0006 — The shell skeleton, and where its binary comes from
 
 **Status:** Accepted (2026-08-06, after the shell ran on hardware — see the
-first amendment; a second, later that day, records the settings page)
+first amendment; a second, later that day, records the settings page; a third,
+2026-08-07, records the PS5-shaped top bar and the stores screen; a fourth,
+same day, retires the placeholder catalogue for a real app list)
 **Date:** 2026-08-05
 **Relates to:** M3, and D5/D6 in [phase-0-plan.md](../phase-0-plan.md); the
 supervision loop scaffolded in [ADR 0004](0004-session-compositor-scaffold.md);
@@ -406,3 +408,92 @@ this ADR's findings rather than stretching them:
   somewhere is marwand, so mutable settings arrive with Phase 1. Rows log
   `read-only in Phase 0` on A rather than staying silent. Navigation is the
   rail rotated 90°: one axis, hard stops, perpendicular pointed at self.
+
+## Amendment (2026-08-07): the top bar grew hands, and the shell grew a store
+
+At the owner's request the home screen moved to the PS5's shape, and this
+amendment records what that reversed, what it added, and where the honesty
+line sits.
+
+- **It reverses the second amendment's "entered from the rail, not from a new
+  button."** Settings left the rail: the card is deleted
+  (`settings_tile.gd`) and the entry point is now a gear icon in the top bar,
+  next to a store icon — both focusable (`icon_button.gd`, glyphs drawn with
+  primitives in `glyphs.gd` rather than shipped as the repo's first binary
+  asset). The rail's one-axis purity yields ONE move: up from any card lands
+  on the store icon, down from the bar returns to the selected card
+  (`_scroll_to_selected` re-points the buttons' down-neighbour on every
+  selection, so the round trip is not a teleport). Everything is still an
+  explicit neighbour table.
+- **The stores screen is the third fullscreen surface**, and it is the settings
+  seam's pattern copied verbatim as that seam's header predicted: `stores.gd`
+  (autoload `Stores`) with open/close signals, one surface at a time, mutual
+  guards against settings and the launcher. Side tabs on the left
+  (`store_tab.gd`, the settings row extended), the selected store's page on
+  the right.
+- **What "the page is rendered" means, honestly.** The page is drawn BY THE
+  SHELL — wash, name, tagline, description, and the live install line from the
+  status seam. It is not the store's own UI embedded in a pane: nesting a
+  foreign client's window inside a Godot control is compositor work gamescope
+  does not offer its clients, and a webview would be the first native
+  extension. Pressing A launches the store app fullscreen through the launch
+  seam — which is what the PS5's own store tile does — and quitting it lands
+  back on the page (the rail's restore defers to open surfaces;
+  `_on_launch_finished` checks `Stores.is_open()`).
+- **Steam moved with it.** The rail carries no shell furniture and no store:
+  its catalogue is placeholders until Phase 1's `ListInstalled` fills it with
+  a library. Steam's launch entry and its install narration both live on the
+  store page now, and the exec gained `steam://store` so A opens the client on
+  its storefront.
+- **The bar's indicators stay indicators.** The wifi glyph by the clock (fan
+  when online, struck fan in alert amber when offline, absent when the system
+  has made no claim) renders the status seam; it is not focusable. The
+  settings screen gained Network/Connection/Wi-Fi rows from the same seam —
+  read-only, like every row, because joining a network needs a keyboard UI and
+  a write path to NetworkManager, and both are marwand's. The Wi-Fi row names
+  the per-stick profile instead of pretending otherwise.
+
+## Amendment (2026-08-07, later): the placeholders are gone, and the rail is real
+
+The twelve placeholder entries were deleted at the owner's request. The rail
+now lists what is actually installed, the way a desktop's app launcher does.
+
+- **The scan is a system service, not shell code.** `marwanos-appscan` walks
+  the XDG application directories, applies the freedesktop filter, resolves
+  each icon to an absolute PNG, and writes `/run/marwanos/apps.tsv`;
+  `installed.gd` (autoload `Installed`) polls it and hands the rail a list.
+  This is the status seam's rule applied again — the shell walks no
+  directories and parses no desktop entries — and it retires the same way:
+  Phase 1's `ListInstalled` returns the same record shape, so the rail is
+  rewired by replacing this one seam.
+- **The filter is GNOME's, plus one subtraction.** `Type=Application`, not
+  `NoDisplay`, not `Hidden`, `TryExec` must resolve — and *also* not
+  `Terminal=true`, which GNOME does show. This appliance ships no terminal
+  emulator, so an `htop` card would spawn a process with nowhere to draw: a
+  card that does nothing when pressed. Everything else in the base image's
+  `/usr/share/applications` is `NoDisplay` — the IBus setup tools, the portal,
+  Xwayland — so on a fresh image the filter leaves **nothing**, and the apps
+  that appear are the ones first boot installs.
+- **Cards are also shown for apps that are still arriving.** The scanner emits
+  a record per pending install (from `marwanos-flatpak-install`'s state files)
+  carrying a name and no exec; the shell titles the card, narrates the state in
+  its subtitle, and `tile.gd` refuses to launch it. That refusal lives in the
+  card rather than in the seam on purpose: `Launcher.launch` stays the only
+  call into the launch path and stays free of policy about what deserves
+  launching. Without this the first boot would show an empty rail for the
+  minutes a browser takes to download, with nothing anywhere saying why —
+  which is the complaint that started this whole line of work.
+- **Cards draw real icons now.** `tile.gd` loads the PNG at runtime (`Image` +
+  `ImageTexture` — these files are on the running system, not in the export
+  pack, so `preload` cannot reach them) and falls back to the wash on any
+  failure. An enumerated app has no brand colour, so its wash is derived from
+  a hash of its id: stable across rescans and reboots, which keeps the rail a
+  place with a remembered shape.
+- **The empty rail is a designed state, not a failure.** A fresh stick has
+  nothing installed and says so — "No apps installed / Open the Store above to
+  install something" — with the A hint hidden and focus falling to the store
+  icon, so the empty state is a signpost rather than a dead end.
+- **Steam's games are not applications.** They ship no desktop entries, so
+  this rail will not list them however many are installed; that needs Steam
+  library integration, which is marwand's. What this amendment delivers is
+  honest about which of the two it is.

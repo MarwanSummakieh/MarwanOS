@@ -1,0 +1,30 @@
+[Unit]
+# Enumerates installed applications into /run/marwanos/apps.tsv for the home
+# rail. See the script header for why this is a system service rather than a
+# scan inside the shell.
+#
+# Not ordered against greetd: the rail must come up whether or not this has
+# ever run. An empty apps.tsv, or no file at all, is a rail that draws its
+# empty state -- which is the correct thing to show on a machine with nothing
+# installed anyway.
+Description=Enumerate installed applications for the shell (/run/marwanos/apps.tsv)
+Documentation=file:///usr/lib/marwanos/appscan
+
+[Service]
+Type=exec
+ExecStart=/usr/lib/marwanos/appscan
+
+# A rail that silently stopped noticing new installs is worse than one that
+# never listed any: the stale listing looks like a current one.
+Restart=always
+RestartSec=5
+
+# Journal-shaped like everything else here, so `journalctl -t marwanos-appscan`
+# is the whole story and the <N> prefixes survive as syslog priorities.
+StandardOutput=journal
+StandardError=journal
+SyslogLevelPrefix=true
+SyslogIdentifier=marwanos-appscan
+
+[Install]
+WantedBy=multi-user.target

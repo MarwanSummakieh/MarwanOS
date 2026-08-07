@@ -1,0 +1,115 @@
+#!/usr/bin/env bash
+#
+# Answer one question, repeatedly, where the shell can read it: can this
+# machine reach the network it downloads from?
+#
+# WHY A FILE AND NOT A SHELL-SIDE PROBE. The shell is a renderer; the rule that
+# keeps process supervision out of it (launcher.gd's header) keeps sockets out
+# of it too, and scripts/run-shell-wsl.sh runs desk builds under
+# --network=none precisely to keep that true. So the system answers the
+# question and the shell only draws the answer. This file is the whole
+# protocol: one word, `online` or `offline`, in /run/marwanos/network.state,
+# rewritten only when the answer changes. /run is a tmpfs, so a fresh boot
+# starts with no file -- which the shell renders as "no claim" rather than as
+# either answer.
+#
+# WHY THE PROBE IS FLATHUB AND NOT A GENERIC BEACON. "Online" on this
+# appliance means exactly one thing today: the Steam install (and Phase 1's
+# marwand) can pull from Flathub. NetworkManager's own connectivity check
+# answers a subtly different question (portal detection against a Fedora
+# beacon) and needs a config package this image does not ship. Probing the
+# actual dependency means the indicator cannot say Online while the only
+# download that matters would hang -- the same reasoning as flatpak-install's
+# "online per NM is not the same as Flathub answers".
+#
+# Phase 1 note: marwand owns app installs and will own this answer too; when
+# it does, this unit is deleted whole and the shell reads the daemon instead
+# of the file. Same retirement plan as the launcher spike.
+#
+set -uo pipefail
+
+TAG=marwanos-netcheck
+STATE_DIR=/run/marwanos
+STATE="$STATE_DIR/network.state"
+INFO="$STATE_DIR/network.info"
+PROBE_URL=https://dl.flathub.org/repo/flathub.flatpakrepo
+
+# 15s between probes: fast enough that plugging a cable in shows on the TV
+# while the person is still standing at the machine, slow enough that a dead
+# link costs four tiny requests a minute. The probe body is ~700 bytes.
+INTERVAL=15
+
+info() { printf '<6>%s: %s\n' "$TAG" "$*"; }
+err()  { printf '<3>%s: %s\n' "$TAG" "$*" >&2; }
+
+install -d "$STATE_DIR" || err "cannot create $STATE_DIR -- the indicator will stay blank"
+
+# One line describing WHAT carries the link, for the settings screen's network
+# rows -- network.state says whether Flathub answers, this says through what.
+# NetworkManager's answer when it has one ("wifi HomeNet", "ethernet Wired
+# connection 1"); the default route's device when NM is quiet ("link eth0");
+# "none" when nobody claims a link at all. The vocabulary is open on purpose
+# and the shell passes unknown words through -- same contract as the steam
+# state file.
+link_info() {
+    if command -v nmcli >/dev/null 2>&1; then
+        local line
+        line="$(nmcli -t -f TYPE,STATE,CONNECTION device status 2>/dev/null \
+            | grep -v '^loopback:' | grep ':connected' | head -n 1)"
+        if [ -n "$line" ]; then
+            local type="${line%%:*}"
+            local rest="${line#*:}"
+            local name="${rest#*:}"
+            # -t escapes colons in values as `\:`, so a network genuinely named
+            # "Guest:5G" arrives as "Guest\:5G" and would reach the TV with a
+            # stray backslash in it. CONNECTION is the last field, so the
+            # splitting above is unaffected -- only the display needs undoing.
+            printf '%s %s' "$type" "${name//\\:/:}"
+            return
+        fi
+    fi
+    local route
+    route="$(ip -o route show default 2>/dev/null | head -n 1)"
+    case "$route" in
+        *" dev "*)
+            route="${route##* dev }"
+            printf 'link %s' "${route%% *}"
+            ;;
+        *)
+            printf 'none'
+            ;;
+    esac
+}
+
+# The LOG is transitions-only -- this loop runs for the life of the boot, and a
+# line per probe would be the exact journald noise the portal mask exists to
+# avoid. The FILE is written every cycle regardless: it is eight bytes on a
+# tmpfs, and rewriting it is what heals a file that got lost or half-made --
+# a write gated on the answer *changing* would leave the top bar blank until
+# the network itself flipped, which on a stable link is never.
+last=""
+while :; do
+    if curl -fsS --max-time 5 -o /dev/null "$PROBE_URL"; then
+        now=online
+    else
+        now=offline
+    fi
+
+    if [ "$now" != "$last" ]; then
+        info "network is $now"
+        last="$now"
+    fi
+
+    # Atomic via rename: the shell polls this file and must never read a
+    # half-written word. The failure is logged rather than fatal -- under
+    # `set -uo pipefail` without -e it would otherwise be silently discarded,
+    # and a journal that says "online" while the file never landed is the
+    # looks-fine-is-dead shape everything else here guards against.
+    { printf '%s\n' "$now" > "$STATE.tmp" && mv -f "$STATE.tmp" "$STATE"; } \
+        || err "cannot write $STATE -- the journal now knows more than the TV"
+
+    { printf '%s\n' "$(link_info)" > "$INFO.tmp" && mv -f "$INFO.tmp" "$INFO"; } \
+        || err "cannot write $INFO"
+
+    sleep "$INTERVAL"
+done

@@ -138,6 +138,118 @@ spotted (`rfkill0` on `acer-wmi`) and wifi disabled in firmware setup. USB
 tethering from a phone needs no credentials and no settings change, and remains
 the zero-setup fallback.
 
+## The shell now says whether it is online, and what Steam is doing (2026-08-07)
+
+"Steam closes immediately" off the couch decodes to: the card runs
+`flatpak run com.valvesoftware.Steam`, the flatpak is not installed yet (the
+first-boot download never ran, or is still running, or found no network — see
+the wifi section above), so the process exits in under a second and the rail
+comes back. Nothing on the TV said any of that. Now it does, without bending
+the shell-is-a-renderer rule:
+
+- **System services write one-word state files; the shell only reads them.**
+  A new `marwanos-netcheck` loop probes Flathub — the download source, not a
+  generic beacon — every 15 s and writes `online`/`offline` to
+  `/run/marwanos/network.state` (file rewritten every cycle so a lost file
+  heals; journal logs transitions only). The Flathub installer narrates itself
+  into `/run/marwanos/install.<app-id>.state` (`waiting-network`,
+  `no-network`, `downloading`, `no-space`, `failed`; removed on success, when
+  the stamp takes over). *Those paths were `steam-install.state` until the
+  installer was generalised later the same session — see below.*
+- **A new `SystemStatus` autoload** (the STATUS SEAM) polls the files every
+  2 s and makes no claims when the files make none — a desk run under
+  `--network=none` stays clean. netcheck also writes `network.info` (one line:
+  `wifi HomeNet`, `ethernet …`, `link eth0`, `none`) for the settings rows.
+- Fixture lever for desk runs: `STATUS_DIR=/some/dir scripts/run-shell-wsl.sh`
+  bind-mounts fixture files and sets `MARWANOS_SHELL_STATUS_DIR` (same shape
+  as `MARWANOS_SHELL_WINDOWED`); edits to the fixtures show up live.
+
+## The home screen moved to the PS5 shape (2026-08-07, same session)
+
+At the owner's request, and recorded properly in ADR 0006's **third
+amendment** (which also amends phase-0-plan's "store" non-goal):
+
+- **Top bar, right side:** store icon and gear icon (focusable — up from any
+  rail card lands on the store, down returns to the selected card), then a
+  **wifi glyph next to the clock** rendering the status seam: fan when online,
+  struck amber fan when offline, absent when no claim.
+- **Settings left the rail** (`settings_tile.gd` deleted); the gear opens it.
+  The settings screen gained live **Network / Connection / Wi-Fi rows** from
+  the status seam. Read-only like every row: joining a network needs a
+  keyboard UI and a write path, both marwand's; the Wi-Fi row names the
+  per-stick profile instead of pretending.
+- **Steam left the rail too, into the stores screen** (`Stores` seam, the
+  settings pattern copied verbatim; side tabs left, page right). The page is
+  rendered BY THE SHELL — wash, name, description, live install line in
+  `TEXT_ALERT` for actionable failures — and **A launches Steam fullscreen on
+  its storefront** (`steam://store`). Embedding the store's own UI in a pane
+  is compositor work gamescope does not offer; the PS5's store tile opens a
+  fullscreen app too. Quitting Steam lands back on the store page (the rail's
+  restore defers to open surfaces).
+- The rail is now the library alone — and, as of the fourth amendment below,
+  a real one.
+
+## The rail lists what is actually installed (2026-08-07, same session)
+
+The twelve placeholders are **deleted**. `marwanos-appscan` enumerates desktop
+entries the way GNOME's app launcher does and writes `/run/marwanos/apps.tsv`;
+the `Installed` autoload polls it and the rail renders it, with **real PNG
+icons** loaded off the running system. ADR 0006's **fourth amendment** has the
+reasoning.
+
+- **The filter** is `Type=Application`, not `NoDisplay`, not `Hidden`,
+  `TryExec` resolves — plus **not `Terminal=true`**, which GNOME does show but
+  which here would be a card that spawns something with nowhere to draw. The
+  base image's own entries are all `NoDisplay` or terminal apps, so what
+  appears on the rail is what first boot installs.
+- **An empty rail is a designed state**: "No apps installed / Open the Store
+  above to install something", A-hint hidden, focus falling to the store icon.
+  That is what a fresh stick shows, and it is correct.
+- **Rescans are live** — the scan re-runs when a watched directory's mtime
+  moves, so an install appears without a reboot, and the rail re-focuses the
+  same app **by id** rather than by index.
+- **Steam's games will not appear here.** They ship no desktop entries. This
+  is an *application* launcher; a Steam *library* needs marwand. Worth saying
+  out loud because "only installed games should appear" is the ask, and this
+  delivers installed applications — the part that is honestly reachable in
+  Phase 0.
+
+## The browser is Zen, and the installer is now generic (2026-08-07, same session)
+
+- **Firefox is removed from the image.** The ublue base ships it — 295 MB plus
+  49 MB of langpacks — and nothing here asked for it. It had to go rather than
+  be hidden: `marwanos-appscan` lists what is installed with no deny-list for
+  "things we would rather you did not see", so an image carrying Firefox would
+  put it on the rail. `firefox-langpacks` is named explicitly in the removal
+  because it requires `firefox`; nothing else does.
+- **Zen installs from Flathub on first boot**, as `app.zen_browser.zen`, the
+  same way Steam does.
+- **`marwanos-steam-install` is gone**, replaced by
+  `marwanos-flatpak-install@.service` — a **template**, instanced per app id,
+  with the script taking the id as its argument. Two apps made the choice
+  explicit: either a near-copy of a 100-line installer with one identifier
+  changed, or the identifier becomes a parameter. Adding an app is now one
+  `.wants` symlink in the Containerfile.
+- **State file names changed with it**: `/run/marwanos/install.<id>.state`
+  (now `<state>TAB<display-name>`) and the stamp `/var/marwanos/installed.<id>`.
+  No migration concern — no stick has ever booted with Steam installed.
+- **Pending installs now show as rail cards** so a first boot explains itself
+  during a multi-hundred-MB download: the scanner emits a record per pending
+  install, the card carries the app's name and narrates the state, and
+  `tile.gd` refuses to launch it (the launch seam stays policy-free).
+
+**A launch from the store page while Steam is not ready still blink-launches**
+— `flatpak run` starts, exits inside a second, the page returns. Left that way
+on purpose: the launch seam stays policy-free in Phase 0 (launcher.gd's
+header), the narration is the line directly under the person's focus, and
+refusing launches is marwand's job when it owns install state in Phase 1.
+
+**Unbooted, like everything else this session** — needs a rebuild and a
+reflash. Verified on the Xvfb harness instead (status files, live flips, the
+top-bar walk, stores open/close, settings rows). Phase 1 retires the files:
+marwand pushes the same states over the WebSocket and the `SystemStatus`
+signals survive the rewiring.
+
 ## Milestone state
 
 | | State |
