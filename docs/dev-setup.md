@@ -695,10 +695,12 @@ journalctl -D /mnt/rootfs/ostree/deploy/default/var/log/journal -p err --no-page
 `console=ttyS0` on the kernel command line makes systemd-getty-generator
 instantiate `serial-getty@ttyS0`; on hardware with no serial port agetty fails
 and systemd restarts it forever. Harmless on screen, corrosive in
-`journalctl -p err`, which is the appliance's only triage command. The image
-masks the unit rather than dropping the karg, because QEMU still wants kernel
-output on serial (ADR 0003) — masking removes the login prompt, which D6 forbids
-anyway, and keeps the console.
+`journalctl -p err`, which is the appliance's only triage command. Fixed twice
+over: `make-installer.sh` passes `--no-default-kernel-args` so the karg is gone
+from images built after 2026-08-06, and the unit stays masked as a backstop —
+a QEMU run that adds `console=ttyS0` back via `EXTRA_KARGS` for serial capture
+(ADR 0003) gets the console without the login prompt D6 forbids. Seeing this
+symptom on a current image means the karg came back; check the UKI's cmdline.
 
 **Target drops into dracut emergency mode ("Entering emergency mode", repeating).**
 The initramfs cannot assemble the root filesystem. On a bootc/ostree system the

@@ -512,17 +512,18 @@ RUN set -euxo pipefail; \
 # what logind starts on VT activation, so masking one does not mask the other.
 #
 # serial-getty@ttyS0 is masked for the same D6 reason and one practical one.
-# `console=ttyS0` is on the kernel command line so QEMU can capture kernel output
-# (ADR 0003), and systemd-getty-generator instantiates a serial getty on every
-# console it finds there. This chassis has no serial port, so agetty opens the
-# device, fails with EIO, and systemd restarts it -- measured on hardware at a
-# restart every ~10s, `restart counter is at 7` inside a 75-second session. Two
-# costs: a respawn loop forever, and `journalctl -p err` filling with
-# "failed to get terminal attributes" when that command is the only triage
-# surface this appliance has (see marwanos-session's header). Masking the ttyS0
-# instance rather than dropping the karg keeps the kernel console on serial,
-# which is what the QEMU targets actually use, and removes only the login prompt
-# -- which D6 forbids regardless of whether the port exists.
+# `console=ttyS0` used to be on the kernel command line (a bib default; QEMU
+# capture relied on it, ADR 0003), and systemd-getty-generator instantiates a
+# serial getty on every console it finds there. This chassis has no serial port,
+# so agetty opens the device, fails with EIO, and systemd restarts it -- measured
+# on hardware at a restart every ~10s, `restart counter is at 7` inside a
+# 75-second session. Two costs: a respawn loop forever, and `journalctl -p err`
+# filling with "failed to get terminal attributes" when that command is the only
+# triage surface this appliance has (see marwanos-session's header). The karg is
+# gone now -- make-installer.sh passes --no-default-kernel-args (M2) -- but the
+# mask stays: a QEMU run may add console=ttyS0 back via EXTRA_KARGS for serial
+# capture, and the login prompt it would spawn is what D6 forbids regardless of
+# whether the port exists.
 #
 # xdg-desktop-portal-gtk is masked for the same reason serial-getty@ttyS0 is: it
 # fails repeatedly at err priority in the one place this appliance can be

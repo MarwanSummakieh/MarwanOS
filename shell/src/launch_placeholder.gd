@@ -85,7 +85,7 @@ func _line(text: String, size: int, colour: Color) -> Label:
 func _unhandled_input(event: InputEvent) -> void:
 	if not event.is_action_pressed("ui_cancel"):
 		return
-	# Consumed so the grid underneath -- which is hidden, but only until
+	# Consumed so the home rail underneath -- which is hidden, but only until
 	# launch_finished -- never sees the same press as a second back-out.
 	get_viewport().set_input_as_handled()
 	closed.emit()

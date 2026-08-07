@@ -27,11 +27,26 @@ kargs = [
     "loglevel=3",
     "rd.udev.log_level=3",
     "systemd.show_status=false",
-    # Without this, the console=ttyS0 debugging arg makes plymouth fall back to
-    # its serial/details mode and the graphical splash never appears.
+    # Kept even though the image no longer carries console=ttyS0 (make-installer
+    # passes --no-default-kernel-args): any serial console arg -- a bib default
+    # regression, or a per-stick EXTRA_KARGS -- would otherwise flip plymouth
+    # into its serial/details mode and the graphical splash would never appear.
     "plymouth.ignore-serial-consoles",
     # No blinking cursor frames (an M2 exit criterion, cheap to mean now).
     "vt.global_cursor_default=0",
+    # The lid panel is not a display this OS drives -- ADR 0007 decision 1. The
+    # lowercase d forces the connector off at i915 probe time, before fbcon,
+    # plymouth or any compositor can touch it; the panel's power sequence never
+    # runs. Held back until the name was read off the target rather than guessed:
+    # video= is a plain string match with no error path, so a wrong token is a
+    # silent no-op. The 2026-08-05 boots logged it -- marwanos-panel: connector
+    # card0-eDP-1 -> karg name 'eDP-1'. NEVER aim this at HDMI-A-* or DP-*:
+    # nvidia-drm honours connector->force too, and a token meant for the Intel
+    # card would take the appliance's only screen with it. If the panel must come
+    # back (dev use, no external display), marwanos-panel.service already writes
+    # 'detect' to the connector a few seconds into boot -- that unit is the
+    # re-enable policy this karg relies on.
+    "video=eDP-1:d",
 ]
 
 match-architectures = ["x86_64"]

@@ -28,6 +28,10 @@ shell/
     focus_repeat.gd      held-direction repeat for a pad (autoload FocusRepeat)
     launcher.gd          THE LAUNCH SEAM                 (autoload Launcher)
     launch_placeholder.gd  what "launch" shows in Phase 0
+    settings.gd          THE SETTINGS SEAM               (autoload Settings)
+    settings_screen.gd   the read-only settings page
+    settings_row.gd      one row on it
+    settings_tile.gd     the rail card that opens it
     shell_root.gd        the grid screen
     tile.gd              one tile
     catalogue.gd         placeholder entries; Phase 1 replaces this
@@ -324,6 +328,46 @@ in the daemon instead. The shell is a renderer.
 exit would be forgiving and would also let M3's acceptance test pass with B doing
 nothing at all — which is exactly the silent failure the input map exists to
 prevent.
+
+---
+
+## The settings seam
+
+`src/settings.gd` is the launch seam's shape — one entry point, two signals, one
+at a time — pointed at a shell-internal screen instead of an app, and kept
+**separate from `launcher.gd` on purpose**: Phase 1 rewires the launch seam to
+`marwand`, and a screen swap that lives inside it would become an RPC by
+accident. The last card on the rail (`settings_tile.gd`, shell furniture rather
+than catalogue content, so it survives the catalogue's Phase 1 deletion) opens
+it; B closes it.
+
+```
+settings card pressed
+  └─ Settings.open()
+       ├─ emits settings_opened     → rail saves focus and hides
+       └─ settings_screen, until B
+            └─ Settings._on_closed
+                 └─ emits settings_closed → rail shows, focus restored
+```
+
+The screen is **read-only in Phase 0**, and that is a decision rather than a gap:
+a row that changed something would need somewhere to send the change, and the
+shell is a renderer — mutable settings arrive when `marwand` does. What the rows
+show is the answers this project has so far had to fish out of `journalctl`:
+os-release, engine version, display server and mode, video adapter, and the
+claimed controller (live — it tracks hotplug through `PlayerOne`'s signals).
+On an appliance with no terminal, that screen is a diagnostic surface, not
+filler.
+
+Navigation is the rail's argument rotated 90°: one axis, hard stops at the ends,
+the perpendicular directions pointed at self. Pressing A on a row logs
+`read-only in Phase 0` rather than doing nothing silently — a press that
+vanishes is indistinguishable from broken input on this machine.
+
+`shell_root.gd` treats "something fullscreen is up" as one state however it was
+reached: the launch and settings seams share `_hand_screen_over()` /
+`_take_screen_back()`, so a third surface (the store, a guide overlay) has a
+pattern to copy rather than a precedent to untangle.
 
 ---
 

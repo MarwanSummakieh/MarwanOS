@@ -16,9 +16,9 @@ extends Node
 ##                     and return; do not wait.
 ##   _on_closed()   -> becomes the handler for marwand's `AppExited` event.
 ##
-## Nothing else moves. The grid, the tiles, the focus handling and the hint row
-## only ever see launch_started and launch_finished, so they do not care whether
-## the thing that started was a placeholder scene or a Flatpak.
+## Nothing else moves. The home rail, the cards, the focus handling and the hint
+## row only ever see launch_started and launch_finished, so they do not care
+## whether the thing that started was a placeholder scene or a Flatpak.
 ##
 ## Deliberately single-purpose. No process management, no queue, no retry, no
 ## state machine beyond "one thing at a time". Phase 1 puts all of that in the
@@ -27,10 +27,10 @@ extends Node
 ## ============================================================================
 
 ## Emitted the moment a launch is requested, before anything is on screen. The
-## grid uses it to save focus and get out of the way.
+## home rail uses it to save focus and get out of the way.
 signal launch_started(entry: Dictionary)
 
-## Emitted when the launched thing is done and the grid should come back. In
+## Emitted when the launched thing is done and the home rail should come back. In
 ## Phase 1 this fires on marwand's AppExited rather than on a keypress; the
 ## consumer side is identical.
 signal launch_finished(entry: Dictionary)
@@ -63,7 +63,7 @@ func launch(entry: Dictionary) -> void:
 
 
 ## Phase 0's stand-in for running something else: a fullscreen scene that covers
-## the grid until it is dismissed. It exists to prove the seam and the focus
+## the home rail until it is dismissed. It exists to prove the seam and the focus
 ## handoff, not to look like anything.
 func _run(entry: Dictionary) -> void:
 	_placeholder = LaunchPlaceholder.new()
@@ -88,7 +88,7 @@ func _finish() -> void:
 	if is_instance_valid(placeholder):
 		# remove_child first, queue_free second: queue_free is deferred to the end
 		# of the frame, so on its own it would leave the placeholder drawn over
-		# the grid for the frame in which focus is being restored.
+		# the home rail for the frame in which focus is being restored.
 		placeholder.get_parent().remove_child(placeholder)
 		placeholder.queue_free()
 

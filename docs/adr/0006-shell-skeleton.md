@@ -1,6 +1,7 @@
 # ADR 0006 — The shell skeleton, and where its binary comes from
 
-**Status:** Proposed
+**Status:** Accepted (2026-08-06, after the shell ran on hardware — see the
+first amendment; a second, later that day, records the settings page)
 **Date:** 2026-08-05
 **Relates to:** M3, and D5/D6 in [phase-0-plan.md](../phase-0-plan.md); the
 supervision loop scaffolded in [ADR 0004](0004-session-compositor-scaffold.md);
@@ -263,8 +264,10 @@ The tile grid is a grid of nothing. That is the milestone, not an omission:
   supervisor of foreign processes.
 - **No daemon and no IPC.** There is no `marwand`, no WebSocket, no JSON-RPC and
   no `proto/`. The shell is a pure renderer with nothing to render from yet.
-- **No icons, no artwork pipeline, no audio, no on-screen keyboard, no settings.**
-  Each has a phase.
+- **No icons, no artwork pipeline, no audio, no on-screen keyboard, ~~no
+  settings~~.** Each has a phase. *(Amended 2026-08-06: a read-only settings
+  page was pulled forward — see the second amendment below. Mutable settings
+  keep their phase.)*
 
 The reason for the discipline is that M3's acceptance criteria are about the
 appliance, not the UI: navigate from the couch, and `kill -9` the shell over SSH
@@ -328,28 +331,22 @@ settles both.
 
 ## Open questions
 
-1. **Where does `shell/` live, and does CI notice it?** Finding 6. Either the
-   project sits inside the existing `os/` context or the context moves to the
-   repo root — the second is where Phase 1's `daemon/` and `proto/` force it
-   eventually, and doing it later means moving `shell/` as well. Whichever was
-   taken, confirm the `paths:` filter in `.github/workflows/build.yml` covers it
-   before assuming a push produced an image.
+1. ~~**Where does `shell/` live, and does CI notice it?**~~ Resolved: the build
+   context moved to the repo root (`build-push.sh` and the workflow both pass it,
+   with `--file os/Containerfile`), and the CI `paths:` filter covers `shell/**`.
+   Finding 6's quiet failure mode is closed.
 2. **4.7.1 or 4.7.2?** 4.7.2-rc1 exists as of 2026-08-03. Bumping mid-milestone
    costs two URLs and two sums; staying on 4.7.1 costs nothing until something
    fixed in 4.7.2 turns out to matter. Decide once, deliberately, and not while
    debugging something else.
-3. **Does the export actually run on this image?** Godot dlopens its
-   dependencies, so the honest check is a launch inside the built image, not
-   `ldd`. Finding 4 names the two that matter. This is ADR 0004's step 6 and it
-   should happen before any UI is built on top.
-4. **Is `ENABLE_GAMESCOPE_WSI=1` safe on the cage path?** The session exports it
-   unconditionally and the gamescope package installs the WSI Vulkan implicit
-   layer, so it is loaded for a Vulkan client under cage too, with no gamescope
-   running. `vkcube` may tolerate an implicit layer that a full Godot Vulkan
-   client does not. Untested, and a plausible source of a plan-B-only failure
-   that would be misread as evidence about Godot — which is one of ADR 0004's
-   flip criteria. Cheap first suspect if the shell misbehaves under cage and
-   `vkcube` did not.
+3. ~~**Does the export actually run on this image?**~~ Resolved on hardware
+   2026-08-05: the export ran inside the real session on the real GPU, drew,
+   navigated, and survived `kill -9` with a 0.45 s respawn
+   ([ADR 0005](0005-compositor-decision.md)).
+4. ~~**Is `ENABLE_GAMESCOPE_WSI=1` safe on the cage path?**~~ Mooted by ADR 0005:
+   the cage fallback and the compositor lever are removed from the session
+   script, so there is no cage path left to be unsafe on. (For the record, the
+   shell did run under cage on the boot-3 harness without a WSI-layer failure.)
 5. **What does the shell do when the controller goes away?** M3 requires an
    explicit player-1 notion and hotplug survival, and Godot's hotplug signals have
    open upstream bugs (a disconnect that never fires when device 0 goes first; a
@@ -357,3 +354,55 @@ settles both.
    rather than the index survives both, but the fallback behaviour — poll the
    connected list, treat prolonged silence as a possible disconnect — is a
    hardware-run answer, not a desk one.
+
+## Amendment (2026-08-06): accepted, with two changes the hardware run earned
+
+**The decisions above survived contact with hardware unmodified.** The export
+came up inside the real session on the real GPU on 2026-08-05, which is the
+condition the header set for acceptance. The pinned-toolchain build, the
+embedded-pck seam, the layer placement and the default display driver all
+behaved as designed; findings 1–5 were each load-bearing at least once. What
+changed afterwards is above this ADR's waterline, but is recorded here because
+this document describes the scaffold it happened to:
+
+- **The tile grid became a home rail.** The UI this ADR's scaffold table calls
+  "tile grid, focus navigation" is now a console-style home: one horizontal rail
+  of cards, one enlarged selection at a fixed x, a hero wash and title block
+  behind it. Nothing in this ADR's decisions is disturbed — the binary, its
+  provenance, its seam and its input findings are all layout-independent. The
+  navigational argument for the change lives in `shell/src/shell_root.gd`'s
+  header; the milestone record is in phase-0-plan.md M3. `tile.gd` keeps its
+  name precisely so the prose trail (this ADR included) stays readable.
+- **The crash guard now draws an error screen.** `show_error_screen` in the
+  session script runs the baked client — never the dev override — with
+  `MARWANOS_SHELL_ERROR_SCREEN=1`, and `error_screen.gd` draws a designed frame
+  instead of the black TV the hold used to leave. One attempt, unsupervised; if
+  the frame itself dies, the silent hold is exactly what it was. The residual
+  case (a binary that fails before GDScript runs) is named in that file's
+  header and deliberately not solved.
+
+## Amendment (2026-08-06, later): the skeleton grew a settings page
+
+Phase 0's non-goals excluded "any settings UI", and that exclusion was amended
+in phase-0-plan.md the same day at the owner's request. What was added respects
+this ADR's findings rather than stretching them:
+
+- **A second seam, not a bigger launch seam.** `settings.gd` copies the launch
+  seam's shape — one entry point, two signals, one surface at a time — and is a
+  separate autoload precisely because Phase 1 rewires `launcher.gd` to marwand.
+  A shell-internal screen swap sitting inside the launch seam would become an
+  RPC by accident; kept apart, `Launcher.launch` remains the only call into the
+  launch path. The home rail hands the screen over identically for both seams
+  (`_hand_screen_over` / `_take_screen_back` in `shell_root.gd`).
+- **Entered from the rail, not from a new button.** The one-axis argument
+  holds: the settings card (`settings_tile.gd`, extending `tile.gd`) is the
+  last card on the rail, shell furniture appended by `shell_root` rather than a
+  catalogue entry, so it survives the catalogue's Phase 1 deletion. The input
+  map still defines exactly six actions.
+- **Read-only, as a decision.** `settings_screen.gd` shows os-release, engine,
+  display server and mode, adapter, and the claimed controller — the things
+  otherwise answerable only via journalctl on a machine with no terminal. A row
+  that changed something would need somewhere to send the change; that
+  somewhere is marwand, so mutable settings arrive with Phase 1. Rows log
+  `read-only in Phase 0` on A rather than staying silent. Navigation is the
+  rail rotated 90°: one axis, hard stops, perpendicular pointed at self.
