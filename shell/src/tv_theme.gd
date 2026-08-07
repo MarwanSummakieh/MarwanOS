@@ -322,6 +322,55 @@ static func hint(glyph: String, caption_text: String) -> Control:
 	return row
 
 
+# ---------------------------------------------------------------------------
+# The app overlay (home button, over a running application)
+#
+# Everything here is drawn OVER live application pixels rather than over the
+# shell's own background, which changes what the colours have to do: they are
+# not sitting on BACKGROUND, they are sitting on whatever the app happens to be
+# rendering. So the frame reads against anything, and the controls carry an
+# opaque fill rather than relying on contrast with what is behind them.
+
+## Half of app_overlay's CIRCLE_SIZE, which is what turns the rounded box into
+## a circle. Kept here with the other numbers rather than computed there, so
+## the two cannot drift without someone noticing.
+const CIRCLE_CORNER_RADIUS := 66
+
+
+## The outline around the live application. draw_center OFF -- every pixel
+## inside this is the running app showing through gamescope's compositing.
+static func overlay_card_frame() -> StyleBoxFlat:
+	var box := StyleBoxFlat.new()
+	box.draw_center = false
+	box.set_border_width_all(FOCUS_RING_WIDTH)
+	box.border_color = TEXT_SECONDARY
+	box.set_corner_radius_all(CARD_CORNER_RADIUS)
+	return box
+
+
+static func circle_box(pressed: bool) -> StyleBoxFlat:
+	var box := StyleBoxFlat.new()
+	box.bg_color = SURFACE_PRESSED if pressed else SURFACE
+	box.set_corner_radius_all(CIRCLE_CORNER_RADIUS)
+	return box
+
+
+static func circle_box_focused() -> StyleBoxFlat:
+	var box := StyleBoxFlat.new()
+	box.bg_color = SURFACE_FOCUS
+	box.set_corner_radius_all(CIRCLE_CORNER_RADIUS)
+	return box
+
+
+static func circle_ring() -> StyleBoxFlat:
+	var box := StyleBoxFlat.new()
+	box.draw_center = false
+	box.set_border_width_all(FOCUS_RING_WIDTH)
+	box.border_color = FOCUS_RING
+	box.set_corner_radius_all(CIRCLE_CORNER_RADIUS)
+	return box
+
+
 ## Store entries carry their accent as a hex string so the hand-written data
 ## stays plain text. An unparseable value is a typo, not a reason to draw nothing.
 static func accent(hex: String) -> Color:

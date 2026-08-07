@@ -40,6 +40,10 @@ func _draw() -> void:
 			_draw_wifi(false)
 		"wifi-off":
 			_draw_wifi(true)
+		"close":
+			_draw_close()
+		"minimize":
+			_draw_minimize()
 
 
 ## A shopping bag: an outlined body with a handle arced over its top edge.
@@ -66,6 +70,22 @@ func _draw_gear() -> void:
 	for i in 8:
 		var direction := Vector2.from_angle(TAU * i / 8.0)
 		draw_line(center + direction * ring, center + direction * tooth_tip, color, w, true)
+
+
+## An X. Drawn corner to corner of the inset box rather than as a glyph, so it
+## scales with the circle and stays optically centred inside it.
+func _draw_close() -> void:
+	var s := size
+	var w := TvTheme.TOPBAR_GLYPH_WIDTH * 1.5
+	draw_line(Vector2(0, 0), s, color, w, true)
+	draw_line(Vector2(s.x, 0), Vector2(0, s.y), color, w, true)
+
+
+## A single horizontal bar, the universal minimise mark.
+func _draw_minimize() -> void:
+	var s := size
+	var w := TvTheme.TOPBAR_GLYPH_WIDTH * 1.5
+	draw_line(Vector2(0, s.y * 0.5), Vector2(s.x, s.y * 0.5), color, w, true)
 
 
 ## The wifi fan: a dot and three arcs opening upward. `struck` lays a diagonal

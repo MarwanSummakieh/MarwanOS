@@ -26,6 +26,7 @@ const TvTheme = preload("res://src/tv_theme.gd")
 const Catalogue = preload("res://src/catalogue.gd")
 const Tile = preload("res://src/tile.gd")
 const IconButton = preload("res://src/icon_button.gd")
+const AppOverlay = preload("res://src/app_overlay.gd")
 const Glyphs = preload("res://src/glyphs.gd")
 const ErrorScreen = preload("res://src/error_screen.gd")
 
@@ -37,6 +38,7 @@ var _rail_viewport: Control = null
 var _rail: HBoxContainer = null
 var _status: Label = null
 var _open_hint: Control = null
+var _overlay: AppOverlay = null
 var _wifi: Glyphs = null
 var _store_button: IconButton = null
 var _gear_button: IconButton = null
@@ -558,6 +560,9 @@ func _on_launch_started(_entry: Dictionary) -> void:
 
 
 func _on_launch_finished(_entry: Dictionary) -> void:
+	# The app went away -- via the overlay's Close, or on its own. Either way
+	# the overlay is now framing nothing, so it goes first.
+	_close_overlay()
 	# A launch can start FROM the stores screen, in which case that screen is
 	# what the person should land back on when the app quits -- not the rail
 	# grabbing focus to a card that is drawn underneath an open surface. The
@@ -700,6 +705,57 @@ func _on_network_changed(state: String) -> void:
 		_:
 			# No claim from the system, no glyph on the screen. See _build_topbar.
 			_wifi.visible = false
+
+
+## THE HOME BUTTON IS HANDLED IN _input, NOT _unhandled_input, and that is the
+## only place it could go. `_hand_screen_over` turns unhandled input off for
+## the whole time an application is running -- which is exactly when the home
+## button has to work. `_input` keeps arriving on a Node regardless of whether
+## the Control is visible, so this is the one hook still alive while the rail
+## is hidden behind a launch.
+##
+## Everything else is left alone: this consumes nothing unless there is a
+## running application and the press is the home button.
+func _input(event: InputEvent) -> void:
+	if not InputMap.has_action("ui_shell_home"):
+		return
+	if not event.is_action_pressed("ui_shell_home"):
+		return
+	if not Launcher.is_busy() or not Launcher.can_close():
+		# No process to offer anything about. The placeholder branch has no pid
+		# and is dismissed with B, and at the rail the button means nothing.
+		return
+	if _overlay != null:
+		return
+	get_viewport().set_input_as_handled()
+	_open_overlay()
+
+
+func _open_overlay() -> void:
+	_overlay = AppOverlay.new()
+	_overlay.entry = Launcher.current_entry()
+	_overlay.closed.connect(_on_overlay_closed, CONNECT_ONE_SHOT)
+	# Added to the root rather than to this node: the rail is hidden while an
+	# app runs, and a child of a hidden Control does not draw.
+	get_tree().root.add_child(_overlay)
+	# Ask gamescope to composite us over the application rather than instead of
+	# it. See Kiosk.set_overlay -- if this does not take, the overlay still
+	# works, it just covers the app.
+	Kiosk.set_overlay(true)
+
+
+func _on_overlay_closed() -> void:
+	_close_overlay.call_deferred()
+
+
+func _close_overlay() -> void:
+	if _overlay == null:
+		return
+	var overlay := _overlay
+	_overlay = null
+	overlay.get_parent().remove_child(overlay)
+	overlay.queue_free()
+	Kiosk.set_overlay(false)
 
 
 func _unhandled_input(event: InputEvent) -> void:

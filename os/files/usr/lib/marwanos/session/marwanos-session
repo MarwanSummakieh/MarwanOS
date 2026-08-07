@@ -125,6 +125,21 @@ readonly READY_TIMEOUT=20
 # through -- a target booted with the TV unplugged should still show something.
 : "${MARWANOS_OUTPUT_CONNECTOR:=HDMI-A-1,HDMI-A-2,DP-1,*}"
 
+# How long the pointer stays visible after it stops moving, in milliseconds.
+#
+# This was 1, which is as close to "never show a cursor" as the flag goes, and
+# it was right when nothing on this machine had a pointer: the shell is driven
+# entirely by a d-pad and hides its own cursor anyway. It stopped being right
+# the moment a browser landed on the rail. A DualSense's touchpad is a real
+# libinput pointer device, so the hardware to move a cursor is already in
+# everyone's hands -- 1 ms just meant the cursor vanished between motions and
+# looked broken.
+#
+# Three seconds is the usual desktop compromise: visible while you are moving
+# it, gone while you are reading. The shell is unaffected either way; it never
+# shows a pointer.
+: "${MARWANOS_CURSOR_HIDE_MS:=3000}"
+
 log()  { printf '<6>%s: %s\n' "$TAG" "$*" >&2; }
 warn() { printf '<4>%s: %s\n' "$TAG" "$*" >&2; }
 err()  { printf '<3>%s: %s\n' "$TAG" "$*" >&2; }
@@ -330,6 +345,55 @@ stop_gamescope() {
 # Returns nonzero if it did not come up, having already cleaned up after itself.
 # There is nowhere for the caller to move to now (ADR 0005); the only thing left
 # is to say why and hold.
+## The connected output's preferred mode, as "WIDTHxHEIGHT", or nothing.
+##
+## WHY THIS HAS TO EXIST. gamescope has two resolutions, and only one of them
+## defaults to something sensible. `--backend drm` picks the output's native
+## mode for the OUTPUT (ADR 0005 measured 3440x1440), but the NESTED -- the
+## surface clients actually render into -- defaults to 1280x720. With
+## --force-windows-fullscreen sizing every window to "the size of the nested
+## display", that means every application on this machine has been rendering at
+## 720p and being upscaled to the panel. Reported from the bench on 2026-08-08
+## as "Zen feels rendered at a very low resolution", which is exactly what it
+## was. The shell hid it: its canvas_items stretch is resolution-independent by
+## design, so soft text looked like a font choice rather than a scale factor.
+##
+## Read from sysfs rather than asked of gamescope, because it has to be known
+## BEFORE gamescope starts. The first line of a connector's `modes` is its
+## preferred mode, which is what a DRM client picks by default -- so this
+## agrees with gamescope's own choice by construction rather than by luck.
+##
+## The connector preference list is walked in order, and only `connected` ones
+## count. A bench with a different panel than the Predator's TV therefore gets
+## its own native mode with no configuration.
+detect_native_mode() {
+    _pref="$MARWANOS_OUTPUT_CONNECTOR"
+    # The list may end in '*', meaning "anything"; handled by the second pass.
+    for _want in $(printf '%s' "$_pref" | tr ',' ' '); do
+        [ "$_want" = "*" ] && continue
+        for _c in /sys/class/drm/card*-"$_want"; do
+            [ -r "$_c/status" ] || continue
+            [ "$(cat "$_c/status" 2>/dev/null)" = "connected" ] || continue
+            _mode="$(head -n 1 "$_c/modes" 2>/dev/null)"
+            if [ -n "$_mode" ]; then printf '%s' "$_mode"; return 0; fi
+        done
+    done
+
+    # Nothing in the preference list is connected; take the first connected
+    # output that is not the internal panel. eDP is excluded because ADR 0007
+    # disables it deliberately -- matching its mode would size the whole
+    # session to a panel that is meant to stay dark.
+    for _c in /sys/class/drm/card*-*; do
+        case "$_c" in *eDP*|*LVDS*|*DSI*) continue ;; esac
+        [ -r "$_c/status" ] || continue
+        [ "$(cat "$_c/status" 2>/dev/null)" = "connected" ] || continue
+        _mode="$(head -n 1 "$_c/modes" 2>/dev/null)"
+        if [ -n "$_mode" ]; then printf '%s' "$_mode"; return 0; fi
+    done
+    return 1
+}
+
+
 start_gamescope() {
     _fifo="$RUNTIME/gamescope-ready"
     rm -f "$_fifo"
@@ -350,8 +414,10 @@ start_gamescope() {
     # --force-windows-fullscreen is what makes a placeholder satisfy M1's
     # acceptance wording rather than merely render: vkcube opens a small window
     # by default, and a 500x500 cube in the middle of a black TV proves the
-    # compositor works while failing the gate. --hide-cursor-delay 1 is the "no
-    # cursor" half of the same gate.
+    # compositor works while failing the gate. --hide-cursor-delay used to be 1
+    # here as the "no cursor" half of the same gate; it is now
+    # MARWANOS_CURSOR_HIDE_MS, because that gate was written when nothing on the
+    # machine had a pointer and a browser now does. See the variable's own note.
     #
     # From M3 the shell sets its own fullscreen mode and hides its own cursor as
     # well, and that duplication is deliberate rather than sloppy: both flags are
@@ -364,11 +430,32 @@ start_gamescope() {
         --backend drm \
         --prefer-output "$MARWANOS_OUTPUT_CONNECTOR" \
         --xwayland-count 1 \
-        --hide-cursor-delay 1 \
+        --hide-cursor-delay "$MARWANOS_CURSOR_HIDE_MS" \
         --ready-fd "$_fifo"
 
     if [ -n "${VK_DEVICE:-}" ]; then
         set -- "$@" --prefer-vk-device "$VK_DEVICE"
+    fi
+
+    # BOTH resolutions, explicitly. See detect_native_mode for why leaving the
+    # nested one at its 1280x720 default made every application render at 720p.
+    # Output and nested are set to the same value: this is an appliance on a
+    # fixed panel, not a handheld trading resolution for frame rate, so there is
+    # no reason for the compositing surface to differ from the display.
+    if _mode="$(detect_native_mode)"; then
+        _mw="${_mode%%x*}"
+        _mh="${_mode##*x}"
+        # Guard against a malformed modes file rather than passing junk to
+        # gamescope, which would fail to start and take the session with it.
+        case "$_mw$_mh" in
+            *[!0-9]*|"") warn "unusable mode '$_mode' from sysfs; leaving gamescope to choose" ;;
+            *)
+                log "native mode ${_mw}x${_mh}; setting output and nested resolution to match"
+                set -- "$@" -W "$_mw" -H "$_mh" -w "$_mw" -h "$_mh"
+                ;;
+        esac
+    else
+        warn "no connected output found in sysfs; leaving gamescope to choose its own resolution"
     fi
 
     if gamescope_has_option "--force-windows-fullscreen"; then

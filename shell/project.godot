@@ -62,6 +62,15 @@ window/size/viewport_height=1080
 window/size/mode=3
 window/size/borderless=true
 
+; Required before Kiosk.set_overlay can make the window see-through. Godot
+; refuses transparent_bg at runtime unless this is allowed at startup, and the
+; app overlay's entire premise is that the RUNNING application shows through
+; the middle of it (see app_overlay.gd and Kiosk's overlay switch).
+;
+; It costs nothing while the shell is opaque: the window is only made
+; transparent for as long as the overlay is up.
+window/per_pixel_transparency/allowed=true
+
 ; One fixed 1920x1080 design surface, scaled to whatever the display negotiated.
 ; Every margin and type size in src/tv_theme.gd is expressed against it, so the
 ; 5% safe inset stays 5% at any output resolution instead of shrinking on a 4K
