@@ -279,10 +279,11 @@ func _build_rail() -> Control:
 	# CARD_FOCUSED_SIZE opens in both directions rather than pushing downwards.
 	_rail.set_anchors_preset(Control.PRESET_LEFT_WIDE)
 	_rail.grow_vertical = Control.GROW_DIRECTION_BOTH
-	# Start where the first selection will settle, so the opening frame is
-	# already right. _scroll_to_selected waits a frame before it can measure, and
-	# without this the rail would draw once hard against the screen edge and then
-	# jump inwards -- a flinch on the very first frame the appliance ever shows.
+	# Start where the first selection rests, so the opening frame is already
+	# right. _scroll_to_selected tweens the strip to this same x when the first
+	# card takes focus; starting at the destination makes that opening tween a
+	# hold rather than a slide in from the screen edge -- a flinch on the very
+	# first frame the appliance ever shows.
 	_rail.position.x = TvTheme.SAFE_MARGIN_X
 	_rail_viewport.add_child(_rail)
 
@@ -382,19 +383,27 @@ func _fade_hero_to(accent: Color) -> void:
 ## is the screen's left edge; resting the selection there would push the focus
 ## ring into the region a TV is allowed to overscan away.
 ##
-## Deferred by one frame because the card that just took focus is mid-tween to
-## its larger size, and the HBoxContainer has not re-flowed yet -- reading
-## position now would scroll to where the card was about to stop being.
+## THE RESTING X IS ARITHMETIC, NOT MEASURED. When focus moves, the card that
+## just lost it is still tweening back down from CARD_FOCUSED_SIZE, so for the
+## whole RAIL_TWEEN_SECONDS the HBoxContainer's layout is in flight and any
+## position read off it -- this frame, next frame -- is a snapshot of a rail
+## that is still changing shape. Reading one frame in measured every card with a
+## shrinking neighbour on its left 140 px too far right, and the rail overshot
+## until the selection sat clipped at the screen edge. The settled layout needs
+## no measuring at all: once the tweens finish, every card left of the selection
+## is back at CARD_SIZE, so card N's left edge inside the strip is
+## N * (CARD_SIZE + CARD_GAP) -- known before the animation starts, which also
+## lets the rail slide and the card grow in the same frame instead of a frame
+## apart.
 func _scroll_to_selected() -> void:
-	await get_tree().process_frame
 	if not is_instance_valid(_rail):
 		return
 
-	var focused := get_viewport().gui_get_focus_owner()
-	if focused == null or not _tiles.has(focused):
+	var index := _tiles.find(get_viewport().gui_get_focus_owner())
+	if index == -1:
 		return
 
-	var target_x := TvTheme.SAFE_MARGIN_X - focused.position.x
+	var target_x := float(TvTheme.SAFE_MARGIN_X - index * (TvTheme.CARD_SIZE + TvTheme.CARD_GAP))
 
 	if _rail_tween != null and _rail_tween.is_valid():
 		_rail_tween.kill()
