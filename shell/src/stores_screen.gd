@@ -245,7 +245,13 @@ func _refresh_status() -> void:
 	if _page_status == null or _selected.is_empty():
 		return
 	var state := SystemStatus.steam
-	_page_status.text = str(STEAM_INSTALL_LINES.get(state, STEAM_INSTALL_LINES["unknown"]))
+	# The installer's live progress line wins over the fixed wording, for the
+	# rail's reason: a number that moves is the difference between "working"
+	# and "hung" to the person watching.
+	if not SystemStatus.steam_detail.is_empty():
+		_page_status.text = "Installing -- %s" % SystemStatus.steam_detail
+	else:
+		_page_status.text = str(STEAM_INSTALL_LINES.get(state, STEAM_INSTALL_LINES["unknown"]))
 	_page_status.add_theme_color_override(
 		"font_color",
 		TvTheme.TEXT_ALERT if STEAM_ALERT_STATES.has(state) else TvTheme.TEXT_SECONDARY)

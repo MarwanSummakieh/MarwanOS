@@ -70,6 +70,12 @@ var network: String = "unknown"
 var network_info: String = ""
 var steam: String = "unknown"
 
+## The installer's live progress line for Steam, or empty. Read alongside the
+## state word rather than through its own signal: the store page redraws on
+## steam_changed, and a detail that moved while the word did not still needs to
+## reach the screen -- so the poll emits on either changing.
+var steam_detail: String = ""
+
 var _network_state_path := NETWORK_STATE_FILE
 var _network_info_path := NETWORK_INFO_FILE
 var _steam_state_path := STEAM_STATE_FILE
@@ -120,11 +126,15 @@ func _read_steam() -> String:
 	# state not yet removed) this ordering is what makes the overlap read as
 	# "installed" rather than a minute of stale "downloading".
 	if FileAccess.file_exists(_steam_stamp_path):
+		steam_detail = ""
 		return "installed"
-	# The installer writes `<state>TAB<name>`; the name is there for the rail's
-	# pending cards, which need something to title an app that has no desktop
-	# entry yet. This seam wants only the state word.
-	var word := _read_word(_steam_state_path).get_slice("\t", 0)
+	# The installer writes `<state>TAB<name>TAB<detail>`. The name is there for
+	# the rail's pending cards; the detail is the live progress line, which the
+	# store page shows for the same reason the rail does -- a screen that says
+	# the same sentence for half an hour reads as a hung machine.
+	var line := _read_word(_steam_state_path)
+	var word := line.get_slice("\t", 0)
+	steam_detail = line.get_slice("\t", 2)
 	if word.is_empty():
 		return "unknown"
 	return word
@@ -155,9 +165,19 @@ func _set_network_info(info: String) -> void:
 	network_info_changed.emit(info)
 
 
+var _last_steam_detail := ""
+
+
+## Emits when the WORD or the DETAIL changes. Gating on the word alone would
+## freeze the store page's progress line at whatever it said when
+## "downloading" first appeared -- which is the exact defect this whole change
+## exists to fix, reintroduced one layer up.
 func _set_steam(state: String) -> void:
-	if state == steam:
+	if state == steam and steam_detail == _last_steam_detail:
 		return
+	var word_changed := state != steam
 	steam = state
-	ShellLog.info("steam install state: %s" % state)
+	_last_steam_detail = steam_detail
+	if word_changed:
+		ShellLog.info("steam install state: %s" % state)
 	steam_changed.emit(state)

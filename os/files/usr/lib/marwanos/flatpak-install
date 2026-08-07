@@ -39,6 +39,8 @@ fi
 TAG="marwanos-install"
 STATE_DIR=/run/marwanos
 STATE="$STATE_DIR/install.$APP.state"
+## Shared by every instance of the template -- see the flock below.
+LOCK=/run/marwanos/install.lock
 STAMP="/var/marwanos/installed.$APP"
 FLATHUB=https://dl.flathub.org/repo/flathub.flatpakrepo
 
@@ -74,11 +76,56 @@ display_name() {
 ## it. Atomic via rename: the shell polls this and must never read half a line.
 ## A failed write is logged rather than fatal -- narration must not be able to
 ## kill the thing it narrates.
+## `<state>TAB<display name>TAB<detail>`. The third field is free text the
+## shell shows verbatim while an install is running -- see progress_ticker for
+## why an install with no visible progress is the same as a broken one.
 state() {
     install -d "$STATE_DIR" || true
-    { printf '%s\t%s\n' "$1" "$(display_name "$APP")" > "$STATE.tmp" \
+    { printf '%s\t%s\t%s\n' "$1" "$(display_name "$APP")" "${2:-}" > "$STATE.tmp" \
         && mv -f "$STATE.tmp" "$STATE"; } \
         || err "cannot write $STATE (state '$1') -- the TV will not learn this"
+}
+
+
+## Rewrites the state file every few seconds while flatpak runs, so the card on
+## the rail carries a number that MOVES.
+##
+## THIS IS THE FIX FOR THE 2026-08-07 BOOT. Everything worked that night --
+## wifi associated, both installs started, the pending cards appeared and said
+## "Installing" -- and it still read as broken, because half an hour later the
+## screen said exactly what it had said at the start. A progress indicator is
+## not decoration on a multi-gigabyte download over a domestic line; it is the
+## difference between "working" and "hung" to the only person who can see it.
+##
+## MEASURED BY FREE SPACE, not by parsing flatpak. `flatpak install
+## --noninteractive` deliberately prints almost nothing, and its ostree
+## progress goes to a tty it does not have here. Watching the filesystem
+## shrink needs one statfs, costs nothing on a slow USB stick, counts the
+## runtimes as well as the app, and reports the one number that can also kill
+## this install -- how much room is left.
+## Every 10 s to the state file; every 12th tick (two minutes) to the journal
+## as well. The screen wants a number that moves; the JOURNAL wants enough to
+## prove afterwards that it did. This machine has no console, so a boot that
+## went wrong is read back off the stick hours later -- and "the card said
+## downloading" is not evidence that anything was being downloaded. Two minutes
+## keeps a half-hour install to about fifteen lines, which is a record rather
+## than spam.
+progress_ticker() {
+    local start_free="$1" free used line ticks=0
+    while :; do
+        sleep 10
+        free="$(df -Pm /var | awk 'NR==2 {print $4}')"
+        [ -n "$free" ] || continue
+        used=$(( start_free - free ))
+        [ "$used" -lt 0 ] && used=0
+        line="$(printf '%s MB fetched, %s MB free' "$used" "$free")"
+        state downloading "$line"
+
+        ticks=$(( ticks + 1 ))
+        if [ $(( ticks % 12 )) -eq 0 ]; then
+            info "still downloading: $line"
+        fi
+    done
 }
 
 
@@ -91,6 +138,7 @@ fi
 # Free space before anything. The root filesystem is 15.4 GiB with ~7 GiB of OS
 # on it, and these apps run to gigabytes -- worth refusing early and loudly
 # rather than filling the disk of a machine with no console.
+install -d "$STATE_DIR" 2>/dev/null
 avail_mb=$(df -Pm /var | awk 'NR==2 {print $4}')
 info "free space on /var: ${avail_mb} MiB"
 if [ "${avail_mb:-0}" -lt 3000 ]; then
@@ -139,16 +187,60 @@ if ! flatpak remote-add --system --if-not-exists flathub "$FLATHUB"; then
     exit 1
 fi
 
+# ONE INSTALL AT A TIME, ACROSS INSTANCES. The 2026-08-07 boot ran Steam and
+# Zen concurrently, and they spent the whole time pulling the SAME runtimes
+# (org.freedesktop.Platform.GL.default appears in both instances' logs, minutes
+# apart) while contending for one USB stick's write bandwidth and for flatpak's
+# own repo lock. Serialising makes the first app arrive far sooner, makes the
+# progress number mean one thing rather than two, and stops two independent
+# free-space checks from each deciding there is room for a download the other
+# is also about to make.
+#
+# flock on a shared file rather than systemd ordering: the unit is a template,
+# so an `After=` naming a sibling instance would have to be written per app in
+# the Containerfile, and adding an app would then mean editing the chain.
+exec 9>"$LOCK"
+info "waiting for the install lock"
+flock 9 || { err "could not take the install lock"; state failed; exit 1; }
+info "holding the install lock"
+
+# Re-check the disk INSIDE the lock. The check above happened before waiting,
+# and the app that held the lock may have consumed the room in the meantime.
+avail_mb=$(df -Pm /var | awk 'NR==2 {print $4}')
+if [ "${avail_mb:-0}" -lt 3000 ]; then
+    err "only ${avail_mb} MiB left after waiting -- refusing to fill the disk"
+    state no-space
+    exit 1
+fi
+
 # --noninteractive matters: without it flatpak asks which remote to use and
 # blocks forever on a machine with no keyboard attached to this process.
 info "installing $APP -- this is a large download, expect several minutes"
+progress_ticker "$avail_mb" &
+ticker_pid=$!
+# Killed on every exit path, including the TimeoutStartSec kill and a shutdown
+# mid-download: a ticker outliving its install would keep rewriting a state
+# file claiming a download that is no longer happening.
+trap 'kill "$ticker_pid" 2>/dev/null' EXIT INT TERM
+
 if flatpak install --system --noninteractive --assumeyes flathub "$APP"; then
     info "flatpak install reported success"
 else
-    err "flatpak install failed (exit $?)"
-    state failed
+    rc=$?
+    err "flatpak install failed (exit $rc)"
+    kill "$ticker_pid" 2>/dev/null
+    # Distinguish the one failure with a physical remedy from the rest.
+    avail_mb=$(df -Pm /var | awk 'NR==2 {print $4}')
+    if [ "${avail_mb:-0}" -lt 500 ]; then
+        err "the disk is full (${avail_mb} MiB left)"
+        state no-space
+    else
+        state failed
+    fi
     exit 1
 fi
+
+kill "$ticker_pid" 2>/dev/null
 
 # Prove it rather than trust the exit code, in the spirit of the Containerfile's
 # assertions: the failure this catches is an install that half-happened.
