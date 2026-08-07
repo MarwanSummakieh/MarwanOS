@@ -7,7 +7,63 @@ what is stale.
 
 ---
 
-## Where this got to
+## THE 2026-08-07 BOOT RAN, AND THE WIFI ASSOCIATED
+
+**First journal off a stick in four attempts, and it closes the oldest open
+question in the project.** Two boots that evening (`0.0.202608071627`, commit
+`92535a5`, root `4f118398…`). What the journal shows:
+
+```
+marwanos-shell: wifi state: connected (Marwan 5)
+```
+
+**ADR 0004's "the Predator's wifi does not associate under MarwanOS" is dead.**
+It was misdiagnosed as a hardware limitation, re-diagnosed on 2026-08-07 as
+Windows Fast Startup holding the CNVi radio, and is now *demonstrated* fixed:
+the radio came up, NetworkManager saw it, and the shell's new Wi-Fi seam
+reported an association to a real network. `wpa_supplicant` appears in the
+journal for the first time.
+
+Everything else in the new stack also ran:
+
+| | Evidence |
+|---|---|
+| netcheck | `network is online`, and it caught two real drops and recoveries |
+| appscan | `scan found 2 application(s), including pending installs` |
+| the rail | `installed applications: 2`, `home rail ready with 2 cards` |
+| the store page | `steam install state: downloading` |
+| both installers | Flathub reachable after 12 attempts; 2.6 GB pulled |
+
+**Nothing failed. It still looked broken, and that is the finding.** The two
+pending cards said *"Installing — downloading from Flathub, give it minutes"*
+and then said exactly that for half an hour. A multi-gigabyte download with a
+static sentence is indistinguishable from a hung machine to the only person who
+can see it. Three defects behind that, all now fixed:
+
+- **No progress.** The installer rewrites its state every 10 s with
+  `1240 MB fetched, 4100 MB free` (measured by watching the filesystem —
+  `flatpak install --noninteractive` prints nothing useful), logs it every
+  2 minutes so the *journal* can prove afterwards that it moved, and the rail
+  and store page render it live.
+- **The two installs ran concurrently and fought.** Both pulled the same
+  runtimes minutes apart, contending for one USB stick and flatpak's repo lock.
+  Serialised behind a `flock` now.
+- **Steam was a rail card AND a store page.** `pending()` did not apply the
+  store exclusion the installed scan does.
+
+**The disk is the next thing that will bite.** At shutdown: 5.3 GB free, 2.6 GB
+of flatpak repo, and **neither app deployed yet**. Steam + Zen + the NVIDIA GL
+runtimes may not fit in a 16 GB root. The free-space check is now re-run inside
+the lock and a genuinely full disk reports `no-space` with a physical remedy —
+but if it runs out, the answer is a bigger root partition, not code.
+
+**The GPT was corrupt again when the stick came back to Windows** (fifth
+occurrence, same signature). Repaired losslessly with `sgdisk -e` to read the
+journal. Note this happened *after* the boot and had nothing to do with it.
+
+---
+
+## Where this got to (before the 2026-08-07 boot)
 
 **The 2026-08-06 reflash never booted.** It went to a dracut emergency shell, and
 the stick's own filesystems say why: nothing on any partition had been written
@@ -414,7 +470,8 @@ Each of these is documented at length where it bites; this is only the index.
 | Piping `lsinitrd` into `grep -q` under `pipefail` exits 141 | `os/Containerfile`, the initramfs assertions |
 | `MARWANOS_*` ARGs must stay at the bottom, or a timestamped version invalidates dnf and dracut every build (515s vs 70s) | `os/Containerfile` |
 | ~~The Predator's wifi does not associate under MarwanOS~~ — **misdiagnosed; see below** | [ADR 0004](adr/0004-session-compositor-scaffold.md) |
-| Windows Fast Startup leaves the CNVi wifi claimed, so `iwlwifi` probe times out | this file, 2026-08-07 |
+| Windows Fast Startup leaves the CNVi wifi claimed, so `iwlwifi` probe times out — **confirmed and cleared 2026-08-07: with Fast Startup off the radio associates** | this file, 2026-08-07 |
+| A download with no visible progress reads as a hung machine; narrate bytes, not phases | `os/files/usr/lib/marwanos/flatpak-install`, `progress_ticker` |
 
 ### VM harness
 

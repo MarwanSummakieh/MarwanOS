@@ -145,7 +145,7 @@ func _parse(raw: String) -> Array:
 		result.append({
 			"id": fields[0],
 			"title": fields[1],
-			"subtitle": fields[2] if installed else _pending_subtitle(state),
+			"subtitle": fields[2] if installed else _pending_subtitle(state, fields[2]),
 			"icon": fields[3],
 			"exec": exec_parts,
 			"state": state,
@@ -153,5 +153,13 @@ func _parse(raw: String) -> Array:
 	return result
 
 
-func _pending_subtitle(state: String) -> String:
+## The scanner puts a LIVE progress line in the comment column of a pending
+## record ("1240 MB fetched, 4100 MB free"). Preferring it over the table is
+## the whole point: the table's wording is fixed, and a card that says the same
+## sentence for half an hour reads as a hung machine even while a multi-gigabyte
+## download is going perfectly. The table stays as the fallback for the states
+## that have nothing to count -- waiting for a network, no space, failed.
+func _pending_subtitle(state: String, detail: String) -> String:
+	if not detail.is_empty():
+		return detail
 	return str(PENDING_SUBTITLES.get(state, PENDING_SUBTITLES["unknown"]))

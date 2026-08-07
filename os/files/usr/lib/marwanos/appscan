@@ -263,7 +263,7 @@ scan() {
 ## They carry no icon and no exec, because neither exists yet. The shell
 ## renders them as cards that describe themselves and refuse to launch.
 pending() {
-    local file id line state name
+    local file id line state name detail rest skip excluded
 
     for file in "$STATE_DIR"/install.*.state; do
         [ -f "$file" ] || continue
@@ -271,15 +271,33 @@ pending() {
         id="${file##*/install.}"
         id="${id%.state}"
 
-        IFS= read -r line < "$file" || continue
-        state="${line%%$'\t'*}"
-        name="${line#*$'\t'}"
-        [ -n "$state" ] || continue
-        # A file with no tab in it leaves name equal to the whole line; falling
-        # back to the id is better than showing a state word as a title.
-        [ "$name" = "$line" ] && name="$id"
+        # Store apps have their own page and must not ALSO be a rail card. The
+        # installed-scan already excludes them by id; this path did not, so the
+        # 2026-08-07 boot put Steam on the rail as a pending card while its
+        # store page narrated the same install. One thing, one home.
+        excluded=""
+        for skip in "${EXCLUDE_IDS[@]}"; do
+            [ "$id" = "$skip" ] && { excluded=yes; break; }
+        done
+        [ -n "$excluded" ] && continue
 
-        printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$id" "$name" "" "" "" "$state"
+        IFS= read -r line < "$file" || continue
+        # `<state>TAB<name>TAB<detail>`; detail is the live progress text and
+        # may be empty.
+        state="${line%%$'\t'*}"
+        rest="${line#*$'\t'}"
+        [ "$rest" = "$line" ] && rest=""
+        name="${rest%%$'\t'*}"
+        detail="${rest#*$'\t'}"
+        [ "$detail" = "$rest" ] && detail=""
+
+        [ -n "$state" ] || continue
+        [ -n "$name" ] || name="$id"
+
+        # The progress text rides in the COMMENT column, which is exactly what
+        # that column is for: the one line under the title. The shell prefers
+        # it over its own wording when it is present.
+        printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$id" "$name" "$detail" "" "" "$state"
     done
 }
 
@@ -294,24 +312,49 @@ pending() {
 ## cheaper than being wrong. The application directories stay on mtime because
 ## re-parsing a hundred desktop entries every ten seconds is exactly what the
 ## signature exists to avoid.
-signature() {
-    local dir file
+dirs_signature() {
+    local dir
     for dir in "${APP_DIRS[@]}"; do
         if [ -d "$dir" ]; then
             printf '%s:%s ' "$dir" "$(stat -c %Y "$dir" 2>/dev/null || echo 0)"
         fi
     done
+}
+
+
+## By CONTENT, not mtime -- the progress line inside these files is the thing
+## that has to reach the rail, and it changes without the set of files
+## changing. They are two short files on a tmpfs, so reading them every cycle
+## costs nothing; it is the desktop-file walk that must not repeat this often.
+pending_signature() {
+    local file
     for file in "$STATE_DIR"/install.*.state; do
         [ -f "$file" ] && printf '%s:%s ' "$file" "$(cat "$file" 2>/dev/null)"
     done
 }
 
 
-last_signature=""
+# THE TWO HALVES ARE WATCHED SEPARATELY, and that split is a performance fix
+# rather than tidiness. Pending state now carries a progress line that is
+# rewritten every ten seconds during a download, so a single combined signature
+# would re-walk every desktop file in every XDG directory on that same cadence
+# -- reading hundreds of small files off a USB stick that is simultaneously
+# absorbing a multi-gigabyte download. The installed set only changes when a
+# directory's mtime moves, so its expensive scan is cached and only the cheap
+# read of two small state files repeats.
+last_dirs=""
+last_pending=""
+installed_listing=""
 while :; do
-    now="$(signature)"
-    if [ "$now" != "$last_signature" ]; then
-        last_signature="$now"
+    dirs_now="$(dirs_signature)"
+    pending_now="$(pending_signature)"
+
+    if [ "$dirs_now" != "$last_dirs" ] || [ "$pending_now" != "$last_pending" ]; then
+        if [ "$dirs_now" != "$last_dirs" ]; then
+            last_dirs="$dirs_now"
+            installed_listing="$(scan)"
+        fi
+        last_pending="$pending_now"
 
         # Sorted by name so the rail's order is stable across rescans -- a rail
         # whose cards reshuffle when an unrelated app is installed would move
@@ -319,7 +362,8 @@ while :; do
         # entries sort in among the installed ones rather than clustering at
         # one end, so an app does not jump across the rail at the moment its
         # install finishes.
-        listing="$( { scan; pending; } | sort -t"$(printf '\t')" -k2,2f)"
+        listing="$( { printf '%s' "${installed_listing:+$installed_listing$'\n'}"; pending; } \
+            | grep -v '^$' | sort -t"$(printf '\t')" -k2,2f)"
         count=0
         [ -n "$listing" ] && count="$(printf '%s\n' "$listing" | wc -l)"
 
