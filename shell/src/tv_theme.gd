@@ -152,6 +152,23 @@ const HINT_GAP := 36
 const HINT_GLYPH_GAP := 12
 
 
+## The card's art fill, rounded to the same radius as the box and the ring.
+##
+## It is a StyleBoxFlat on a Panel rather than a ColorRect, and that is a fix
+## rather than a preference: a ColorRect is always a hard rectangle, so its four
+## square corners drew outside the rounded focus ring and the rounded card box
+## beneath it. On hardware that reads as the art leaking past its own border --
+## reported off the 2026-08-07 boot, and invisible until the ring started
+## drawing at all. Phase 1 replaces the flat colour with real key art, which
+## will need the same treatment (a texture rounded by a corner radius, not a
+## bare TextureRect) for exactly this reason.
+static func card_art_box(fill: Color) -> StyleBoxFlat:
+	var box := StyleBoxFlat.new()
+	box.bg_color = fill
+	box.set_corner_radius_all(CARD_CORNER_RADIUS)
+	return box
+
+
 ## A rail card at rest. No border: on a rail the selection is carried by size and
 ## by the ring, and a border on every card competes with both.
 static func card_idle_box() -> StyleBoxFlat:

@@ -90,8 +90,14 @@ func _build_contents() -> void:
 	# inside the card's rounded box rather than inset: real key art has no margin,
 	# and a card that frames its art in surface colour looks like a placeholder
 	# even once the art is real.
-	var art := ColorRect.new()
-	art.color = TvTheme.accent(str(entry.get("accent", "")))
+	#
+	# A Panel with a rounded stylebox, NOT a ColorRect. A ColorRect draws a hard
+	# rectangle whatever is underneath it, so its corners sat outside the rounded
+	# ring and the rounded card box -- the art visibly leaking past its own
+	# border on the TV. See TvTheme.card_art_box.
+	var art := Panel.new()
+	art.add_theme_stylebox_override(
+		"panel", TvTheme.card_art_box(TvTheme.accent(str(entry.get("accent", "")))))
 	art.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	art.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(art)

@@ -188,13 +188,24 @@ func _log_display_geometry(when: String) -> void:
 		window.content_scale_aspect,
 	])
 
-	# The pillarbox the stretch is about to produce, worked out the way the engine
-	# works it out: with aspect "keep" and a window wider than the design surface,
-	# the content is scaled to the window's HEIGHT and centred, leaving an equal
-	# black bar each side. On one display that is a harmless letterbox. Across two
-	# it is the UI cut in half -- one bar landing invisibly on the lid panel and
-	# the other showing up as the black band on the right of the TV.
-	if window.content_scale_size.y > 0 and window_size.y > 0:
+	# What the stretch actually does with the space, which depends on the aspect
+	# mode and must not be assumed. Under EXPAND there are no bars at all -- the
+	# viewport grows into the extra width instead -- so the bar arithmetic below
+	# would report a letterbox that is not on the screen. On a machine whose only
+	# surface is the journal, a confidently wrong line is worse than no line.
+	if window.content_scale_aspect == Window.CONTENT_SCALE_ASPECT_EXPAND:
+		var surface := window.get_visible_rect().size
+		ShellLog.info("stretch: expand -- no bars; design surface is %dx%d (%d px wider than the %d base)" % [
+			int(surface.x), int(surface.y),
+			int(surface.x) - window.content_scale_size.x, window.content_scale_size.x,
+		])
+	elif window.content_scale_size.y > 0 and window_size.y > 0:
+		# The pillarbox aspect "keep" produces: with a window wider than the
+		# design surface the content is scaled to the window's HEIGHT and
+		# centred, leaving an equal black bar each side. On one display that is
+		# a harmless letterbox. Across two it is the UI cut in half -- one bar
+		# landing invisibly on the lid panel and the other showing up as the
+		# black band on the right of the TV.
 		var design_aspect := float(window.content_scale_size.x) / float(window.content_scale_size.y)
 		var window_aspect := float(window_size.x) / float(window_size.y)
 		if window_aspect > design_aspect:
