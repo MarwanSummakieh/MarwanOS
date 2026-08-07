@@ -35,5 +35,5 @@ static func entries() -> Array:
 		{"id": "placeholder.09", "title": "Placeholder Nine", "subtitle": "No store in Phase 0", "accent": "#7A8046"},
 		{"id": "placeholder.10", "title": "Placeholder Ten", "subtitle": "No library in Phase 0", "accent": "#8C6A46"},
 		{"id": "placeholder.11", "title": "Placeholder Eleven", "subtitle": "Launch is a scene swap", "accent": "#566E96"},
-		{"id": "placeholder.12", "title": "Placeholder Twelve", "subtitle": "Last card on the rail", "accent": "#6A5F7E"},
+		{"id": "placeholder.12", "title": "Placeholder Twelve", "subtitle": "Settings sits after this", "accent": "#6A5F7E"},
 	]

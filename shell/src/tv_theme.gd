@@ -105,15 +105,51 @@ const SIZE_SUPPLEMENTAL := 26
 ## the hint row.
 const SECTION_GAP := 28
 
+# ---------------------------------------------------------------------------
+# The settings screen
+#
+# Rows reuse the card's boxes and ring so the two screens read as one product.
+# A row's focus runs on two channels (the ring and the brighter surface) where
+# the card's runs on three, because the third does not transfer: a card grows
+# into slack the rail keeps around it, but a full-width row that grew would
+# shove every row below it, and a list that reflows on each press reads as
+# nervous. The ring's ~8:1 against the surface carries WCAG's state-change
+# contrast on its own, so dropping size costs redundancy, not legibility.
+
+## Comfortably above the 64 px interactive floor named in the header, and tall
+## enough that a name on the left and a value on the right read as one line
+## from the couch.
+const SETTINGS_ROW_HEIGHT := 88
+
+const SETTINGS_ROW_GAP := 14
+
+## Horizontal padding inside a row, between its rounded edge and its text.
+const SETTINGS_ROW_PAD := 28
+
+## The settings card's accent on the home rail -- deliberately the muted end of
+## the placeholder palette, so shell furniture recedes next to library content.
+## A hex string rather than a Color because it travels in the same entry shape
+## as catalogue data, but it lives HERE and not in catalogue.gd: the catalogue
+## is deleted in Phase 1 and this card survives it, so this is the one accent
+## with a permanent claim on the one-place rule.
+const SETTINGS_CARD_ACCENT := "#55606E"
+
 # RGB 16-235, light-on-dark, no hue carrying meaning on its own.
 const BACKGROUND := Color(0.078431, 0.086275, 0.101961, 1.0)
 const SURFACE := Color(0.149020, 0.164706, 0.196078, 1.0)
 const SURFACE_FOCUS := Color(0.290196, 0.321569, 0.376471, 1.0)
+## One step brighter than SURFACE_FOCUS, for the moment a press is held on a
+## row that has no scene change to acknowledge it -- see settings_row.gd.
+const SURFACE_PRESSED := Color(0.380392, 0.419608, 0.490196, 1.0)
 const FOCUS_RING := Color(0.909804, 0.917647, 0.933333, 1.0)
 const TEXT_PRIMARY := Color(0.886275, 0.901961, 0.921569, 1.0)
 const TEXT_SECONDARY := Color(0.588235, 0.619608, 0.666667, 1.0)
 const TEXT_ALERT := Color(0.921569, 0.690196, 0.360784, 1.0)
 const ACCENT_FALLBACK := Color(0.290196, 0.321569, 0.376471, 1.0)
+
+## The hint row's numbers, shared by every screen that draws one.
+const HINT_GAP := 36
+const HINT_GLYPH_GAP := 12
 
 
 ## A rail card at rest. No border: on a rail the selection is carried by size and
@@ -162,6 +198,16 @@ static func hero_gradient() -> GradientTexture2D:
 	return texture
 
 
+## A row that is being pressed and has nothing else to say so. Brighter than
+## the focus surface, so the press is a visible pixel change even though the
+## row was already lit by focus when the button went down.
+static func row_pressed_box() -> StyleBoxFlat:
+	var box := StyleBoxFlat.new()
+	box.bg_color = SURFACE_PRESSED
+	box.set_corner_radius_all(CARD_CORNER_RADIUS)
+	return box
+
+
 ## The bordered square behind a button glyph in the hint row.
 static func glyph_box() -> StyleBoxFlat:
 	var box := StyleBoxFlat.new()
@@ -174,6 +220,35 @@ static func glyph_box() -> StyleBoxFlat:
 	box.content_margin_top = 2
 	box.content_margin_bottom = 2
 	return box
+
+
+## One glyph-plus-caption hint, e.g. "A Open". Built here rather than in each
+## screen because the settings screen made it the first duplicated control in
+## the project, and a third fullscreen surface copying the pattern would have
+## made it three sites to retune after a couch test.
+static func hint(glyph: String, caption_text: String) -> Control:
+	var row := HBoxContainer.new()
+	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	row.add_theme_constant_override("separation", HINT_GLYPH_GAP)
+
+	var badge := Label.new()
+	badge.text = glyph
+	badge.add_theme_font_size_override("font_size", SIZE_SUPPLEMENTAL)
+	badge.add_theme_color_override("font_color", TEXT_PRIMARY)
+	badge.add_theme_stylebox_override("normal", glyph_box())
+	badge.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	badge.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	row.add_child(badge)
+
+	var caption := Label.new()
+	caption.text = caption_text
+	caption.add_theme_font_size_override("font_size", SIZE_SUPPLEMENTAL)
+	caption.add_theme_color_override("font_color", TEXT_SECONDARY)
+	caption.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	caption.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	row.add_child(caption)
+
+	return row
 
 
 ## Catalogue entries carry their accent as a hex string so the placeholder data
