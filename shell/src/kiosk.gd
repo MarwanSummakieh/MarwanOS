@@ -232,3 +232,68 @@ func _log_display_geometry(when: String) -> void:
 			matches_a_screen = true
 	if count > 1 and not matches_a_screen:
 		ShellLog.error("window %s matches no single screen of %d -- the compositor handed the shell a surface spanning outputs" % [window_size, count])
+
+
+# ---------------------------------------------------------------------------
+# THE OVERLAY SWITCH
+#
+# gamescope composites a window over the focused application -- rather than
+# instead of it -- when that window carries the X property
+# GAMESCOPE_EXTERNAL_OVERLAY. It is the mechanism Steam's overlay uses on a
+# Deck, and it is what makes app_overlay.gd able to show the RUNNING
+# application through its own transparent middle instead of a screenshot of it.
+#
+# WHY xprop AND NOT GODOT. Godot has no API for setting an arbitrary X property
+# on its own window; it exposes the window handle and nothing else. xprop is in
+# the image already, it is the documented way to set one, and this is window
+# configuration -- which is the job this autoload already exists to do. It is
+# not the shell growing a process-management habit: one property, set on its own
+# window, twice per overlay.
+#
+# IF IT DOES NOT TAKE, the overlay still draws -- it simply replaces the
+# application on screen instead of floating over it, which is survivable and
+# obvious rather than silent. The journal says which happened.
+
+const OVERLAY_PROPERTY := "GAMESCOPE_EXTERNAL_OVERLAY"
+
+var _overlay_active := false
+
+
+## Ask gamescope to composite this window over the running application.
+##
+## Transparency is toggled alongside the property, and both directions matter:
+## a transparent window that is NOT an overlay shows the desktop's clear colour
+## rather than an app, and an overlay that is not transparent covers the very
+## thing it is framing.
+func set_overlay(enabled: bool) -> void:
+	if enabled == _overlay_active:
+		return
+	_overlay_active = enabled
+
+	var window := get_window()
+	if window != null:
+		window.transparent_bg = enabled
+	get_tree().root.transparent_bg = enabled
+
+	var handle := DisplayServer.window_get_native_handle(DisplayServer.WINDOW_HANDLE)
+	if handle == 0:
+		ShellLog.warn("no native window handle; cannot set %s (overlay will cover the app)"
+			% OVERLAY_PROPERTY)
+		return
+
+	# xprop wants the id in hex; Godot hands back the XID as an integer.
+	var window_id := "0x%x" % handle
+	var value := "1" if enabled else "0"
+	var args := PackedStringArray([
+		"-id", window_id,
+		"-f", OVERLAY_PROPERTY, "32c",
+		"-set", OVERLAY_PROPERTY, value,
+	])
+
+	var output: Array = []
+	var code := OS.execute("xprop", args, output, true)
+	if code != 0:
+		ShellLog.warn("xprop %s=%s on %s failed (exit %d): %s"
+			% [OVERLAY_PROPERTY, value, window_id, code, " ".join(output)])
+		return
+	ShellLog.info("%s=%s on window %s" % [OVERLAY_PROPERTY, value, window_id])

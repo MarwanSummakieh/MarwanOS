@@ -35,6 +35,11 @@ signal launch_started(entry: Dictionary)
 ## consumer side is identical.
 signal launch_finished(entry: Dictionary)
 
+## Emitted when the overlay asks for the running app to be backgrounded rather
+## than stopped. The rail comes back; the process does not go away, and
+## launch_finished still fires later when it eventually exits.
+signal minimized(entry: Dictionary)
+
 const LaunchPlaceholder = preload("res://src/launch_placeholder.gd")
 
 var _current: Dictionary = {}
@@ -47,6 +52,12 @@ var _placeholder: LaunchPlaceholder = null
 
 func is_busy() -> bool:
 	return not _current.is_empty()
+
+
+## What is running, for anything that needs to name it on screen. A copy, so a
+## consumer cannot write back into the seam's own record of the launch.
+func current_entry() -> Dictionary:
+	return _current.duplicate()
 
 
 ## The only way anything gets launched.
@@ -140,6 +151,102 @@ func _spawn(exec: Array) -> void:
 	_poll.timeout.connect(_check_exit)
 	add_child(_poll)
 	_poll.start()
+
+
+## Whether there is a running process this seam could stop. False for the
+## placeholder branch, which has no pid and is dismissed with B.
+func can_close() -> bool:
+	return _pid > 0
+
+
+## Ask the running application to go away.
+##
+## THE PID IS NOT ENOUGH FOR A FLATPAK, and that is the whole reason this is
+## not a one-line OS.kill. `flatpak run` is a wrapper: it sets up the sandbox
+## and the real application runs inside it, frequently under a different pid
+## that is not this process's child. Killing the wrapper can leave the
+## application on screen with the shell believing it has exited -- which is a
+## worse state than not offering to close it at all, because the rail comes
+## back underneath a window that is still there.
+##
+## So a flatpak entry is closed with `flatpak kill <app-id>`, which is the
+## documented way to stop a sandbox, and anything else falls back to the pid.
+## Both paths then let _check_exit notice the process is gone through the same
+## poll as a normal exit, so there is exactly one route back to the rail.
+func close_current() -> void:
+	if _current.is_empty():
+		return
+
+	var exec: Array = _current.get("exec", [])
+	var app_id := _flatpak_app_id(exec)
+
+	if not app_id.is_empty():
+		ShellLog.info("closing flatpak %s" % app_id)
+		# Fire and forget: the poll below is what decides the app is gone, and
+		# blocking the UI on flatpak's own exit would freeze the overlay.
+		var pid := OS.create_process("flatpak", ["kill", app_id])
+		if pid <= 0:
+			ShellLog.warn("could not run `flatpak kill %s`; falling back to the pid" % app_id)
+			_kill_pid()
+		return
+
+	_kill_pid()
+
+
+## Leave the application running and give the screen back to the rail.
+##
+## HONEST ABOUT WHAT IT CAN AND CANNOT DO. Nothing here stops the process --
+## that is the whole point -- so all this can do is stop being an overlay and
+## ask gamescope to put the shell in front. Whether that happens is the
+## COMPOSITOR'S decision: gamescope arbitrates focus between its clients, and an
+## X client cannot insist. window_move_to_foreground is the strongest request
+## available and it is a request.
+##
+## So this logs what it asked for. If the bench shows the app stays in front,
+## the fix is a gamescope-side focus mechanism (it publishes GAMESCOPE_FOCUSED_
+## WINDOW and friends, so there is somewhere to look) rather than more force
+## from here -- and the journal will say so instead of leaving someone
+## wondering whether the button did anything.
+func minimize_current() -> void:
+	if _current.is_empty():
+		return
+	ShellLog.info("minimize requested for %s; app stays running"
+		% str(_current.get("title", "")))
+	DisplayServer.window_move_to_foreground()
+	minimized.emit(_current)
+
+
+func _kill_pid() -> void:
+	if _pid <= 0:
+		return
+	ShellLog.info("terminating pid %d" % _pid)
+	# OS.kill is SIGKILL on Unix. Abrupt, and acceptable here: this is the
+	# button someone presses because the thing on screen will not go away, and
+	# an application that ignored a polite request is exactly the case it
+	# exists for. Anything that wants a graceful shutdown should offer its own
+	# quit, as Steam does.
+	var error := OS.kill(_pid)
+	if error != OK:
+		ShellLog.error("could not terminate pid %d (error %d)" % [_pid, error])
+
+
+## `["flatpak", "run", "com.foo.Bar", ...]` -> `"com.foo.Bar"`, else empty.
+## Read from the entry rather than remembered separately so it cannot drift
+## from what was actually launched.
+func _flatpak_app_id(exec: Array) -> String:
+	if exec.size() < 3:
+		return ""
+	if not str(exec[0]).ends_with("flatpak"):
+		return ""
+	if str(exec[1]) != "run":
+		return ""
+	for i in range(2, exec.size()):
+		var word := str(exec[i])
+		# Skip flatpak's own options; the first bare word is the application id.
+		if word.begins_with("-"):
+			continue
+		return word
+	return ""
 
 
 func _check_exit() -> void:

@@ -61,6 +61,9 @@ const REQUIRED_JOYPAD_ACTIONS := [
 	# check exists to notice a binding that quietly vanished, and a pad that
 	# lost Square/Triangle should say so rather than boot silently.
 	"ui_shell_x", "ui_shell_y",
+	# Not merely a shortcut, unlike the two above: without a home button there
+	# is no way to leave a launched application from a controller at all.
+	"ui_shell_home",
 ]
 
 
@@ -123,6 +126,19 @@ func _ready() -> void:
 	_define("ui_shell_y", [
 		_key(KEY_BACKSPACE),
 		_button(JOY_BUTTON_Y),
+	], STICK_DEADZONE)
+
+	# THE HOME BUTTON. JOY_BUTTON_GUIDE is the PS button on a DualSense and the
+	# Xbox button on an Xbox pad; the kernel's hid-playstation driver reports it
+	# as BTN_MODE, which SDL maps to guide. It is the one button a console user
+	# already knows means "get me out of this", and it is the only way back from
+	# a launched application -- see app_overlay.gd.
+	#
+	# KEY_HOME is the desk equivalent, which is also what the Xvfb harness
+	# drives it with.
+	_define("ui_shell_home", [
+		_key(KEY_HOME),
+		_button(JOY_BUTTON_GUIDE),
 	], STICK_DEADZONE)
 
 	_verify()
