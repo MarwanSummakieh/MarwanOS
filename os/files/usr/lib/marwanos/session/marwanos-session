@@ -225,8 +225,36 @@ nvidia_output_connected() {
 # exit during argument parsing, which looks from the outside exactly like
 # gamescope being unable to take DRM master. Guarding the optional flags means a
 # plan A failure is a real one.
+## Does this gamescope accept an option? Answers YES when it cannot tell.
+##
+## THIS FAILED CLOSED, AND THAT IS A SILENT WAY TO LOSE FULLSCREEN. The old
+## body was one line -- `gamescope --help 2>&1 | grep -q -- "$1"` -- which
+## cannot distinguish "gamescope ran and does not list this flag" from
+## "gamescope did not run at all". Any failure to execute produces empty output,
+## grep finds nothing, the caller silently drops the flag, and the session comes
+## up with no window management: applications open at whatever size they like,
+## on a TV, with nothing in the journal pointing at the cause.
+##
+## That is not hypothetical. gamescope carries `cap_sys_nice+ep` (see the
+## Containerfile), and a binary with file capabilities refuses to exec wherever
+## the permitted set does not allow them -- proven in a container, where
+## `gamescope --help` answers "Operation not permitted" and nothing else.
+## Whatever the bench's version of that is, the probe should not be the thing
+## that decides.
+##
+## So: run the probe, and only believe a NEGATIVE answer if gamescope actually
+## produced output. If it printed nothing, assume the flag exists and pass it.
+## Failing open is the right direction here -- an unknown flag makes gamescope
+## exit at startup with a message, which start_gamescope already turns into a
+## hard stop that says why, whereas a dropped flag is invisible until someone
+## notices a browser in a corner of the screen.
 gamescope_has_option() {
-    gamescope --help 2>&1 | grep -q -- "$1"
+    _help="$(gamescope --help 2>&1)"
+    if [ -z "$_help" ]; then
+        warn "could not read gamescope --help; assuming $1 is supported"
+        return 0
+    fi
+    printf '%s' "$_help" | grep -q -- "$1"
 }
 
 # Re-resolved on every restart, not once at startup: D5's ten-second loop is
@@ -458,10 +486,15 @@ start_gamescope() {
         warn "no connected output found in sysfs; leaving gamescope to choose its own resolution"
     fi
 
+    # LOGGED EITHER WAY. Zen came up windowed on the bench and there was nothing
+    # in the journal to say whether this flag had been passed -- so the next
+    # boot answers that question in one line rather than by inference.
     if gamescope_has_option "--force-windows-fullscreen"; then
         set -- "$@" --force-windows-fullscreen
+        log "window management: --force-windows-fullscreen is ON"
     else
-        warn "gamescope has no --force-windows-fullscreen; the placeholder will render windowed"
+        warn "gamescope --help ran and does NOT list --force-windows-fullscreen;"
+        warn "applications will open at their own size and nothing will resize them"
     fi
 
     log "starting gamescope: $*"
