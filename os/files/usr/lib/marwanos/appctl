@@ -1,0 +1,200 @@
+#!/usr/bin/env bash
+#
+# Installing and removing applications on request from the shell.
+#
+# WHY THIS EXISTS. Until now the only way an application arrived was
+# marwanos-flatpak-install@<id> on the first boot with a network, and the only
+# way one left was `flatpak uninstall` typed into a terminal. This appliance has
+# no terminal -- no getty on tty1 by design (D6), sshd only in bench mode -- so
+# "remove an app" was not a slow path, it was an impossible one. The person in
+# front of the machine could install by waiting and could never undo it.
+#
+# THE SEAM IS THE WIFI AND UPDATE SEAM, DELIBERATELY. The shell writes a
+# one-line request file into a player-owned directory; this, running as root,
+# consumes it. Nothing else crosses the boundary.
+#
+#   the shell writes  /run/marwanos/apps/request   (0700 player-owned dir)
+#   this writes       /run/marwanos/apps.state     <state>TAB<app>TAB<detail>
+#
+# WHAT CROSSES THE BOUNDARY IS A NAME, NEVER A COMMAND, and unlike the update
+# seam this one takes an argument, so the argument is the whole security
+# question. Two things narrow it:
+#
+#   * The verb is matched against a fixed case, as in marwanos-update.
+#   * The application id must appear in SHIPPED_APPS below -- a hand-written
+#     list, not a pattern. A pattern that "looks like a flatpak id" would still
+#     let the shell name anything on Flathub; a list means the reverse channel
+#     is "pick one of the two applications this image ships", which is about as
+#     narrow as a parameterised request gets.
+#
+# The list duplicates what the Containerfile's .wants symlinks already name, and
+# that duplication is deliberate rather than overlooked: this file is a
+# privilege boundary and its allow-list should be readable in one place without
+# resolving symlinks in another. Phase 1 deletes both -- marwand owns the app
+# set and this seam becomes an RPC.
+#
+# UNINSTALL STICKS ACROSS REBOOTS. Removing the flatpak alone would not: the
+# install unit is gated on /var/marwanos/installed.<id>, so clearing that stamp
+# would make the next boot helpfully reinstall the thing that was just removed.
+# So an uninstall clears the stamp AND writes /var/marwanos/removed.<id>, which
+# marwanos-flatpak-install checks before doing anything. An explicit install
+# request deletes that marker -- that is what makes it explicit.
+#
+set -uo pipefail
+
+TAG=marwanos-appctl
+RUN_DIR=/run/marwanos
+REQ_DIR="$RUN_DIR/apps"
+REQ="$REQ_DIR/request"
+CONSUMED="$RUN_DIR/apps-request.consumed"
+STATE="$RUN_DIR/apps.state"
+STAMP_DIR=/var/marwanos
+
+POLL=0.5
+
+## The applications this image ships, and therefore the only ones a request may
+## name. See the header for why this is a list and not a pattern.
+SHIPPED_APPS=(
+    com.valvesoftware.Steam
+    app.zen_browser.zen
+    tv.kodi.Kodi
+)
+
+info() { printf '<6>%s: %s\n' "$TAG" "$*" >&2; }
+warn() { printf '<4>%s: %s\n' "$TAG" "$*" >&2; }
+err()  { printf '<3>%s: %s\n' "$TAG" "$*" >&2; }
+
+install -d -m 0755 "$RUN_DIR" || { err "cannot create $RUN_DIR"; exit 1; }
+install -d -m 0700 -o player -g player "$REQ_DIR" \
+    || { err "cannot create $REQ_DIR -- the shell could never ask for anything"; exit 1; }
+
+
+## `<state>TAB<app>TAB<detail>`. States: idle, installing, uninstalling, done,
+## failed, refused. Atomic via rename: the shell polls this and must never read
+## half a line.
+state() {
+    { printf '%s\t%s\t%s\n' "$1" "${2:-}" "${3:-}" > "$STATE.tmp" \
+        && mv -f "$STATE.tmp" "$STATE"; } \
+        || err "cannot write $STATE"
+}
+
+
+## Is this one of the applications the image ships? Exact string equality
+## against the list -- no globbing, no prefix matching, no case folding.
+is_shipped() {
+    local candidate="$1" app
+    for app in "${SHIPPED_APPS[@]}"; do
+        [ "$candidate" = "$app" ] && return 0
+    done
+    return 1
+}
+
+
+do_uninstall() {
+    local app="$1"
+
+    if ! flatpak info --system "$app" >/dev/null 2>&1; then
+        warn "$app is not installed; nothing to remove"
+        state done "$app" "Not installed"
+        return
+    fi
+
+    info "removing $app"
+    state uninstalling "$app" "Removing"
+
+    if ! flatpak uninstall --system --noninteractive --assumeyes "$app"; then
+        err "flatpak uninstall failed for $app"
+        state failed "$app" "Could not remove"
+        return
+    fi
+
+    # Prove it rather than trust the exit code, in the spirit of the rest of
+    # this tree: the failure this catches is a removal that half-happened and
+    # would otherwise be stamped as gone.
+    if flatpak info --system "$app" >/dev/null 2>&1; then
+        err "$app is still installed despite a successful exit"
+        state failed "$app" "Could not remove"
+        return
+    fi
+
+    install -d "$STAMP_DIR"
+    rm -f "$STAMP_DIR/installed.$app"
+    date -u +'%Y-%m-%dT%H:%M:%SZ' > "$STAMP_DIR/removed.$app"
+    # The installer's live state file outlives the app it described otherwise,
+    # and marwanos-appscan turns those into pending cards -- so leaving it would
+    # put the removed application straight back on the rail as "Installing".
+    rm -f "$RUN_DIR/install.$app.state"
+
+    info "removed $app"
+    state done "$app" "Removed"
+}
+
+
+do_install() {
+    local app="$1"
+
+    # The marker is what makes an install EXPLICIT: clearing it here is the
+    # person changing their mind, and it is the only thing that does.
+    rm -f "$STAMP_DIR/removed.$app"
+    # The stamp too, or flatpak-install short-circuits on it and reports that
+    # there is nothing to do for an application that is demonstrably gone.
+    rm -f "$STAMP_DIR/installed.$app"
+
+    info "installing $app"
+    state installing "$app" "Starting"
+
+    # Straight to the existing installer rather than to flatpak: it owns the
+    # install lock, the free-space checks, the progress ticker and the 32-bit
+    # extensions, and a second call site for any of that is a second place for
+    # it to drift. It writes its own install.<app>.state, which is what the
+    # rail and the store page already render.
+    if /usr/lib/marwanos/flatpak-install "$app"; then
+        info "install of $app finished"
+        state done "$app" "Installed"
+    else
+        err "install of $app failed (see journalctl -t marwanos-install)"
+        state failed "$app" "Install failed"
+    fi
+}
+
+
+state idle
+
+while :; do
+    # Same rename-then-read as the wifi and update seams: REQ_DIR is
+    # player-owned, so the file could be swapped for a symlink or a FIFO between
+    # any test and any read. rename(2) follows neither and opens nothing.
+    if mv -f "$REQ" "$CONSUMED" 2>/dev/null; then
+        line=""
+        if [ -L "$CONSUMED" ] || [ ! -f "$CONSUMED" ]; then
+            warn "discarding a request that was not a regular file"
+        else
+            IFS= read -r line < "$CONSUMED" 2>/dev/null || true
+        fi
+        rm -f "$CONSUMED"
+
+        verb="${line%%	*}"
+        app="${line#*	}"
+        # A line with no tab leaves verb and app equal, which is a malformed
+        # request rather than a verb with an empty argument.
+        [ "$app" = "$line" ] && app=""
+
+        if [ -n "$verb" ] && ! is_shipped "$app"; then
+            # The id is NOT echoed into the journal. It is attacker-controlled
+            # text at this point, and the one thing worth recording is that
+            # something asked for a name that is not on the list.
+            warn "refusing a request naming an application this image does not ship"
+            state refused "" "Unknown application"
+            verb=""
+        fi
+
+        case "$verb" in
+            uninstall) do_uninstall "$app" ;;
+            install)   do_install "$app" ;;
+            "") ;;
+            *) warn "ignoring a request with an unrecognised verb" ;;
+        esac
+    fi
+
+    sleep "$POLL"
+done

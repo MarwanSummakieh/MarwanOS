@@ -67,7 +67,18 @@ const CARD_SIZE := 200
 const CARD_FOCUSED_SIZE := 340
 
 const CARD_GAP := 26
-const CARD_CORNER_RADIUS := 12
+
+## THE ROUNDING, and it was 12 until someone looked at the appliance on a TV and
+## said the buttons were not rounded. They were -- by 12 px on a 1920-wide design
+## surface, which is a chamfer you can measure and cannot see from a sofa. Every
+## focusable rectangle in the shell reads its corner radius from here (cards,
+## settings rows, store tabs, the app menu's panel), so one number is the whole
+## of how round this product looks, and it is deliberately not per-control.
+##
+## 24 rather than a pill. The rows are SETTINGS_ROW_HEIGHT tall, so half their
+## height would be 44 and would turn a list of rows into a stack of lozenges;
+## 24 is unmistakably round at three metres while a row still reads as a row.
+const CARD_CORNER_RADIUS := 24
 
 ## Inset from a card's edge to its icon, at CARD_SIZE. An app icon sits inside
 ## the card's wash the way a launcher tile's does -- roughly two thirds of the
@@ -127,9 +138,22 @@ const TOPBAR_GLYPH_WIDTH := 4.0
 # Godot control is compositor work this stack does not do. See ADR 0006's
 # third amendment.
 
-## Width of the tab column. Wide enough for a store name at SIZE_BODY with the
-## row's padding, narrow enough that the page keeps most of the safe width.
-const STORE_TAB_WIDTH := 420
+## Side of a store tab, which is square and carries only the store's icon (see
+## store_tab.gd). This was STORE_TAB_WIDTH := 420, sized to hold a store NAME at
+## SIZE_BODY; with the name gone the column is a strip of marks, and the width it
+## no longer needs goes to the page beside it. Comfortably above the interactive
+## floor in this file's header.
+const STORE_TAB_SIZE := 132
+
+## The stand-in glyph inside a tab, for a store whose application is not
+## installed yet. Sized against STORE_TAB_SIZE rather than against the body
+## text: it is the tab's whole content, not a mark beside a word.
+const STORE_TAB_GLYPH_SIZE := 64
+
+## Breathing room between a tab's edge and the real application icon it draws.
+## Larger than the glyph needs because a PNG icon fills its square to the corners
+## while a Phosphor mark carries its own margin.
+const STORE_TAB_ICON_INSET := 22
 
 ## Gap between the tab column and the page pane.
 const STORE_PAGE_GAP := 40
@@ -347,58 +371,27 @@ static func hint(glyph: String, caption_text: String) -> Control:
 
 
 # ---------------------------------------------------------------------------
-# The app overlay (home button, over a running application)
+# The app menu (home button, over a running application)
 #
-# Everything here is drawn OVER live application pixels rather than over the
-# shell's own background, which changes what the colours have to do: they are
-# not sitting on BACKGROUND, they are sitting on whatever the app happens to be
-# rendering. So the frame reads against anything, and the controls carry an
-# opaque fill rather than relying on contrast with what is behind them.
-
-## Half of app_overlay's CIRCLE_SIZE, which is what turns the rounded box into
-## a circle. Kept here with the other numbers rather than computed there, so
-## the two cannot drift without someone noticing.
-const CIRCLE_CORNER_RADIUS := 66
-
-
-## The outline around the live application. draw_center OFF -- every pixel
-## inside this is the running app showing through gamescope's compositing.
-static func overlay_card_frame() -> StyleBoxFlat:
-	var box := StyleBoxFlat.new()
-	box.draw_center = false
-	box.set_border_width_all(FOCUS_RING_WIDTH)
-	box.border_color = TEXT_SECONDARY
-	box.set_corner_radius_all(CARD_CORNER_RADIUS)
-	return box
-
-
-static func circle_box(pressed: bool) -> StyleBoxFlat:
-	var box := StyleBoxFlat.new()
-	box.bg_color = SURFACE_PRESSED if pressed else SURFACE
-	box.set_corner_radius_all(CIRCLE_CORNER_RADIUS)
-	return box
-
-
-static func circle_box_focused() -> StyleBoxFlat:
-	var box := StyleBoxFlat.new()
-	box.bg_color = SURFACE_FOCUS
-	box.set_corner_radius_all(CIRCLE_CORNER_RADIUS)
-	return box
-
-
-static func circle_ring() -> StyleBoxFlat:
-	var box := StyleBoxFlat.new()
-	box.draw_center = false
-	box.set_border_width_all(FOCUS_RING_WIDTH)
-	box.border_color = FOCUS_RING
-	box.set_corner_radius_all(CIRCLE_CORNER_RADIUS)
-	return box
-
+# THERE ARE NO STYLES LEFT IN THIS SECTION, and that is the point of keeping the
+# heading. The menu is drawn over live application pixels rather than over the
+# shell's own background, so it needed its own frame and its own opaque circular
+# controls back when it framed the application and put two circles underneath.
+# It is a centred panel of rows now (see app_overlay.gd for why), and a panel of
+# rows is exactly what card_idle_box and the settings row already draw -- the
+# scrim behind it does the work the opaque fills used to.
+#
+# overlay_card_frame, circle_box, circle_box_focused, circle_ring and
+# CIRCLE_CORNER_RADIUS lived here and are gone with their only caller. The
+# radius in particular was half of app_overlay's CIRCLE_SIZE, kept here so the
+# two could not drift -- there is no CIRCLE_SIZE to drift from any more.
 
 ## The top-bar icon buttons, rounded to a circle. Half of TOPBAR_ICON_SIZE, so
 ## the corner radius meets in the middle of each edge and the square reads as a
-## circle. A separate radius from the overlay's because the two sizes differ --
-## a shared constant would round one of them wrong.
+## circle. These are now the shell's only round controls; when the menu framed
+## the application there was a second, larger radius here and the two were
+## deliberately not shared, because one constant would have rounded one of them
+## wrong.
 const TOPBAR_CIRCLE_RADIUS := TOPBAR_ICON_SIZE / 2
 
 
