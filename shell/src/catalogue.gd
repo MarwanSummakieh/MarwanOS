@@ -44,8 +44,103 @@ const STEAM_STORE := {
 		+ " on its storefront; quitting Steam lands back on this page.",
 	"accent": "#2A3F5A",
 	"exec": ["flatpak", "run", "com.valvesoftware.Steam", "steam://store"],
+	# The desktop-entry id, which is how the tab finds the application's REAL
+	# icon: marwanos-appscan resolves an absolute path for everything installed,
+	# and store_tab.gd matches on this rather than on the "id" above. The two are
+	# deliberately different strings -- "store.steam" is the shell's name for a
+	# tab, and this is what the file on disk is called. Empty or absent means the
+	# tab draws its fallback glyph, which is also what happens until Steam is
+	# actually installed.
+	"app_id": "com.valvesoftware.Steam",
 }
 
 
 static func stores() -> Array:
 	return [STEAM_STORE]
+
+
+## The desktop-entry ids of every store's application.
+##
+## This is how "one thing, one home" is enforced now: marwanos-appscan reports
+## a store's application like any other install -- the stores screen needs
+## that record to answer "is it actually here" and to find its real icon --
+## and the RAIL is what filters these ids out (shell_root._populate), because
+## the rail is the one place deciding what becomes a rail card. The scanner
+## used to make this call by omitting Steam from apps.tsv, which turned the
+## installed list into a lie the stores screen then believed.
+static func store_app_ids() -> Array:
+	var ids: Array = []
+	for store in stores():
+		var app_id := str(store.get("app_id", ""))
+		if not app_id.is_empty():
+			ids.append(app_id)
+	return ids
+
+
+## THE APPLICATIONS THIS IMAGE SHIPS, whether or not they are on the machine.
+##
+## The rail draws what is installed, and that was a complete answer right up
+## until an application could be REMOVED. After that, "not installed" stopped
+## meaning "never heard of it" and started meaning "gone, and gettable back" --
+## with nowhere on the rail to say so. The stores screen offers Steam back
+## because Steam is a store; nothing offered Kodi back, so removing it was a
+## one-way door on a machine with no terminal.
+##
+## So an entry here that is not in the installed list becomes a card in the
+## `available` state: it looks like an application, says it is not installed,
+## and downloads itself when pressed (see tile.gd's _on_pressed).
+##
+## THE IDS MUST MATCH appctl's SHIPPED_APPS. That list is the privilege
+## boundary and this one is only what gets drawn -- a name here that is not
+## there produces a card whose press is refused by root, which is the safe
+## direction for the two to disagree in. Phase 1 deletes both: marwand serves
+## the shipped set and the installed set from one place.
+const AVAILABLE_APPS := [
+	# Steam is listed because the ids here mirror appctl's SHIPPED_APPS, but
+	# its card never reaches the rail in any state: _populate filters store
+	# apps (see store_app_ids), and the stores screen is what offers it back.
+	{
+		"id": "com.valvesoftware.Steam",
+		"title": "Steam",
+		"accent": "#2A3F5A",
+	},
+	{
+		"id": "app.zen_browser.zen",
+		"title": "Zen Browser",
+		"accent": "#3B2F5A",
+	},
+	{
+		"id": "tv.kodi.Kodi",
+		"title": "Kodi",
+		"accent": "#1F4E63",
+	},
+]
+
+## What an available card says under its title. One sentence, and it is the
+## instruction rather than the state: "Not installed" alone tells someone what
+## is wrong without telling them that the thing they are looking at fixes it.
+const AVAILABLE_SUBTITLE := "Not installed -- press A to download it"
+
+
+## Rail entries for every shipped application that the installed seam does not
+## already know about, in whatever state.
+##
+## Matched against EVERY installed record rather than only the installed ones:
+## an application part-way through its first download is already on the rail as
+## a pending card with a live progress line, and a second card next to it
+## offering to start the same download would be both wrong and pressable.
+static func available(known_ids: Array) -> Array:
+	var result: Array = []
+	for app in AVAILABLE_APPS:
+		if known_ids.has(str(app["id"])):
+			continue
+		result.append({
+			"id": str(app["id"]),
+			"title": str(app["title"]),
+			"subtitle": AVAILABLE_SUBTITLE,
+			"icon": "",
+			"exec": [],
+			"state": "available",
+			"accent": str(app["accent"]),
+		})
+	return result

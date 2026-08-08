@@ -656,6 +656,7 @@ RUN set -euxo pipefail; \
     chmod 0644 /usr/lib/systemd/system/marwanos-appscan.service; \
     chmod 0644 /usr/lib/systemd/system/marwanos-wifi.service; \
     chmod 0644 /usr/lib/systemd/system/marwanos-update.service; \
+    chmod 0644 /usr/lib/systemd/system/marwanos-appctl.service; \
     chmod 0644 "/usr/lib/systemd/system/marwanos-flatpak-install@.service"; \
     chmod 0755 /usr/lib/marwanos/session/marwanos-session; \
     chmod 0755 /usr/lib/marwanos/display/panel-policy; \
@@ -664,6 +665,7 @@ RUN set -euxo pipefail; \
     chmod 0755 /usr/lib/marwanos/appscan; \
     chmod 0755 /usr/lib/marwanos/wifi; \
     chmod 0755 /usr/lib/marwanos/update; \
+    chmod 0755 /usr/lib/marwanos/appctl; \
     systemd-sysusers /usr/lib/sysusers.d/50-marwanos.conf; \
     for g in video render input; do \
         gid="$(getent group "$g" | cut -d: -f3)"; \
@@ -686,6 +688,17 @@ RUN set -euxo pipefail; \
         "/usr/lib/systemd/system/multi-user.target.wants/marwanos-flatpak-install@com.valvesoftware.Steam.service"; \
     ln -sf ../marwanos-flatpak-install@.service \
         "/usr/lib/systemd/system/multi-user.target.wants/marwanos-flatpak-install@app.zen_browser.zen.service"; \
+    : "KODI IS THE FILE MANAGER, and it is here rather than in a screen the"; \
+    : "shell would have had to grow. The icon table in icons.gd has carried a"; \
+    : "'file explorer' vocabulary -- folder, drive, usb, copy, cut, rename,"; \
+    : "eject -- since the icon font landed, for a screen that was never"; \
+    : "designed. Kodi is that screen, already built: a 10-foot UI that is"; \
+    : "driven by a controller natively, with a file manager that copies,"; \
+    : "moves, renames and deletes, and USB media playback on top. The"; \
+    : "alternative on the table was a desktop file manager plus a uinput"; \
+    : "pad-to-mouse emulator, which is a mouse UI at three metres."; \
+    ln -sf ../marwanos-flatpak-install@.service \
+        "/usr/lib/systemd/system/multi-user.target.wants/marwanos-flatpak-install@tv.kodi.Kodi.service"; \
     ln -sf ../marwanos-netcheck.service \
         /usr/lib/systemd/system/multi-user.target.wants/marwanos-netcheck.service; \
     ln -sf ../marwanos-appscan.service \
@@ -694,6 +707,8 @@ RUN set -euxo pipefail; \
         /usr/lib/systemd/system/multi-user.target.wants/marwanos-wifi.service; \
     ln -sf ../marwanos-update.service \
         /usr/lib/systemd/system/multi-user.target.wants/marwanos-update.service; \
+    ln -sf ../marwanos-appctl.service \
+        /usr/lib/systemd/system/multi-user.target.wants/marwanos-appctl.service; \
     systemctl --no-reload mask getty@tty1.service autovt@tty1.service \
                                serial-getty@ttyS0.service; \
     ln -sf /dev/null /usr/lib/systemd/user/xdg-desktop-portal-gtk.service; \
@@ -719,13 +734,16 @@ RUN set -euxo pipefail; \
     test -x /usr/lib/marwanos/appscan; \
     test -x /usr/lib/marwanos/wifi; \
     test -x /usr/lib/marwanos/update; \
+    test -x /usr/lib/marwanos/appctl; \
     test -L /usr/lib/systemd/system/multi-user.target.wants/marwanos-panel.service; \
     test -L "/usr/lib/systemd/system/multi-user.target.wants/marwanos-flatpak-install@com.valvesoftware.Steam.service"; \
     test -L "/usr/lib/systemd/system/multi-user.target.wants/marwanos-flatpak-install@app.zen_browser.zen.service"; \
+    test -L "/usr/lib/systemd/system/multi-user.target.wants/marwanos-flatpak-install@tv.kodi.Kodi.service"; \
     test -L /usr/lib/systemd/system/multi-user.target.wants/marwanos-netcheck.service; \
     test -L /usr/lib/systemd/system/multi-user.target.wants/marwanos-appscan.service; \
     test -L /usr/lib/systemd/system/multi-user.target.wants/marwanos-wifi.service; \
     test -L /usr/lib/systemd/system/multi-user.target.wants/marwanos-update.service; \
+    test -L /usr/lib/systemd/system/multi-user.target.wants/marwanos-appctl.service; \
     : "bootc is what an update IS on this machine -- a base image that stopped"; \
     : "shipping it would leave the Updates screen permanently unable to answer."; \
     command -v bootc; \

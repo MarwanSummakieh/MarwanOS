@@ -27,6 +27,7 @@ const Catalogue = preload("res://src/catalogue.gd")
 const Tile = preload("res://src/tile.gd")
 const IconButton = preload("res://src/icon_button.gd")
 const AppOverlay = preload("res://src/app_overlay.gd")
+const CardMenu = preload("res://src/card_menu.gd")
 const Glyphs = preload("res://src/glyphs.gd")
 const ErrorScreen = preload("res://src/error_screen.gd")
 
@@ -37,8 +38,15 @@ var _clock: Label = null
 var _rail_viewport: Control = null
 var _rail: HBoxContainer = null
 var _status: Label = null
+var _app_alert: Label = null
+var _app_alert_timer: Timer = null
 var _open_hint: Control = null
+var _options_hint: Control = null
 var _overlay: AppOverlay = null
+var _card_menu: CardMenu = null
+## The rail entry the cursor is on, kept because the card menu is opened from
+## input handling rather than from the card itself.
+var _selected_entry: Dictionary = {}
 var _wifi: Glyphs = null
 var _store_button: IconButton = null
 var _gear_button: IconButton = null
@@ -80,6 +88,7 @@ func _ready() -> void:
 	PlayerOne.player_one_absent.connect(_on_player_one_absent)
 	SystemStatus.network_changed.connect(_on_network_changed)
 	Installed.apps_changed.connect(_on_apps_changed)
+	Apps.state_changed.connect(_on_apps_state_changed)
 	_refresh_status()
 	# SystemStatus polled once in its own _ready, which ran before this one, so
 	# this is the current answer rather than a default -- the first frame the
@@ -215,6 +224,11 @@ func _inset(control: Control) -> Control:
 func _build_topbar() -> Control:
 	var bar := HBoxContainer.new()
 	bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	# Explicit, because the bar's right-hand end is a run of independent items --
+	# the app alert, the controller line, three icons and the clock -- and at the
+	# container default the alert ran straight into "Reconnect the controller"
+	# with no gap, reading as one impossible sentence. Caught on the Xvfb run.
+	bar.add_theme_constant_override("separation", TvTheme.HINT_GAP)
 
 	var wordmark := Label.new()
 	wordmark.text = "MarwanOS"
@@ -232,6 +246,23 @@ func _build_topbar() -> Control:
 	# has been unplugged should not also take the home screen away -- the person
 	# is reaching for a cable, and the UI they come back to should be the one they
 	# left, with the selection where it was.
+	# THE APP ALERT, and it is a separate label from the controller line rather
+	# than a second thing that line can say. An install failing and a pad
+	# falling off the air are independent -- both can be true at once -- and a
+	# single label would have to pick one and silently drop the other.
+	#
+	# Empty and invisible almost always. It exists because an uninstall is
+	# started from the rail and finishes somewhere the person is not looking:
+	# without this the only report of a failure was the journal, on a machine
+	# with no terminal to read it from.
+	_app_alert = Label.new()
+	_app_alert.add_theme_font_size_override("font_size", TvTheme.SIZE_TOPBAR)
+	_app_alert.add_theme_color_override("font_color", TvTheme.TEXT_ALERT)
+	_app_alert.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	_app_alert.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_app_alert.visible = false
+	bar.add_child(_app_alert)
+
 	_status = Label.new()
 	_status.add_theme_font_size_override("font_size", TvTheme.SIZE_TOPBAR)
 	_status.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
@@ -366,18 +397,49 @@ func _build_hints() -> Control:
 	# how a person learns that, and the top bar's icons still take an A.
 	_open_hint = TvTheme.hint("A", "Open")
 	hints.add_child(_open_hint)
+	# Y is the only route to removing an application on a machine with no
+	# terminal, so it is advertised rather than left to be discovered. Hidden
+	# with the A hint when the rail is empty -- there is nothing to have options
+	# about -- which is why it is a member too.
+	_options_hint = TvTheme.hint("Y", "Options")
+	hints.add_child(_options_hint)
 	hints.add_child(TvTheme.hint("B", "Back"))
 	return hints
 
 
-## Builds the rail from what is actually installed.
+## Builds the rail from what is installed, plus what this image ships and is
+## not.
 ##
 ## No shell furniture and no placeholders: the settings card became the top
-## bar's gear, Steam moved into the stores screen, and the twelve placeholder
-## entries are deleted (ADR 0006, third and fourth amendments). What is left is
-## the machine's own application list, from Installed.
+## bar's gear and the twelve placeholder entries are deleted (ADR 0006, third
+## and fourth amendments). The `available` cards appended here are NOT a return
+## of those -- a placeholder named an application that did not exist anywhere,
+## and these name applications the image ships and can fetch on a button press.
+## They exist because removal exists: without them, uninstalling Kodi was a
+## one-way door, since the stores screen only ever offered stores back.
+##
+## Installed first, available after. The rail is a library, and something you
+## own outranks something you could have.
 func _populate() -> void:
+	# One thing, one home (ADR 0006): a store's application lives on the
+	# stores screen and must not also be a rail card -- installed, pending or
+	# available, which is why the filter sits below where all three kinds meet.
+	# Filtered HERE rather than omitted by the scanner: apps.tsv is the truth
+	# about the machine, and the stores screen answers "is Steam actually
+	# here" and finds its real icon from that same list, which it cannot do if
+	# the scanner pretends Steam does not exist.
+	var store_ids: Array = Catalogue.store_app_ids()
+
+	var known_ids: Array = []
 	for entry in Installed.apps:
+		known_ids.append(str(entry.get("id", "")))
+
+	var entries: Array = Installed.apps.duplicate()
+	entries.append_array(Catalogue.available(known_ids))
+
+	for entry in entries:
+		if store_ids.has(str(entry.get("id", ""))):
+			continue
 		var tile := Tile.new()
 		# duplicate() so a tile can never write back into the list the seam
 		# hands out -- Installed rebuilds that list on every rescan, and a tile
@@ -450,6 +512,16 @@ func _wire_focus_neighbours() -> void:
 # ---------------------------------------------------------------------------
 
 func _on_card_selected(entry: Dictionary) -> void:
+	# Remembered for the card menu, which is opened from _unhandled_input and
+	# therefore has no card to ask.
+	_selected_entry = entry
+	# Y IS ONLY OFFERED WHERE IT DOES SOMETHING. The menu's one entry is
+	# Uninstall, and an application that is not on the machine cannot be
+	# removed -- so on an available card the hint would advertise a button
+	# whose press is correctly ignored, which is the exact shape of "broken
+	# input" on a machine with no other feedback.
+	if _options_hint != null:
+		_options_hint.visible = str(entry.get("state", "")) == "installed"
 	_title.text = str(entry.get("title", ""))
 	_subtitle.text = str(entry.get("subtitle", ""))
 	_fade_hero_to(TvTheme.accent(str(entry.get("accent", ""))))
@@ -539,6 +611,13 @@ func _ensure_focus() -> void:
 ## one. A fresh stick has nothing installed, which is a correct and expected
 ## condition -- so the title block says what is true and points at the way out,
 ## and the hint row stops promising an A press that has no card to land on.
+## NEARLY UNREACHABLE NOW, and deliberately kept. Since _populate appends a card
+## for every shipped application that is not installed, a fresh stick shows
+## three "press A to download it" cards rather than this -- which is a better
+## first screen than an empty rail pointing at a store that only has Steam in
+## it. The branch survives for the one case that still produces nothing:
+## Catalogue.AVAILABLE_APPS being emptied, which Phase 1 will do when marwand
+## takes over the shipped set and may briefly serve nothing.
 func _refresh_empty_state() -> void:
 	var empty := _tiles.is_empty()
 
@@ -549,6 +628,8 @@ func _refresh_empty_state() -> void:
 
 	if _open_hint != null:
 		_open_hint.visible = not empty
+	if _options_hint != null:
+		_options_hint.visible = not empty
 
 
 # ---------------------------------------------------------------------------
@@ -636,6 +717,82 @@ func _on_player_one_present(_device: int, _pad_name: String) -> void:
 
 func _on_player_one_absent() -> void:
 	_refresh_status()
+
+
+## How long a failure stays in the top bar. It has to outlast someone looking
+## away -- a removal is started and then watched for on the rail -- and it must
+## not become permanent furniture, because appctl's state file keeps saying
+## "failed" until the next request and a line that never leaves stops being
+## read. Cleared early by any state change, which is the normal way it goes.
+const APP_ALERT_SECONDS := 20.0
+
+
+## An install or removal reported something worth interrupting for.
+##
+## ONLY FAILURES SURFACE HERE. Progress does not: the rail already shows a
+## pending card for an arriving application and simply drops the card for a
+## removed one, so a top-bar line narrating the happy path would be a third
+## account of something already on screen twice.
+func _on_apps_state_changed(state: String, app: String, detail: String) -> void:
+	if _app_alert == null:
+		return
+
+	if state != "failed" and state != "refused":
+		_app_alert.visible = false
+		_app_alert.text = ""
+		if _app_alert_timer != null:
+			_app_alert_timer.stop()
+		return
+
+	# The application's TITLE, because "Steam" is what the person pressed a
+	# button about and "com.valvesoftware.Steam" is not a name to put on a
+	# television.
+	#
+	# TWO SOURCES, AND THE SECOND IS THE ONE THAT MATTERS. The installed seam
+	# knows the title of everything on the machine -- but the two failures worth
+	# reporting are an install that did not happen and a removal of something
+	# now gone, and in both the application is absent from that list precisely
+	# when its name is needed. So the catalogue answers second. The raw id is
+	# the last resort: ugly, and true.
+	var name := _title_for_app(app)
+
+	var said := detail if not detail.is_empty() else "Something went wrong"
+	_app_alert.text = "%s: %s" % [name, said] if not name.is_empty() else said
+	_app_alert.visible = true
+
+	if _app_alert_timer == null:
+		_app_alert_timer = Timer.new()
+		_app_alert_timer.one_shot = true
+		_app_alert_timer.timeout.connect(_on_app_alert_expired)
+		add_child(_app_alert_timer)
+	_app_alert_timer.start(APP_ALERT_SECONDS)
+
+
+## A human name for an application id -- see _on_apps_state_changed for why the
+## installed seam alone is not enough.
+func _title_for_app(app: String) -> String:
+	if app.is_empty():
+		return ""
+	for entry in Installed.apps:
+		if str(entry.get("id", "")) == app:
+			return str(entry.get("title", app))
+	for store in Catalogue.stores():
+		if str(store.get("app_id", "")) == app:
+			return str(store.get("title", app))
+	# The shipped list is the one that actually answers for a failed install:
+	# the stores list holds only Steam, so without this an install of Kodi that
+	# failed reported itself as "tv.kodi.Kodi", which is what the Xvfb run
+	# showed on the TV.
+	for shipped in Catalogue.AVAILABLE_APPS:
+		if str(shipped.get("id", "")) == app:
+			return str(shipped.get("title", app))
+	return app
+
+
+func _on_app_alert_expired() -> void:
+	if _app_alert != null:
+		_app_alert.visible = false
+		_app_alert.text = ""
 
 
 func _refresh_status() -> void:
@@ -778,7 +935,65 @@ func _close_overlay() -> void:
 	Kiosk.set_overlay(false)
 
 
+## The options menu for the selected card. Guarded rather than always available,
+## and every guard is a state in which the menu would be about the wrong thing.
+func _open_card_menu() -> void:
+	if _card_menu != null:
+		# A second press while it is up is a bounced button, not a request for
+		# two -- the same rule the other surfaces enforce.
+		return
+	if Settings.is_open() or Stores.is_open() or Power.is_open() or Launcher.is_busy():
+		# The rail is not what is on screen, so the selected card is not what the
+		# person is looking at.
+		return
+	if _selected_entry.is_empty():
+		ShellLog.info("Y at the rail with nothing selected; nothing to offer")
+		return
+	if str(_selected_entry.get("state", "")) != "installed":
+		# A card for an application that is still downloading has nothing to
+		# uninstall, and offering it would race the installer for the same
+		# flatpak. The installer's own states say what is happening instead.
+		ShellLog.info("Y on a card that is not installed yet; nothing to offer")
+		return
+	if Apps.is_busy():
+		ShellLog.info("Y while another install or removal is in flight; ignoring")
+		return
+
+	_card_menu = CardMenu.new()
+	_card_menu.entry = _selected_entry
+	_card_menu.closed.connect(_on_card_menu_closed, CONNECT_ONE_SHOT)
+	# Focus is saved and restored the way the other surfaces do it: the rail is
+	# still in the tree underneath, so without this the card loses its ring when
+	# the menu closes.
+	_hand_screen_over()
+	get_tree().root.add_child(_card_menu)
+
+
+func _on_card_menu_closed() -> void:
+	_close_card_menu.call_deferred()
+
+
+func _close_card_menu() -> void:
+	if _card_menu == null:
+		return
+	var menu := _card_menu
+	_card_menu = null
+	menu.get_parent().remove_child(menu)
+	menu.queue_free()
+	_take_screen_back()
+
+
 func _unhandled_input(event: InputEvent) -> void:
+	# Y OPENS THE CARD'S OPTIONS. It is checked before B because it is the only
+	# way to remove an application on a machine with no terminal, and it is on Y
+	# rather than on a long-press of A because a hold that means something
+	# different from a press is exactly the interaction a person on a sofa
+	# discovers by accident and cannot undo.
+	if InputMap.has_action("ui_shell_y") and event.is_action_pressed("ui_shell_y"):
+		get_viewport().set_input_as_handled()
+		_open_card_menu()
+		return
+
 	if not event.is_action_pressed("ui_cancel"):
 		return
 	get_viewport().set_input_as_handled()

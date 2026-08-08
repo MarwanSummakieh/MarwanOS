@@ -144,7 +144,7 @@ func _build_icon() -> void:
 	if path.is_empty():
 		return
 
-	var image := Image.load_from_file(path)
+	var image := _load_icon_image(path)
 	if image == null:
 		ShellLog.warn("could not load icon %s for %s" % [path, str(entry.get("id", ""))])
 		return
@@ -164,6 +164,57 @@ func _build_icon() -> void:
 	icon.offset_bottom = -TvTheme.CARD_ICON_INSET
 	icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(icon)
+
+
+## What a rasterised SVG is rendered at, in pixels on the long edge.
+##
+## Comfortably above CARD_FOCUSED_SIZE rather than equal to it: the card grows
+## when focused and the texture is not re-rendered, so rasterising at exactly
+## the resting size would leave every selected card soft -- which is the state
+## the card spends its time in when someone is actually looking at it.
+const ICON_RASTER_PX := 512
+
+
+## An Image for an icon path, PNG or SVG.
+##
+## SVG IS WHY ZEN'S CARD WAS A COLOURED RECTANGLE. Its flatpak exports exactly
+## one icon and it is scalable, so appscan -- PNG-only until now -- found
+## nothing and the card fell back to its accent wash. That is not a rare shape:
+## a lot of modern applications ship only an SVG.
+##
+## RENDERED TWICE, ON PURPOSE. load_svg_from_buffer's scale multiplies the
+## drawing's intrinsic size, and an app icon's intrinsic size is anywhere from
+## 16 to 512 depending on who drew it -- so a fixed scale would rasterise some
+## icons at 64 px and others at 4096. The first pass measures, the second
+## renders at a known size. Both are cheap and this runs once per card.
+##
+## A build without the SVG module returns an error rather than crashing, and
+## the caller falls back to the wash -- which is the behaviour appscan's old
+## comment was protecting, kept, but decided here where it can be detected
+## instead of assumed.
+func _load_icon_image(path: String) -> Image:
+	if path.get_extension().to_lower() != "svg":
+		return Image.load_from_file(path)
+
+	var bytes := FileAccess.get_file_as_bytes(path)
+	if bytes.is_empty():
+		return null
+
+	var probe := Image.new()
+	if probe.load_svg_from_buffer(bytes, 1.0) != OK:
+		return null
+	var longest := maxi(probe.get_width(), probe.get_height())
+	if longest <= 0:
+		return null
+	if longest >= ICON_RASTER_PX:
+		return probe
+
+	var full := Image.new()
+	if full.load_svg_from_buffer(bytes, float(ICON_RASTER_PX) / float(longest)) != OK:
+		# The measured pass already succeeded, so something small is better than
+		# a card with no logo on it.
+		return probe
+	return full
 
 
 ## Grows or shrinks the card in the layout. See the class header for why this is
@@ -206,9 +257,26 @@ func _on_pressed() -> void:
 	# It logs rather than doing nothing silently, for settings_row.gd's reason:
 	# on this machine a press that vanishes is indistinguishable from broken
 	# input, and the card's own subtitle already says why it will not open.
-	if str(entry.get("state", "installed")) != "installed":
+	var state := str(entry.get("state", "installed"))
+
+	# AN AVAILABLE CARD DOWNLOADS ITSELF. These are the applications the image
+	# ships that are not on the machine -- never installed, or removed on
+	# purpose -- and before they existed the only way back from an uninstall was
+	# the stores screen, which covers stores and therefore never covered Kodi.
+	# The card IS the install button, which is what a person expects from a
+	# thing that looks like an app and says it is not installed.
+	if state == "available":
+		if Apps.is_busy():
+			ShellLog.info("install requested while another request is in flight; ignoring")
+			return
+		Apps.request_install(str(entry.get("id", "")))
+		return
+
+	# An app that is still downloading has no exec yet, and handing an entry
+	# with an empty exec to the launch seam would take the placeholder branch.
+	if state != "installed":
 		ShellLog.info("\"%s\" is not installed yet (%s); not launching"
-			% [str(entry.get("title", "")), str(entry.get("state", ""))])
+			% [str(entry.get("title", "")), state])
 		return
 
 	# The only call into the launch seam anywhere in the project.

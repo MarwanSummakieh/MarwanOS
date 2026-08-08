@@ -26,9 +26,17 @@
 # would spawn a process with nowhere to draw: a card that does nothing when
 # pressed, which is the exact failure this project keeps designing against.
 #
-# STORE APPS ARE EXCLUDED. Steam has its own page under the stores screen, so
-# listing it on the rail as well would give one thing two homes. Phase 1 makes
-# this a property of the app record rather than a list of ids here.
+# STORE APPS ARE IN THE LISTING, AND THE SHELL KEEPS THEM OFF THE RAIL. Steam
+# has its own page under the stores screen, and putting it on the rail as well
+# would give one thing two homes -- but that is a PLACEMENT decision, and this
+# file used to make it by omission (an EXCLUDE_IDS list), which turned the TSV
+# from "what is installed" into "what the rail shows". The stores screen reads
+# this same file to answer "is Steam here yet", so the omission meant Steam
+# could never BE here: its page offered to install it forever, its tab never
+# found the real icon, and the rail offered it as a download it already had.
+# Now every installed app is emitted and shell_root._populate filters store
+# apps off the rail using the catalogue's own store list -- the system
+# answers, the shell decides placement. Phase 1 keeps the same split.
 #
 set -uo pipefail
 
@@ -62,13 +70,12 @@ ICON_ROOTS=(
     /usr/share/icons/hicolor
 )
 
-# Largest first: the cards are 200-340 px on a 1080p design surface, so a
-# 256 px icon is the smallest that is not visibly soft when a card grows.
-ICON_SIZES=(512x512 256x256 128x128 96x96 64x64 48x48)
-
-# Applications that have another home in the shell and must not also sit on
-# the rail.
-EXCLUDE_IDS=(com.valvesoftware.Steam)
+# The sizes searched, split into the two the cards can use directly and the
+# ones that lose to a scalable icon. See icon_path for the ordering argument.
+# Largest first within each group: the cards are 200-340 px on a 1080p design
+# surface, so a 256 px icon is the smallest that is not visibly soft.
+ICON_SIZES_LARGE=(512x512 256x256)
+ICON_SIZES_SMALL=(128x128 96x96 64x64 48x48)
 
 info() { printf '<6>%s: %s\n' "$TAG" "$*"; }
 err()  { printf '<3>%s: %s\n' "$TAG" "$*" >&2; }
@@ -100,12 +107,24 @@ desktop_get() {
 }
 
 
-## Absolute path to a PNG for an icon name, or nothing.
+## Absolute path to an icon file for an icon name, or nothing.
 ##
-## PNG only, deliberately. Godot loads PNG at runtime with certainty; SVG
-## support depends on module availability and would turn a missing icon into a
-## missing card. An app whose only icon is scalable falls back to the flat
-## accent wash, which is what a card with no icon has always drawn.
+## SVG IS ACCEPTED NOW, AND IT HAD TO BE. This was PNG-only on the reasoning
+## that Godot loads PNG with certainty while SVG support depends on module
+## availability -- so an application whose only icon is scalable fell back to
+## the flat accent wash. That was not a rare edge: Zen ships exactly one icon
+## and it is an SVG, so its card on the TV was a coloured rectangle with no
+## logo on it, which is what the rail looked like to the person using it.
+##
+## The shell rasterises SVG itself (see tile.gd) and falls back to the wash if
+## its build cannot, so the failure this comment used to fear is still handled
+## -- it is just handled at the end that can actually tell, rather than by
+## refusing to name the file here.
+##
+## ORDER IS LARGE PNG, THEN SVG, THEN SMALL PNG, and that middle step is the
+## point. A 48 px PNG scaled up into a 340 px focused card is visibly soft; the
+## same icon as SVG is rasterised at whatever size is asked for. So a big PNG
+## still wins -- it needs no rendering -- but scalable beats a small bitmap.
 icon_path() {
     local name="$1" root size candidate
 
@@ -115,7 +134,7 @@ icon_path() {
     case "$name" in
         /*)
             case "$name" in
-                *.png) [ -f "$name" ] && printf '%s' "$name" ;;
+                *.png|*.svg) [ -f "$name" ] && printf '%s' "$name" ;;
             esac
             return 0
             ;;
@@ -123,13 +142,27 @@ icon_path() {
 
     for root in "${ICON_ROOTS[@]}"; do
         [ -d "$root" ] || continue
-        for size in "${ICON_SIZES[@]}"; do
+        for size in "${ICON_SIZES_LARGE[@]}"; do
             candidate="$root/$size/apps/$name.png"
             [ -f "$candidate" ] && { printf '%s' "$candidate"; return 0; }
         done
     done
 
-    for candidate in "/usr/share/pixmaps/$name.png"; do
+    for root in "${ICON_ROOTS[@]}"; do
+        [ -d "$root" ] || continue
+        candidate="$root/scalable/apps/$name.svg"
+        [ -f "$candidate" ] && { printf '%s' "$candidate"; return 0; }
+    done
+
+    for root in "${ICON_ROOTS[@]}"; do
+        [ -d "$root" ] || continue
+        for size in "${ICON_SIZES_SMALL[@]}"; do
+            candidate="$root/$size/apps/$name.png"
+            [ -f "$candidate" ] && { printf '%s' "$candidate"; return 0; }
+        done
+    done
+
+    for candidate in "/usr/share/pixmaps/$name.png" "/usr/share/pixmaps/$name.svg"; do
         [ -f "$candidate" ] && { printf '%s' "$candidate"; return 0; }
     done
 
@@ -193,7 +226,7 @@ exec_line() {
 ## name containing a tab is not a thing that exists. The shell splits on tabs
 ## and treats a short record as a malformed one rather than guessing.
 scan() {
-    local dir file id name comment icon exec_cmd nodisplay hidden type terminal tryexec excluded
+    local dir file id name comment icon exec_cmd nodisplay hidden type terminal tryexec
 
     for dir in "${APP_DIRS[@]}"; do
         [ -d "$dir" ] || continue
@@ -201,12 +234,6 @@ scan() {
             [ -f "$file" ] || continue
 
             id="$(basename "$file" .desktop)"
-
-            excluded=""
-            for skip in "${EXCLUDE_IDS[@]}"; do
-                [ "$id" = "$skip" ] && { excluded=yes; break; }
-            done
-            [ -n "$excluded" ] && continue
 
             type="$(desktop_get "$file" Type)"
             [ "$type" = "Application" ] || continue
@@ -263,7 +290,7 @@ scan() {
 ## They carry no icon and no exec, because neither exists yet. The shell
 ## renders them as cards that describe themselves and refuse to launch.
 pending() {
-    local file id line state name detail rest skip excluded
+    local file id line state name detail rest
 
     for file in "$STATE_DIR"/install.*.state; do
         [ -f "$file" ] || continue
@@ -271,16 +298,12 @@ pending() {
         id="${file##*/install.}"
         id="${id%.state}"
 
-        # Store apps have their own page and must not ALSO be a rail card. The
-        # installed-scan already excludes them by id; this path did not, so the
+        # Store apps' pending records are emitted like everyone else's: the
         # 2026-08-07 boot put Steam on the rail as a pending card while its
-        # store page narrated the same install. One thing, one home.
-        excluded=""
-        for skip in "${EXCLUDE_IDS[@]}"; do
-            [ "$id" = "$skip" ] && { excluded=yes; break; }
-        done
-        [ -n "$excluded" ] && continue
-
+        # store page narrated the same install, and the fix then was to hide it
+        # here -- but hiding it made this file stop being the truth (see the
+        # header). The rail-side filter in shell_root._populate is what keeps
+        # a pending store app off the rail now, in every state at once.
         IFS= read -r line < "$file" || continue
         # `<state>TAB<name>TAB<detail>`; detail is the live progress text and
         # may be empty.
