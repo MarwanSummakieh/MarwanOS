@@ -57,6 +57,7 @@ POLL=0.5
 SHIPPED_APPS=(
     com.valvesoftware.Steam
     app.zen_browser.zen
+    tv.kodi.Kodi
 )
 
 info() { printf '<6>%s: %s\n' "$TAG" "$*" >&2; }

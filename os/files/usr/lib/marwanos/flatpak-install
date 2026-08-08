@@ -62,6 +62,7 @@ display_name() {
     case "$1" in
         com.valvesoftware.Steam) printf 'Steam' ;;
         app.zen_browser.zen)     printf 'Zen Browser' ;;
+        tv.kodi.Kodi)            printf 'Kodi' ;;
         *)                       printf '%s' "$1" ;;
     esac
 }
