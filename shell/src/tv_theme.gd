@@ -67,7 +67,18 @@ const CARD_SIZE := 200
 const CARD_FOCUSED_SIZE := 340
 
 const CARD_GAP := 26
-const CARD_CORNER_RADIUS := 12
+
+## THE ROUNDING, and it was 12 until someone looked at the appliance on a TV and
+## said the buttons were not rounded. They were -- by 12 px on a 1920-wide design
+## surface, which is a chamfer you can measure and cannot see from a sofa. Every
+## focusable rectangle in the shell reads its corner radius from here (cards,
+## settings rows, store tabs, the app menu's panel), so one number is the whole
+## of how round this product looks, and it is deliberately not per-control.
+##
+## 24 rather than a pill. The rows are SETTINGS_ROW_HEIGHT tall, so half their
+## height would be 44 and would turn a list of rows into a stack of lozenges;
+## 24 is unmistakably round at three metres while a row still reads as a row.
+const CARD_CORNER_RADIUS := 24
 
 ## Inset from a card's edge to its icon, at CARD_SIZE. An app icon sits inside
 ## the card's wash the way a launcher tile's does -- roughly two thirds of the

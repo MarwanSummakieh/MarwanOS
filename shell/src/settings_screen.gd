@@ -30,6 +30,7 @@ const WifiScreen = preload("res://src/wifi_screen.gd")
 const UpdateScreen = preload("res://src/update_screen.gd")
 
 var _rows: Array = []
+var _scroll: ScrollContainer = null
 var _controller_row: SettingsRow = null
 var _network_row: SettingsRow = null
 var _connection_row: SettingsRow = null
@@ -76,10 +77,31 @@ func _ready() -> void:
 	heading.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	column.add_child(heading)
 
+	# THE LIST SCROLLS, AND IT HAS TO. Ten rows at SETTINGS_ROW_HEIGHT plus their
+	# gaps are taller than the safe area is once the heading and the hint row
+	# have taken their share, so the last rows used to sit below the bottom edge
+	# -- reachable by the focus chain, which does not care about the viewport,
+	# and invisible while focused. On a machine with no pointer and no scrollbar
+	# to notice, that is a settings screen that silently ends early.
+	#
+	# follow_focus is the property that fixes it: ScrollContainer scrolls to keep
+	# the focused child on screen. The explicit ensure_control_visible on each
+	# row's focus_entered below is not redundant -- follow_focus acts on the
+	# focus change, and the screen GRABS focus on the first row during _ready,
+	# before this container has been laid out and has anything to scroll.
+	_scroll = ScrollContainer.new()
+	_scroll.follow_focus = true
+	_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	column.add_child(_scroll)
+
 	var list := VBoxContainer.new()
 	list.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	list.add_theme_constant_override("separation", TvTheme.SETTINGS_ROW_GAP)
-	column.add_child(list)
+	# Rows span the scroll viewport's width; without this the VBox shrinks to
+	# its children's minimum and the rows stop reaching the right margin.
+	list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_scroll.add_child(list)
 
 	_add_row(list, "System", _system_value())
 	_add_row(list, "Engine", _engine_value())
@@ -118,11 +140,9 @@ func _ready() -> void:
 	list.add_child(_updates_row)
 	_rows.append(_updates_row)
 
-	var spacer := Control.new()
-	spacer.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	spacer.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	column.add_child(spacer)
-
+	# The spacer that used to take the slack here is gone: the scroll container
+	# above is the expanding child now, which is what keeps the hint row pinned
+	# to the bottom of the safe area instead of riding up under a short list.
 	column.add_child(_build_hints())
 
 	_wire_focus_neighbours()
@@ -145,6 +165,16 @@ func _ready() -> void:
 	ShellLog.info("settings screen up with %d rows" % _rows.size())
 
 
+## Keep the focused row on screen. Deferred because the first call arrives from
+## the grab_focus in _ready, before the scroll container has been laid out --
+## asking an unsized viewport to reveal a control scrolls it nowhere, which is
+## exactly the bug this whole seam exists to fix.
+func _on_row_focused(row: Control) -> void:
+	if _scroll == null:
+		return
+	_scroll.ensure_control_visible.call_deferred(row)
+
+
 func _add_row(list: Control, name_text: String, value_text: String) -> SettingsRow:
 	var row := SettingsRow.new()
 	row.setup(name_text, value_text)
@@ -159,6 +189,10 @@ func _wire_focus_neighbours() -> void:
 	var count := _rows.size()
 	for index in count:
 		var row: Control = _rows[index]
+		# Every row, wired in the one place that already walks the whole list --
+		# the rows are built in three different spots and a per-site connect
+		# would be three chances to add a row that scrolls off the bottom.
+		row.focus_entered.connect(_on_row_focused.bind(row))
 		var up := index - 1 if index > 0 else index
 		var down := index + 1 if index + 1 < count else index
 
