@@ -247,18 +247,75 @@ RUN set -euxo pipefail; \
 # i686 userspace (32-bit GL/Vulkan for Proton's 32-bit games) is deliberately
 # deferred to Phase 1: it drags multilib glibc into the image and nothing in
 # Phase 0 runs 32-bit code.
+# THE NVIDIA SET IS INSTALLED WHOLE, AND THE FLOATING REPO IS LOCKED OUT OF IT.
+#
+# This broke on 2026-08-08 and the failure is worth recording, because nothing
+# in this repo changed to cause it. The akmods sidecar is pinned by digest at
+# 610.43.03. `fedora-multimedia` is NOT pinned -- it is a live repo, and it
+# moved to 610.57.04. Two packages were being left to dnf to find:
+#
+#   nvidia-kmod-common      required by nvidia-driver, exact version match
+#   nvidia-driver-cuda-libs provides libcuda.so.1, required by nvidia-driver-libs
+#
+# While the repo happened to carry the same version as the sidecar, dnf resolved
+# both from the repo and everything worked. The moment the repo moved ahead,
+# there was no 610.43.03 to find and the only candidates conflicted with the
+# 610.43.03 packages already on the command line:
+#
+#   nothing provides nvidia-kmod-common = 3:610.43.03
+#   cannot install both nvidia-driver-common-3:610.43.03 (@commandline)
+#                   and nvidia-driver-common-3:610.57.04 (fedora-multimedia)
+#
+# So a pinned digest was never actually pinning the driver: two of its packages
+# were floating, and the pin held only by coincidence. Both fixes below are
+# needed and neither is sufficient alone.
+#
+#   1. Install the complete set from the sidecar, so nothing has to be found.
+#      The sidecar ships a self-consistent 610.43.03 collection; taking a subset
+#      and hoping for the rest is what created the hole.
+#   2. Exclude from fedora-multimedia EXACTLY the packages the sidecar ships,
+#      so a future version skew cannot silently pull a mismatched one back in.
+#
+# THE EXCLUDE LIST IS NAMES, NOT A GLOB, and that is the second thing this
+# fix got wrong before it got right. `nvidia*` also excludes
+# nvidia-driver-selinux, which is version 0.1-2 -- independent of the driver
+# version, absent from the sidecar, and a weak dependency of nvidia-kmod-common
+# under selinux-policy-targeted. Blocking it made the transaction unsolvable
+# for a package that was never part of the conflict. The rule that is actually
+# wanted is "the sidecar is authoritative for what the sidecar ships, and
+# nothing else", which only a name list can express.
+#
+# i686 userspace is still deliberately absent (Phase 1) -- only x86_64 and the
+# one noarch are installed, so the sidecar's .i686 files stay unused.
 RUN --mount=type=cache,dst=/var/cache/libdnf5,sharing=locked \
     set -euxo pipefail; \
     dnf -y install \
+        --setopt=fedora-multimedia.excludepkgs='kmod-nvidia,libnvidia-fbc,nvidia-driver,nvidia-driver-common,nvidia-driver-cuda,nvidia-driver-cuda-libs,nvidia-driver-libs,nvidia-kmod-common,nvidia-libXNVCtrl,nvidia-modprobe,nvidia-persistenced,nvidia-settings,nvidia-xconfig,xorg-x11-nvidia' \
         /tmp/rpms/ublue-os/ublue-os-nvidia*.rpm \
         /tmp/rpms/kmods/kmod-nvidia*.rpm \
+        /tmp/rpms/nvidia/nvidia-kmod-common-[0-9]*.noarch.rpm \
+        /tmp/rpms/nvidia/nvidia-modprobe-[0-9]*.x86_64.rpm \
         /tmp/rpms/nvidia/nvidia-driver-[0-9]*.x86_64.rpm \
         /tmp/rpms/nvidia/nvidia-driver-common-[0-9]*.x86_64.rpm \
-        /tmp/rpms/nvidia/nvidia-driver-libs-[0-9]*.x86_64.rpm; \
+        /tmp/rpms/nvidia/nvidia-driver-libs-[0-9]*.x86_64.rpm \
+        /tmp/rpms/nvidia/nvidia-driver-cuda-libs-[0-9]*.x86_64.rpm; \
     rm -rf /tmp/rpms; \
     dnf clean all; \
     rpm -q nvidia-driver-libs >/dev/null; \
-    ls /usr/share/vulkan/icd.d/nvidia_icd*.json >/dev/null
+    ls /usr/share/vulkan/icd.d/nvidia_icd*.json >/dev/null; \
+    : "The DRIVER packages must all be one version -- a mixed set is what this"; \
+    : "block exists to prevent, and it would otherwise surface only as a kernel"; \
+    : "module that loads beside a userspace that does not match it."; \
+    : ""; \
+    : "Named explicitly rather than globbed as nvidia*, because"; \
+    : "nvidia-driver-selinux is version 0.1 and always will be: it is policy,"; \
+    : "not driver, and it is correct for it to differ. Globbing counted it as a"; \
+    : "second version and failed a build whose install was perfect."; \
+    test "$(rpm -q --qf '%{VERSION}\n' \
+        nvidia-driver nvidia-driver-common nvidia-driver-libs \
+        nvidia-driver-cuda-libs nvidia-kmod-common nvidia-modprobe \
+        | sort -u | wc -l)" = 1; \
+    ldconfig -p | grep -q 'libcuda\.so\.1'
 
 # M1's packages. Every one of these is in Fedora 43 proper -- checked against
 # packages.fedoraproject.org before this line existed -- so no COPR is involved,
