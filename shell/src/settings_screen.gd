@@ -33,6 +33,7 @@ var _rows: Array = []
 var _controller_row: SettingsRow = null
 var _network_row: SettingsRow = null
 var _connection_row: SettingsRow = null
+var _address_row: SettingsRow = null
 ## Typed as the SUBCLASS, not as SettingsRow: `activated` is declared on
 ## ActionRow, and GDScript resolves signal access against the static type --
 ## a SettingsRow-typed variable would fail to parse on `.activated.connect`.
@@ -93,6 +94,11 @@ func _ready() -> void:
 	# of pretending.
 	_network_row = _add_row(list, "Network", _network_value())
 	_connection_row = _add_row(list, "Connection", _connection_value())
+	# The one row that exists because of a specific afternoon: the bench came
+	# up, joined nothing, and there was no way to ask it where it was -- so
+	# finding it meant sweeping a /24 from another machine. A box with no
+	# terminal has to be able to say its own address.
+	_address_row = _add_row(list, "Address", _address_value())
 	# THE ONE ROW THAT DOES SOMETHING. Every other row on this screen answers a
 	# question; this one opens the Wi-Fi screen, because an appliance that
 	# cannot join a network cannot be fixed from the couch at all. See ADR
@@ -227,8 +233,22 @@ func _network_value() -> String:
 ## netcheck's one-line link description, made readable: "wifi HomeNet" becomes
 ## "Wi-Fi -- HomeNet". The raw first word decides the family; everything after
 ## it is the connection's name and passes through untouched.
+## The address netcheck reports for whichever device carries the link, or a
+## plain statement that there is none -- which on a fresh install is the true
+## answer and the one that tells someone to go and join a network.
+func _address_value() -> String:
+	var info := SystemStatus.network_info
+	if not info.contains("\t"):
+		return "Not connected"
+	var address := info.substr(info.find("\t") + 1).strip_edges()
+	return address if not address.is_empty() else "No address"
+
+
 func _connection_value() -> String:
 	var info := SystemStatus.network_info
+	# The address rides after a tab; the connection name is everything before.
+	if info.contains("\t"):
+		info = info.get_slice("\t", 0)
 	if info.is_empty():
 		return "Unknown"
 	var kind := info.get_slice(" ", 0)
@@ -346,6 +366,8 @@ func _refresh_network_rows() -> void:
 		_network_row.set_value(_network_value())
 	if _connection_row != null:
 		_connection_row.set_value(_connection_value())
+	if _address_row != null:
+		_address_row.set_value(_address_value())
 	if _wifi_row != null:
 		_wifi_row.set_value(_wifi_value())
 

@@ -51,20 +51,41 @@ install -d "$STATE_DIR" || err "cannot create $STATE_DIR -- the indicator will s
 # "none" when nobody claims a link at all. The vocabulary is open on purpose
 # and the shell passes unknown words through -- same contract as the steam
 # state file.
+## THE ADDRESS IS PART OF THE ANSWER, and leaving it out cost a LAN scan. The
+## bench installed fine, joined nothing, and there was no way to ask it where
+## it was -- the shell knew it was online and could not say at what address, so
+## finding it meant sweeping a /24 from another machine. On a box with no
+## terminal, "what is my IP" is exactly the question the settings page exists
+## to answer.
+##
+## Written as a third TAB-separated field rather than appended to the name,
+## because a connection name may contain spaces and the reader splits the
+## first two fields on the first space -- a third space-separated token would
+## be indistinguishable from a longer name.
+current_address() {
+    local dev="$1" addr
+    addr="$(ip -4 -brief address show dev "$dev" 2>/dev/null \
+        | tr -s ' ' | cut -d' ' -f3 | cut -d/ -f1)"
+    printf '%s' "$addr"
+}
+
+
 link_info() {
     if command -v nmcli >/dev/null 2>&1; then
         local line
-        line="$(nmcli -t -f TYPE,STATE,CONNECTION device status 2>/dev/null \
-            | grep -v '^loopback:' | grep ':connected' | head -n 1)"
+        line="$(nmcli -t -f DEVICE,TYPE,STATE,CONNECTION device status 2>/dev/null \
+            | grep -v ':loopback:' | grep ':connected:' | head -n 1)"
         if [ -n "$line" ]; then
-            local type="${line%%:*}"
+            local device="${line%%:*}"
             local rest="${line#*:}"
+            local type="${rest%%:*}"
+            rest="${rest#*:}"
             local name="${rest#*:}"
             # -t escapes colons in values as `\:`, so a network genuinely named
             # "Guest:5G" arrives as "Guest\:5G" and would reach the TV with a
             # stray backslash in it. CONNECTION is the last field, so the
             # splitting above is unaffected -- only the display needs undoing.
-            printf '%s %s' "$type" "${name//\\:/:}"
+            printf '%s %s\t%s' "$type" "${name//\\:/:}" "$(current_address "$device")"
             return
         fi
     fi
@@ -73,7 +94,8 @@ link_info() {
     case "$route" in
         *" dev "*)
             route="${route##* dev }"
-            printf 'link %s' "${route%% *}"
+            local rdev="${route%% *}"
+            printf 'link %s\t%s' "$rdev" "$(current_address "$rdev")"
             ;;
         *)
             printf 'none'
