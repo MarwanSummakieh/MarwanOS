@@ -749,7 +749,12 @@ RUN set -euxo pipefail; \
         /usr/lib/marwanos/shell/marwanos-shell \
         --headless --quit --audio-driver Dummy > "$smoke_log" 2>&1 || true; \
     cat "$smoke_log"; \
-    if grep -qE 'SCRIPT ERROR|Parse Error|Failed to load script|does not inherit from' "$smoke_log"; then \
+    : "'ERROR: Can.t open file' is in the fatal set because of the icon font:"; \
+    : "a resource missing from the pack logs exactly that, at plain ERROR"; \
+    : "severity, while every script parses and the rail builds -- so the shell"; \
+    : "passed this gate with every glyph on screen rendered as tofu. A missing"; \
+    : "file at startup is never benign on this machine."; \
+    if grep -qE 'SCRIPT ERROR|Parse Error|Failed to load script|does not inherit from|ERROR: Can.t open file' "$smoke_log"; then \
         echo "FATAL: the shell logged a script error on a headless start (above)."; \
         echo "A parse error here means an autoload never instantiated."; \
         exit 1; \
