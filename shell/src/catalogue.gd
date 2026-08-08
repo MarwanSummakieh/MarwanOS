@@ -44,6 +44,14 @@ const STEAM_STORE := {
 		+ " on its storefront; quitting Steam lands back on this page.",
 	"accent": "#2A3F5A",
 	"exec": ["flatpak", "run", "com.valvesoftware.Steam", "steam://store"],
+	# The desktop-entry id, which is how the tab finds the application's REAL
+	# icon: marwanos-appscan resolves an absolute path for everything installed,
+	# and store_tab.gd matches on this rather than on the "id" above. The two are
+	# deliberately different strings -- "store.steam" is the shell's name for a
+	# tab, and this is what the file on disk is called. Empty or absent means the
+	# tab draws its fallback glyph, which is also what happens until Steam is
+	# actually installed.
+	"app_id": "com.valvesoftware.Steam",
 }
 
 

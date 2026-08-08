@@ -93,12 +93,13 @@ func _ready() -> void:
 	content.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	column.add_child(content)
 
-	# The tab column: fixed width, tabs stacked from the top. The width lives
-	# on this container rather than on each tab so the rows inherit it the way
-	# settings rows inherit the safe width.
+	# The tab column: one icon wide, tabs stacked from the top. The width used to
+	# live here so the name-bearing rows inherited it; a tab is square and sizes
+	# itself now, and this only keeps the column from collapsing narrower than
+	# one.
 	var tab_column := VBoxContainer.new()
 	tab_column.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	tab_column.custom_minimum_size = Vector2(TvTheme.STORE_TAB_WIDTH, 0)
+	tab_column.custom_minimum_size = Vector2(TvTheme.STORE_TAB_SIZE, 0)
 	tab_column.add_theme_constant_override("separation", TvTheme.SETTINGS_ROW_GAP)
 	content.add_child(tab_column)
 
