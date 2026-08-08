@@ -17,18 +17,23 @@ extends Button
 ## tv_theme.gd for why rows carry two focus channels where cards carry three.
 
 const TvTheme = preload("res://src/tv_theme.gd")
+const Icons = preload("res://src/icons.gd")
 
 var _name_text: String = ""
 var _value_text: String = ""
+var _icon_name: String = ""
 var _value: Label = null
 
 var _idle_box: StyleBoxFlat
 var _focus_box: StyleBoxFlat
 
 
-func setup(name_text: String, value_text: String) -> void:
+## The icon is optional and empty means none: the diagnostic rows have no
+## natural mark and forcing one would be decoration for its own sake.
+func setup(name_text: String, value_text: String, icon_name: String = "") -> void:
 	_name_text = name_text
 	_value_text = value_text
+	_icon_name = icon_name
 
 
 func _ready() -> void:
@@ -80,7 +85,13 @@ func _build_contents() -> void:
 
 	var row := HBoxContainer.new()
 	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	row.add_theme_constant_override("separation", TvTheme.HINT_GLYPH_GAP)
 	padding.add_child(row)
+
+	if not _icon_name.is_empty():
+		var icon := Icons.label(_icon_name, TvTheme.SIZE_BODY + 6, TvTheme.TEXT_PRIMARY)
+		icon.size_flags_vertical = Control.SIZE_EXPAND_FILL
+		row.add_child(icon)
 
 	var name_label := Label.new()
 	name_label.text = _name_text

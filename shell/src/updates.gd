@@ -72,6 +72,20 @@ func request_restart() -> void:
 	_write_request("restart")
 
 
+## The power menu's two other verbs travel this seam too -- see the service's
+## power-verbs block for why they are not a fourth daemon and not a polkit
+## gamble from the session user. Neither produces a state to watch; the
+## machine doing the thing is the feedback.
+func request_poweroff() -> void:
+	ShellLog.info("power: off requested")
+	_write_request("poweroff")
+
+
+func request_suspend() -> void:
+	ShellLog.info("power: sleep requested")
+	_write_request("suspend")
+
+
 ## Temp-then-rename and 0600, for the wifi seam's reasons: the service polls
 ## twice a second and deletes what it finds, so an in-place write can be read
 ## half-formed and destroyed, and Godot's FileAccess does not chmod.

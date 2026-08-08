@@ -5,6 +5,8 @@ extends RefCounted
 ## Not an autoload: nothing here has state or needs a node. Call sites do
 ## `const TvTheme = preload("res://src/tv_theme.gd")` and read the constants off
 ## the class. That keeps it greppable and keeps the values out of the scene tree.
+
+const Icons = preload("res://src/icons.gd")
 ##
 ## ---------------------------------------------------------------------------
 ## Why these particular numbers
@@ -293,22 +295,44 @@ static func glyph_box() -> StyleBoxFlat:
 	return box
 
 
-## One glyph-plus-caption hint, e.g. "A Open". Built here rather than in each
-## screen because the settings screen made it the first duplicated control in
-## the project, and a third fullscreen surface copying the pattern would have
-## made it three sites to retune after a couch test.
+## The pad's face buttons as the DualSense actually labels them. The hint row
+## used to say "A" and "B" -- correct for the logical action, wrong for the
+## pad in the room, whose buttons say nothing of the kind. The LETTERS remain
+## the API (call sites say what Godot's input map says: A confirms, B cancels)
+## and this table is the one place that knows A is drawn as a cross and B as a
+## circle. An Xbox pad arriving would make this a per-pad lookup keyed on
+## PlayerOne's identity; today there is one controller and it is a DualSense.
+const HINT_SHAPES := {
+	"A": "cross",
+	"B": "circle",
+	"X": "square",
+	"Y": "triangle",
+}
+
+
+## One glyph-plus-caption hint, e.g. cross + "Open". Built here rather than in
+## each screen because the settings screen made it the first duplicated control
+## in the project, and a third fullscreen surface copying the pattern would
+## have made it three sites to retune after a couch test.
 static func hint(glyph: String, caption_text: String) -> Control:
 	var row := HBoxContainer.new()
 	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	row.add_theme_constant_override("separation", HINT_GLYPH_GAP)
 
 	var badge := Label.new()
-	badge.text = glyph
 	badge.add_theme_font_size_override("font_size", SIZE_SUPPLEMENTAL)
 	badge.add_theme_color_override("font_color", TEXT_PRIMARY)
 	badge.add_theme_stylebox_override("normal", glyph_box())
 	badge.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	badge.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	if HINT_SHAPES.has(glyph):
+		# A face button: draw the PS shape in the icon font.
+		badge.add_theme_font_override("font", Icons.font())
+		badge.text = Icons.glyph(str(HINT_SHAPES[glyph]))
+	else:
+		# Anything else (a word like "Shift" on the keyboard's action row, or a
+		# button no shape table covers) stays text.
+		badge.text = glyph
 	row.add_child(badge)
 
 	var caption := Label.new()

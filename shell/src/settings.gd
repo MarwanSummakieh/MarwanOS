@@ -50,9 +50,9 @@ func open() -> void:
 		# top would stack two surfaces that both restore the rail on close, and
 		# whichever closed second would restore it twice.
 		return
-	if Stores.is_open():
+	if Stores.is_open() or Power.is_open():
 		# The shell surfaces are peers, not layers: whichever is up owns the
-		# screen until it closes. (Stores.open holds the mirror guard.)
+		# screen until it closes. (The others hold the mirror guards.)
 		return
 
 	ShellLog.info("settings opened")
