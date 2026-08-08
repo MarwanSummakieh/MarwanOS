@@ -18,23 +18,39 @@ extends RefCounted
 ## failure someone notices. Every value below is from the same commit as the
 ## vendored TTF; PROVENANCE.md says why they must be re-checked together.
 
-## Loaded from the RAW ttf at runtime, not preloaded -- and the build's smoke
-## gate is why this is known to matter rather than suspected. `preload` of a
-## font goes through the import system, whose cache is authored by the editor;
-## this project's pipeline is deliberately editor-free, so the preload parse-
-## failed and took every dependent script with it. load_dynamic_font reads the
-## ttf bytes directly, needs no import artefacts, and the file reaches the
-## pack through the export preset's include_filter (raw files are otherwise
-## not packed at all -- the OTHER half of the same trap).
-static var _font: FontFile = null
+## Runtime load(), and both rejected alternatives failed a real check, which
+## is why the reasoning is spelled out rather than assumed:
+##
+##   preload()            needs the import cache at PARSE time. The build's
+##                        --import pass compiles scripts and imports resources
+##                        in the same run, so the preload raced the importer
+##                        and parse-failed, taking every dependent script down.
+##                        The smoke gate caught that build.
+##   load_dynamic_font()  needs the RAW ttf bytes at RUNTIME. The export's
+##                        all_resources filter packs the imported .fontdata
+##                        and deliberately drops the source file (an
+##                        include_filter does not override that -- it exists
+##                        for files the importer ignores, and .ttf is
+##                        claimed). Every icon rendered as tofu, and a
+##                        verification round caught it because the binary had
+##                        grown by less than the font it supposedly carried.
+##
+## load() at runtime resolves through the pack's remap to the imported
+## .fontdata -- the artefact the build demonstrably packs.
+static var _font: Font = null
 
 
-static func font() -> FontFile:
+static func font() -> Font:
 	if _font == null:
-		_font = FontFile.new()
-		var error := _font.load_dynamic_font("res://assets/phosphor/Phosphor.ttf")
-		if error != OK:
-			ShellLog.error("could not load the icon font (error %d); icons will be blank" % error)
+		_font = load("res://assets/phosphor/Phosphor.ttf") as Font
+		# Guard on the RESULT, not a return code: load_dynamic_font returned
+		# OK while its file read failed, so the old check reported a healthy
+		# shell over a screen full of tofu. Probing a codepoint the table
+		# actually uses is the check that cannot be lied to.
+		if _font == null or not _font.has_char(0xe470):
+			ShellLog.error("icon font missing or unreadable; icons will be blank")
+			if _font == null:
+				_font = FontFile.new()  # blank glyphs beat a null-call crash
 	return _font
 
 const CODEPOINTS := {
