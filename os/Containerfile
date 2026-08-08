@@ -598,6 +598,7 @@ RUN set -euxo pipefail; \
     chmod 0644 /usr/lib/systemd/system/marwanos-netcheck.service; \
     chmod 0644 /usr/lib/systemd/system/marwanos-appscan.service; \
     chmod 0644 /usr/lib/systemd/system/marwanos-wifi.service; \
+    chmod 0644 /usr/lib/systemd/system/marwanos-update.service; \
     chmod 0644 "/usr/lib/systemd/system/marwanos-flatpak-install@.service"; \
     chmod 0755 /usr/lib/marwanos/session/marwanos-session; \
     chmod 0755 /usr/lib/marwanos/display/panel-policy; \
@@ -605,6 +606,7 @@ RUN set -euxo pipefail; \
     chmod 0755 /usr/lib/marwanos/netcheck; \
     chmod 0755 /usr/lib/marwanos/appscan; \
     chmod 0755 /usr/lib/marwanos/wifi; \
+    chmod 0755 /usr/lib/marwanos/update; \
     systemd-sysusers /usr/lib/sysusers.d/50-marwanos.conf; \
     for g in video render input; do \
         gid="$(getent group "$g" | cut -d: -f3)"; \
@@ -633,6 +635,8 @@ RUN set -euxo pipefail; \
         /usr/lib/systemd/system/multi-user.target.wants/marwanos-appscan.service; \
     ln -sf ../marwanos-wifi.service \
         /usr/lib/systemd/system/multi-user.target.wants/marwanos-wifi.service; \
+    ln -sf ../marwanos-update.service \
+        /usr/lib/systemd/system/multi-user.target.wants/marwanos-update.service; \
     systemctl --no-reload mask getty@tty1.service autovt@tty1.service \
                                serial-getty@ttyS0.service; \
     ln -sf /dev/null /usr/lib/systemd/user/xdg-desktop-portal-gtk.service; \
@@ -657,12 +661,17 @@ RUN set -euxo pipefail; \
     test -x /usr/lib/marwanos/netcheck; \
     test -x /usr/lib/marwanos/appscan; \
     test -x /usr/lib/marwanos/wifi; \
+    test -x /usr/lib/marwanos/update; \
     test -L /usr/lib/systemd/system/multi-user.target.wants/marwanos-panel.service; \
     test -L "/usr/lib/systemd/system/multi-user.target.wants/marwanos-flatpak-install@com.valvesoftware.Steam.service"; \
     test -L "/usr/lib/systemd/system/multi-user.target.wants/marwanos-flatpak-install@app.zen_browser.zen.service"; \
     test -L /usr/lib/systemd/system/multi-user.target.wants/marwanos-netcheck.service; \
     test -L /usr/lib/systemd/system/multi-user.target.wants/marwanos-appscan.service; \
     test -L /usr/lib/systemd/system/multi-user.target.wants/marwanos-wifi.service; \
+    test -L /usr/lib/systemd/system/multi-user.target.wants/marwanos-update.service; \
+    : "bootc is what an update IS on this machine -- a base image that stopped"; \
+    : "shipping it would leave the Updates screen permanently unable to answer."; \
+    command -v bootc; \
     : "nmcli is the whole wifi workflow's mechanism -- the shell asks, this"; \
     : "answers. A base image that stopped shipping it would leave the Wi-Fi"; \
     : "screen permanently reporting no adapter on a machine with a working one."; \

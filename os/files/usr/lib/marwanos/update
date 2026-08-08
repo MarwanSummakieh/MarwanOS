@@ -1,0 +1,180 @@
+#!/usr/bin/env bash
+#
+# The update workflow's privileged half: everything that touches bootc.
+#
+# WHAT AN UPDATE IS ON THIS MACHINE, because the word means something narrower
+# here than it does elsewhere and the difference decides what this file can do.
+# MarwanOS is a bootc image OS. The target does not compile anything and could
+# not: there is no Godot on it, by design -- shipping the engine would put a
+# general-purpose script interpreter on an appliance whose whole premise is that
+# no code path is reachable (D6, ADR 0006 decision 2). So "pull my changes and
+# rebuild" happens in two places, not one:
+#
+#   the git repo -> scripts/build-push.sh (on the build host, which HAS Godot)
+#                -> ghcr.io/<user>/marwanos:latest
+#                -> this machine: bootc upgrade -> reboot into the new deployment
+#
+# This file owns only the last step. If the registry has not been pushed to,
+# there is nothing to find, and `check` says so rather than reporting success.
+#
+# THE SHELL DOES NOT RUN bootc. Same seam as wifi: the shell writes a request
+# file, this consumes it. Two verbs, no arguments at all -- there is nothing a
+# caller could parameterise, so nothing crosses the boundary but the verb
+# itself, which is the narrowest a reverse channel gets.
+#
+#   the shell writes  /run/marwanos/update/request   (0700 player-owned dir)
+#   this writes       /run/marwanos/update.state     <state>TAB<detail>
+#
+# A REBOOT IS NEVER AUTOMATIC. `bootc upgrade` stages a deployment; the machine
+# keeps running the old one until it restarts. Restarting on its own would take
+# the screen away from someone who pressed a button labelled "check for
+# updates", so staging and restarting are two separate decisions and the second
+# one is the person's.
+#
+set -uo pipefail
+
+TAG=marwanos-update
+RUN_DIR=/run/marwanos
+REQ_DIR="$RUN_DIR/update"
+REQ="$REQ_DIR/request"
+CONSUMED="$RUN_DIR/update-request.consumed"
+STATE="$RUN_DIR/update.state"
+
+POLL=0.5
+
+info() { printf '<6>%s: %s\n' "$TAG" "$*" >&2; }
+warn() { printf '<4>%s: %s\n' "$TAG" "$*" >&2; }
+err()  { printf '<3>%s: %s\n' "$TAG" "$*" >&2; }
+
+install -d -m 0755 "$RUN_DIR" || { err "cannot create $RUN_DIR"; exit 1; }
+install -d -m 0700 -o player -g player "$REQ_DIR" \
+    || { err "cannot create $REQ_DIR -- the shell could never ask for anything"; exit 1; }
+
+
+## `<state>TAB<detail>`. States: idle, checking, available, up-to-date,
+## applying, staged, failed. Detail is free text the shell may render.
+state() {
+    { printf '%s\t%s\n' "$1" "${2:-}" > "$STATE.tmp" && mv -f "$STATE.tmp" "$STATE"; } \
+        || err "cannot write $STATE"
+}
+
+
+## What is running now, for the screen's "current" line. Read from the image's
+## own build-info rather than from bootc, because that is the file the build
+## stamps with the commit -- which is what someone actually wants to compare
+## against their git log.
+current_version() {
+    if [ -r /usr/share/marwanos/build-info ]; then
+        # shellcheck disable=SC1091
+        . /usr/share/marwanos/build-info 2>/dev/null || true
+        printf '%s (%s)' "${MARWANOS_VERSION:-unknown}" "${MARWANOS_COMMIT:-unknown}"
+    else
+        printf 'unknown'
+    fi
+}
+
+
+do_check() {
+    info "checking for a newer image"
+    state checking
+
+    local out rc
+    # --check asks the registry without staging anything, which is what makes
+    # this safe to run from a button someone might press out of curiosity.
+    out="$(timeout 300 bootc upgrade --check 2>&1)"
+    rc=$?
+
+    if [ $rc -ne 0 ]; then
+        warn "check failed: ${out%%$'\n'*}"
+        state failed "${out%%$'\n'*}"
+        return
+    fi
+
+    # bootc words this differently across versions, so match on the stable
+    # part rather than on an exact sentence.
+    case "$out" in
+        *"No changes"*|*"no changes"*|*"Already up to date"*)
+            info "no update available"
+            state up-to-date "$(current_version)"
+            ;;
+        *)
+            info "an update is available"
+            # The first line is the most useful summary bootc offers.
+            state available "${out%%$'\n'*}"
+            ;;
+    esac
+}
+
+
+do_apply() {
+    info "staging the new image -- this downloads and can take minutes"
+    state applying
+
+    local out rc
+    out="$(timeout 3600 bootc upgrade 2>&1)"
+    rc=$?
+
+    if [ $rc -ne 0 ]; then
+        err "upgrade failed: ${out%%$'\n'*}"
+        state failed "${out%%$'\n'*}"
+        return
+    fi
+
+    case "$out" in
+        *"No changes"*|*"no changes"*)
+            info "nothing to stage; already current"
+            state up-to-date "$(current_version)"
+            ;;
+        *)
+            info "staged; the new build starts on the next restart"
+            state staged "Restart to finish"
+            ;;
+    esac
+}
+
+
+## The other half of "rebuilds on restart". The shell cannot reboot -- it runs
+## as `player` and logind would refuse -- so the restart is a verb here rather
+## than a second privileged path bolted onto the shell.
+##
+## Deliberately a SEPARATE verb from apply, not the tail of it. `bootc upgrade`
+## stages a deployment and changes nothing about the running system, so the
+## machine can sit staged indefinitely; rebooting on its own would take the
+## screen away from whoever pressed a button, possibly mid-download of
+## something else. The person decides when.
+do_restart() {
+    info "restarting into the staged deployment"
+    state restarting
+    # Deferred slightly so this state file lands and the shell can draw
+    # "Restarting" before the machine goes down -- otherwise the last thing on
+    # screen is a button that appeared to do nothing.
+    ( sleep 2; systemctl reboot ) &
+}
+
+
+state idle "$(current_version)"
+
+while :; do
+    # Same rename-then-read as the wifi seam: REQ_DIR is player-owned, so the
+    # file could be swapped for a symlink or a FIFO between any test and any
+    # read. rename(2) follows neither and opens nothing.
+    if mv -f "$REQ" "$CONSUMED" 2>/dev/null; then
+        verb=""
+        if [ -L "$CONSUMED" ] || [ ! -f "$CONSUMED" ]; then
+            warn "discarding a request that was not a regular file"
+        else
+            IFS= read -r verb < "$CONSUMED" 2>/dev/null || true
+        fi
+        rm -f "$CONSUMED"
+
+        case "$verb" in
+            check) do_check ;;
+            apply) do_apply ;;
+            restart) do_restart ;;
+            "") ;;
+            *) warn "ignoring a request with an unrecognised verb" ;;
+        esac
+    fi
+
+    sleep "$POLL"
+done

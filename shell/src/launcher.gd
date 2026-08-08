@@ -125,6 +125,10 @@ const EXIT_POLL_SECONDS := 0.5
 var _pid: int = -1
 var _poll: Timer = null
 
+## Set once a close has been asked for, so the exit poll stops interrogating a
+## pid it knows is on its way out. See _check_exit.
+var _terminating := false
+
 
 func _spawn(exec: Array) -> void:
 	var program := str(exec[0])
@@ -179,6 +183,9 @@ func close_current() -> void:
 
 	var exec: Array = _current.get("exec", [])
 	var app_id := _flatpak_app_id(exec)
+	# Armed before either kill path, so the very next poll takes the quiet
+	# branch rather than asking about a pid that is already gone.
+	_terminating = _pid > 0
 
 	if not app_id.is_empty():
 		ShellLog.info("closing flatpak %s" % app_id)
@@ -250,15 +257,34 @@ func _flatpak_app_id(exec: Array) -> String:
 
 
 func _check_exit() -> void:
+	# ONCE WE HAVE KILLED IT, STOP ASKING. Godot's is_process_running() logs an
+	# engine-level ERROR when the pid has already been reaped -- "does not exist
+	# or is not a child of the calling process" -- and after our own kill that is
+	# the normal case, not a fault. It reached the journal at ERROR severity on
+	# every single Close press, which on a machine where `journalctl -p err` is
+	# the primary diagnostic surface is worse than noise: it is a red line that
+	# means nothing, in the place someone looks when something is actually wrong.
+	if _terminating:
+		ShellLog.info("pid %d terminated on request" % _pid)
+		_pid = -1
+		_terminating = false
+		_stop_poll()
+		_on_closed()
+		return
+
 	if _pid > 0 and OS.is_process_running(_pid):
 		return
 	ShellLog.info("pid %d exited" % _pid)
 	_pid = -1
+	_stop_poll()
+	_on_closed()
+
+
+func _stop_poll() -> void:
 	if is_instance_valid(_poll):
 		_poll.stop()
 		_poll.queue_free()
 		_poll = null
-	_on_closed()
 
 
 func _on_closed() -> void:

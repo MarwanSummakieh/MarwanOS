@@ -27,6 +27,7 @@ const TvTheme = preload("res://src/tv_theme.gd")
 const SettingsRow = preload("res://src/settings_row.gd")
 const ActionRow = preload("res://src/action_row.gd")
 const WifiScreen = preload("res://src/wifi_screen.gd")
+const UpdateScreen = preload("res://src/update_screen.gd")
 
 var _rows: Array = []
 var _controller_row: SettingsRow = null
@@ -37,6 +38,8 @@ var _connection_row: SettingsRow = null
 ## a SettingsRow-typed variable would fail to parse on `.activated.connect`.
 var _wifi_row: ActionRow = null
 var _wifi_screen: WifiScreen = null
+var _updates_row: ActionRow = null
+var _update_screen: UpdateScreen = null
 
 
 func _ready() -> void:
@@ -100,6 +103,14 @@ func _ready() -> void:
 	_wifi_row.activated.connect(_on_wifi_row_pressed)
 	list.add_child(_wifi_row)
 	_rows.append(_wifi_row)
+
+	# The second row that acts. Last, because it is the one that can restart
+	# the machine and should not sit under a thumb that was aiming for Wi-Fi.
+	_updates_row = ActionRow.new()
+	_updates_row.setup("Updates", _updates_value())
+	_updates_row.activated.connect(_on_updates_row_pressed)
+	list.add_child(_updates_row)
+	_rows.append(_updates_row)
 
 	var spacer := Control.new()
 	spacer.size_flags_vertical = Control.SIZE_EXPAND_FILL
@@ -268,6 +279,48 @@ func _on_wifi_row_pressed() -> void:
 	# Deaf while it is up, so one B press does not close both screens.
 	set_process_unhandled_input(false)
 	ShellLog.info("wifi screen opened from settings")
+
+
+func _updates_value() -> String:
+	match Updates.state:
+		"available":
+			return "Update available -- press A"
+		"staged":
+			return "Restart to finish"
+		"applying", "checking":
+			return "Working"
+		"failed":
+			return "Last attempt failed"
+		_:
+			return "Check for updates"
+
+
+func _on_updates_row_pressed() -> void:
+	if _update_screen != null:
+		return
+	_update_screen = UpdateScreen.new()
+	_update_screen.closed.connect(_on_update_screen_closed)
+	add_child(_update_screen)
+	set_process_unhandled_input(false)
+	ShellLog.info("update screen opened from settings")
+
+
+func _on_update_screen_closed() -> void:
+	_close_update_screen.call_deferred()
+
+
+func _close_update_screen() -> void:
+	if _update_screen == null:
+		return
+	var screen := _update_screen
+	_update_screen = null
+	remove_child(screen)
+	screen.queue_free()
+	set_process_unhandled_input(true)
+	if _updates_row != null:
+		_updates_row.set_value(_updates_value())
+		_updates_row.grab_focus()
+	ShellLog.info("update screen closed")
 
 
 func _on_wifi_screen_closed() -> void:

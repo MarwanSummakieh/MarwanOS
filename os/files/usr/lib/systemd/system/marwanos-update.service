@@ -1,0 +1,25 @@
+[Unit]
+# The update workflow's privileged half. See the script header for why the
+# shell is not allowed to run bootc itself, and for why "rebuild on restart"
+# means pulling a pre-built image rather than compiling anything here.
+Description=Check for and stage MarwanOS updates (/run/marwanos/update.*)
+Documentation=file:///usr/lib/marwanos/update
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=exec
+ExecStart=/usr/lib/marwanos/update
+
+# An update service that died silently would leave the settings screen showing
+# a stale answer with no way to notice.
+Restart=always
+RestartSec=5
+
+StandardOutput=journal
+StandardError=journal
+SyslogLevelPrefix=true
+SyslogIdentifier=marwanos-update
+
+[Install]
+WantedBy=multi-user.target
