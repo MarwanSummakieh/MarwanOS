@@ -26,9 +26,17 @@
 # would spawn a process with nowhere to draw: a card that does nothing when
 # pressed, which is the exact failure this project keeps designing against.
 #
-# STORE APPS ARE EXCLUDED. Steam has its own page under the stores screen, so
-# listing it on the rail as well would give one thing two homes. Phase 1 makes
-# this a property of the app record rather than a list of ids here.
+# STORE APPS ARE IN THE LISTING, AND THE SHELL KEEPS THEM OFF THE RAIL. Steam
+# has its own page under the stores screen, and putting it on the rail as well
+# would give one thing two homes -- but that is a PLACEMENT decision, and this
+# file used to make it by omission (an EXCLUDE_IDS list), which turned the TSV
+# from "what is installed" into "what the rail shows". The stores screen reads
+# this same file to answer "is Steam here yet", so the omission meant Steam
+# could never BE here: its page offered to install it forever, its tab never
+# found the real icon, and the rail offered it as a download it already had.
+# Now every installed app is emitted and shell_root._populate filters store
+# apps off the rail using the catalogue's own store list -- the system
+# answers, the shell decides placement. Phase 1 keeps the same split.
 #
 set -uo pipefail
 
@@ -68,10 +76,6 @@ ICON_ROOTS=(
 # surface, so a 256 px icon is the smallest that is not visibly soft.
 ICON_SIZES_LARGE=(512x512 256x256)
 ICON_SIZES_SMALL=(128x128 96x96 64x64 48x48)
-
-# Applications that have another home in the shell and must not also sit on
-# the rail.
-EXCLUDE_IDS=(com.valvesoftware.Steam)
 
 info() { printf '<6>%s: %s\n' "$TAG" "$*"; }
 err()  { printf '<3>%s: %s\n' "$TAG" "$*" >&2; }
@@ -222,7 +226,7 @@ exec_line() {
 ## name containing a tab is not a thing that exists. The shell splits on tabs
 ## and treats a short record as a malformed one rather than guessing.
 scan() {
-    local dir file id name comment icon exec_cmd nodisplay hidden type terminal tryexec excluded
+    local dir file id name comment icon exec_cmd nodisplay hidden type terminal tryexec
 
     for dir in "${APP_DIRS[@]}"; do
         [ -d "$dir" ] || continue
@@ -230,12 +234,6 @@ scan() {
             [ -f "$file" ] || continue
 
             id="$(basename "$file" .desktop)"
-
-            excluded=""
-            for skip in "${EXCLUDE_IDS[@]}"; do
-                [ "$id" = "$skip" ] && { excluded=yes; break; }
-            done
-            [ -n "$excluded" ] && continue
 
             type="$(desktop_get "$file" Type)"
             [ "$type" = "Application" ] || continue
@@ -292,7 +290,7 @@ scan() {
 ## They carry no icon and no exec, because neither exists yet. The shell
 ## renders them as cards that describe themselves and refuse to launch.
 pending() {
-    local file id line state name detail rest skip excluded
+    local file id line state name detail rest
 
     for file in "$STATE_DIR"/install.*.state; do
         [ -f "$file" ] || continue
@@ -300,16 +298,12 @@ pending() {
         id="${file##*/install.}"
         id="${id%.state}"
 
-        # Store apps have their own page and must not ALSO be a rail card. The
-        # installed-scan already excludes them by id; this path did not, so the
+        # Store apps' pending records are emitted like everyone else's: the
         # 2026-08-07 boot put Steam on the rail as a pending card while its
-        # store page narrated the same install. One thing, one home.
-        excluded=""
-        for skip in "${EXCLUDE_IDS[@]}"; do
-            [ "$id" = "$skip" ] && { excluded=yes; break; }
-        done
-        [ -n "$excluded" ] && continue
-
+        # store page narrated the same install, and the fix then was to hide it
+        # here -- but hiding it made this file stop being the truth (see the
+        # header). The rail-side filter in shell_root._populate is what keeps
+        # a pending store app off the rail now, in every state at once.
         IFS= read -r line < "$file" || continue
         # `<state>TAB<name>TAB<detail>`; detail is the live progress text and
         # may be empty.

@@ -421,6 +421,15 @@ func _build_hints() -> Control:
 ## Installed first, available after. The rail is a library, and something you
 ## own outranks something you could have.
 func _populate() -> void:
+	# One thing, one home (ADR 0006): a store's application lives on the
+	# stores screen and must not also be a rail card -- installed, pending or
+	# available, which is why the filter sits below where all three kinds meet.
+	# Filtered HERE rather than omitted by the scanner: apps.tsv is the truth
+	# about the machine, and the stores screen answers "is Steam actually
+	# here" and finds its real icon from that same list, which it cannot do if
+	# the scanner pretends Steam does not exist.
+	var store_ids: Array = Catalogue.store_app_ids()
+
 	var known_ids: Array = []
 	for entry in Installed.apps:
 		known_ids.append(str(entry.get("id", "")))
@@ -429,6 +438,8 @@ func _populate() -> void:
 	entries.append_array(Catalogue.available(known_ids))
 
 	for entry in entries:
+		if store_ids.has(str(entry.get("id", ""))):
+			continue
 		var tile := Tile.new()
 		# duplicate() so a tile can never write back into the list the seam
 		# hands out -- Installed rebuilds that list on every rescan, and a tile
