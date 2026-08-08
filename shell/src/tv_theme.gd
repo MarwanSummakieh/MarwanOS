@@ -395,6 +395,29 @@ static func circle_ring() -> StyleBoxFlat:
 	return box
 
 
+## The top-bar icon buttons, rounded to a circle. Half of TOPBAR_ICON_SIZE, so
+## the corner radius meets in the middle of each edge and the square reads as a
+## circle. A separate radius from the overlay's because the two sizes differ --
+## a shared constant would round one of them wrong.
+const TOPBAR_CIRCLE_RADIUS := TOPBAR_ICON_SIZE / 2
+
+
+static func topbar_circle_box(focused: bool) -> StyleBoxFlat:
+	var box := StyleBoxFlat.new()
+	box.bg_color = SURFACE_FOCUS if focused else SURFACE
+	box.set_corner_radius_all(TOPBAR_CIRCLE_RADIUS)
+	return box
+
+
+static func topbar_circle_ring() -> StyleBoxFlat:
+	var box := StyleBoxFlat.new()
+	box.draw_center = false
+	box.set_border_width_all(FOCUS_RING_WIDTH)
+	box.border_color = FOCUS_RING
+	box.set_corner_radius_all(TOPBAR_CIRCLE_RADIUS)
+	return box
+
+
 ## Store entries carry their accent as a hex string so the hand-written data
 ## stays plain text. An unparseable value is a typo, not a reason to draw nothing.
 static func accent(hex: String) -> Color:

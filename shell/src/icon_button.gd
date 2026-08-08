@@ -36,14 +36,18 @@ func _ready() -> void:
 	size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	text = ""
 
-	_idle_box = TvTheme.card_idle_box()
-	_focus_box = TvTheme.card_focus_box()
+	# CIRCULAR, at the owner's request, and it reuses the overlay's circle
+	# styles rather than growing a second set: those already round a box to a
+	# circle by radius, and the top-bar icons are the same size class, so one
+	# family of round controls now covers both the bar and the app overlay.
+	_idle_box = TvTheme.topbar_circle_box(false)
+	_focus_box = TvTheme.topbar_circle_box(true)
 
 	add_theme_stylebox_override("normal", _idle_box)
 	add_theme_stylebox_override("hover", _idle_box)
-	add_theme_stylebox_override("pressed", TvTheme.row_pressed_box())
+	add_theme_stylebox_override("pressed", TvTheme.topbar_circle_box(true))
 	add_theme_stylebox_override("disabled", _idle_box)
-	add_theme_stylebox_override("focus", TvTheme.card_focus_ring())
+	add_theme_stylebox_override("focus", TvTheme.topbar_circle_ring())
 
 	var glyph := Glyphs.new()
 	glyph.kind = _kind
