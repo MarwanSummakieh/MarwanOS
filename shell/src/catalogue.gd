@@ -59,6 +59,24 @@ static func stores() -> Array:
 	return [STEAM_STORE]
 
 
+## The desktop-entry ids of every store's application.
+##
+## This is how "one thing, one home" is enforced now: marwanos-appscan reports
+## a store's application like any other install -- the stores screen needs
+## that record to answer "is it actually here" and to find its real icon --
+## and the RAIL is what filters these ids out (shell_root._populate), because
+## the rail is the one place deciding what becomes a rail card. The scanner
+## used to make this call by omitting Steam from apps.tsv, which turned the
+## installed list into a lie the stores screen then believed.
+static func store_app_ids() -> Array:
+	var ids: Array = []
+	for store in stores():
+		var app_id := str(store.get("app_id", ""))
+		if not app_id.is_empty():
+			ids.append(app_id)
+	return ids
+
+
 ## THE APPLICATIONS THIS IMAGE SHIPS, whether or not they are on the machine.
 ##
 ## The rail draws what is installed, and that was a complete answer right up
@@ -78,6 +96,9 @@ static func stores() -> Array:
 ## direction for the two to disagree in. Phase 1 deletes both: marwand serves
 ## the shipped set and the installed set from one place.
 const AVAILABLE_APPS := [
+	# Steam is listed because the ids here mirror appctl's SHIPPED_APPS, but
+	# its card never reaches the rail in any state: _populate filters store
+	# apps (see store_app_ids), and the stores screen is what offers it back.
 	{
 		"id": "com.valvesoftware.Steam",
 		"title": "Steam",
