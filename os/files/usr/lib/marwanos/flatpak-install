@@ -65,6 +65,59 @@ display_name() {
 }
 
 
+## Extensions an app needs that installing the app does not bring with it.
+##
+## THIS IS THE FIX FOR THE STEAM DIALOG. Steam is a 32-bit program living in a
+## 64-bit runtime, and the i386 halves of that runtime -- the freedesktop compat
+## libraries and the 32-bit GL stack -- are `no-autodownload` extensions of
+## org.freedesktop.Platform rather than parts of the app. `flatpak install
+## --noninteractive` installs Steam, skips both, exits 0, and everything below
+## this line agrees the install worked. Steam then opens on the TV with a dialog
+## listing what is missing, on a machine with no keyboard to dismiss it and no
+## terminal to run the `flatpak install` it suggests.
+##
+## THE IDS CARRY NO BRANCH. The branch has to match whichever runtime the app
+## actually resolved to, which is read off the installed app below. Pinning
+## 24.08 here would keep working right up until Flathub moves Steam to the next
+## runtime, and would then install a matched-looking pair that does nothing.
+##
+## Empty for every other app, which is the honest answer: nothing else shipped
+## here is 32-bit. An app that needs something one day adds one case.
+required_extensions() {
+    case "$1" in
+        com.valvesoftware.Steam)
+            printf '%s\n' org.freedesktop.Platform.Compat.i386 \
+                          org.freedesktop.Platform.GL32.default
+            ;;
+    esac
+}
+
+
+## The 32-bit NVIDIA driver, named after the version running on this host.
+##
+## GL32.default above is Mesa. The active GL driver on this machine is NVIDIA
+## (see the Containerfile's akmods story), and the 32-bit half of that lives in
+## a Flathub extension named after the exact driver version -- 580.95.05 becomes
+## GL32.nvidia-580-95-05. flatpak normally resolves this itself through
+## `download-if=active-gl-driver`, which is exactly what silently produces
+## nothing when the host runs a driver newer than anything Flathub has packaged:
+## no match, no extension, no error, no clue.
+##
+## BEST EFFORT, DELIBERATELY. Flathub trailing a fresh driver by a few days is
+## real and temporary, and treating it as a failed install would mean this unit
+## never stamping and re-downloading several gigabytes of Steam on every boot
+## for as long as it lasted. Without it Steam still starts and still stops
+## complaining -- GL32.default satisfies the check -- and 32-bit titles fall
+## back to software GL, which is slow rather than broken.
+nvidia_gl32_ref() {
+    local ver
+    [ -r /sys/module/nvidia/version ] || return 1
+    ver="$(tr -d '[:space:]' < /sys/module/nvidia/version)"
+    [ -n "$ver" ] || return 1
+    printf 'org.freedesktop.Platform.GL32.nvidia-%s' "${ver//./-}"
+}
+
+
 ## Where this install stands, for the shell: one line, `<state>TAB<name>`.
 ##
 ## The name rides along because the shell shows a card for an app that is
@@ -240,15 +293,72 @@ else
     exit 1
 fi
 
-kill "$ticker_pid" 2>/dev/null
-
 # Prove it rather than trust the exit code, in the spirit of the Containerfile's
 # assertions: the failure this catches is an install that half-happened.
 if ! flatpak info --system "$APP" >/dev/null 2>&1; then
     err "$APP is not installed despite a successful exit -- not stamping"
+    kill "$ticker_pid" 2>/dev/null
     state failed
     exit 1
 fi
+
+# The i386 halves of the runtime -- see required_extensions for why the install
+# above does not bring them and why that is worse than it sounds. Still inside
+# the lock and still under the ticker: these are hundreds of megabytes on the
+# same USB stick, so they are part of this install rather than an epilogue to it.
+extensions="$(required_extensions "$APP")"
+if [ -n "$extensions" ]; then
+    runtime="$(flatpak info --system "$APP" --show-runtime 2>/dev/null)"
+    branch="${runtime##*/}"
+    if [ -z "$branch" ] || [ "$branch" = "$runtime" ]; then
+        err "cannot read the runtime branch for $APP (got '${runtime:-nothing}')"
+        err "not stamping -- picking an extension branch by guess is how you"
+        err "install a matched-looking pair that does nothing"
+        kill "$ticker_pid" 2>/dev/null
+        state failed
+        exit 1
+    fi
+    info "runtime is $runtime -- pulling its 32-bit extensions"
+
+    refs=""
+    for ext in $extensions; do
+        refs="$refs $ext//$branch"
+    done
+
+    # shellcheck disable=SC2086 -- refs is a deliberately word-split ref list
+    if ! flatpak install --system --noninteractive --assumeyes flathub $refs; then
+        err "could not install the 32-bit extensions ($refs)"
+        err "$APP would start and then say it is missing i386 support"
+        kill "$ticker_pid" 2>/dev/null
+        state failed
+        exit 1
+    fi
+
+    # Same reason the app itself is verified: an extension install that reports
+    # success and lands nothing is precisely the shape of the bug being fixed.
+    for ext in $extensions; do
+        if ! flatpak info --system "$ext//$branch" >/dev/null 2>&1; then
+            err "$ext//$branch is not installed despite a successful exit"
+            kill "$ticker_pid" 2>/dev/null
+            state failed
+            exit 1
+        fi
+        info "extension present: $ext//$branch"
+    done
+
+    # Best effort, and last on purpose -- see nvidia_gl32_ref.
+    if gl32_nvidia="$(nvidia_gl32_ref)"; then
+        info "host NVIDIA driver is $(cat /sys/module/nvidia/version) -- trying $gl32_nvidia"
+        if flatpak install --system --noninteractive --assumeyes flathub "$gl32_nvidia"; then
+            info "installed $gl32_nvidia"
+        else
+            err "no $gl32_nvidia on Flathub yet -- not fatal, but 32-bit titles"
+            err "will run on software GL until it appears"
+        fi
+    fi
+fi
+
+kill "$ticker_pid" 2>/dev/null
 
 install -d /var/marwanos
 date -u +'%Y-%m-%dT%H:%M:%SZ' > "$STAMP"
