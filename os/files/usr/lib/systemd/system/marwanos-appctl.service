@@ -1,0 +1,29 @@
+[Unit]
+# The install/remove workflow's privileged half. See the script header for why
+# an appliance with no terminal needs this at all, and for what narrows the one
+# argument that crosses the boundary.
+Description=Install and remove applications on request (/run/marwanos/apps)
+Documentation=file:///usr/lib/marwanos/appctl
+# Not ordered on the network: a REMOVAL needs no network at all, and an install
+# request goes on to marwanos-flatpak-install, which does its own waiting for
+# Flathub to answer. Ordering this unit behind network-online would delay the
+# one verb that never needs it.
+After=local-fs.target
+
+[Service]
+Type=exec
+ExecStart=/usr/lib/marwanos/appctl
+
+# A control service that died silently would leave the shell writing requests
+# into a directory nothing reads -- a button that does nothing, which on this
+# machine is indistinguishable from broken input.
+Restart=always
+RestartSec=5
+
+StandardOutput=journal
+StandardError=journal
+SyslogLevelPrefix=true
+SyslogIdentifier=marwanos-appctl
+
+[Install]
+WantedBy=multi-user.target

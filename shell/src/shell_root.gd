@@ -27,6 +27,7 @@ const Catalogue = preload("res://src/catalogue.gd")
 const Tile = preload("res://src/tile.gd")
 const IconButton = preload("res://src/icon_button.gd")
 const AppOverlay = preload("res://src/app_overlay.gd")
+const CardMenu = preload("res://src/card_menu.gd")
 const Glyphs = preload("res://src/glyphs.gd")
 const ErrorScreen = preload("res://src/error_screen.gd")
 
@@ -38,7 +39,12 @@ var _rail_viewport: Control = null
 var _rail: HBoxContainer = null
 var _status: Label = null
 var _open_hint: Control = null
+var _options_hint: Control = null
 var _overlay: AppOverlay = null
+var _card_menu: CardMenu = null
+## The rail entry the cursor is on, kept because the card menu is opened from
+## input handling rather than from the card itself.
+var _selected_entry: Dictionary = {}
 var _wifi: Glyphs = null
 var _store_button: IconButton = null
 var _gear_button: IconButton = null
@@ -366,6 +372,12 @@ func _build_hints() -> Control:
 	# how a person learns that, and the top bar's icons still take an A.
 	_open_hint = TvTheme.hint("A", "Open")
 	hints.add_child(_open_hint)
+	# Y is the only route to removing an application on a machine with no
+	# terminal, so it is advertised rather than left to be discovered. Hidden
+	# with the A hint when the rail is empty -- there is nothing to have options
+	# about -- which is why it is a member too.
+	_options_hint = TvTheme.hint("Y", "Options")
+	hints.add_child(_options_hint)
 	hints.add_child(TvTheme.hint("B", "Back"))
 	return hints
 
@@ -450,6 +462,9 @@ func _wire_focus_neighbours() -> void:
 # ---------------------------------------------------------------------------
 
 func _on_card_selected(entry: Dictionary) -> void:
+	# Remembered for the card menu, which is opened from _unhandled_input and
+	# therefore has no card to ask.
+	_selected_entry = entry
 	_title.text = str(entry.get("title", ""))
 	_subtitle.text = str(entry.get("subtitle", ""))
 	_fade_hero_to(TvTheme.accent(str(entry.get("accent", ""))))
@@ -549,6 +564,8 @@ func _refresh_empty_state() -> void:
 
 	if _open_hint != null:
 		_open_hint.visible = not empty
+	if _options_hint != null:
+		_options_hint.visible = not empty
 
 
 # ---------------------------------------------------------------------------
@@ -778,7 +795,65 @@ func _close_overlay() -> void:
 	Kiosk.set_overlay(false)
 
 
+## The options menu for the selected card. Guarded rather than always available,
+## and every guard is a state in which the menu would be about the wrong thing.
+func _open_card_menu() -> void:
+	if _card_menu != null:
+		# A second press while it is up is a bounced button, not a request for
+		# two -- the same rule the other surfaces enforce.
+		return
+	if Settings.is_open() or Stores.is_open() or Power.is_open() or Launcher.is_busy():
+		# The rail is not what is on screen, so the selected card is not what the
+		# person is looking at.
+		return
+	if _selected_entry.is_empty():
+		ShellLog.info("Y at the rail with nothing selected; nothing to offer")
+		return
+	if str(_selected_entry.get("state", "")) != "installed":
+		# A card for an application that is still downloading has nothing to
+		# uninstall, and offering it would race the installer for the same
+		# flatpak. The installer's own states say what is happening instead.
+		ShellLog.info("Y on a card that is not installed yet; nothing to offer")
+		return
+	if Apps.is_busy():
+		ShellLog.info("Y while another install or removal is in flight; ignoring")
+		return
+
+	_card_menu = CardMenu.new()
+	_card_menu.entry = _selected_entry
+	_card_menu.closed.connect(_on_card_menu_closed, CONNECT_ONE_SHOT)
+	# Focus is saved and restored the way the other surfaces do it: the rail is
+	# still in the tree underneath, so without this the card loses its ring when
+	# the menu closes.
+	_hand_screen_over()
+	get_tree().root.add_child(_card_menu)
+
+
+func _on_card_menu_closed() -> void:
+	_close_card_menu.call_deferred()
+
+
+func _close_card_menu() -> void:
+	if _card_menu == null:
+		return
+	var menu := _card_menu
+	_card_menu = null
+	menu.get_parent().remove_child(menu)
+	menu.queue_free()
+	_take_screen_back()
+
+
 func _unhandled_input(event: InputEvent) -> void:
+	# Y OPENS THE CARD'S OPTIONS. It is checked before B because it is the only
+	# way to remove an application on a machine with no terminal, and it is on Y
+	# rather than on a long-press of A because a hold that means something
+	# different from a press is exactly the interaction a person on a sofa
+	# discovers by accident and cannot undo.
+	if InputMap.has_action("ui_shell_y") and event.is_action_pressed("ui_shell_y"):
+		get_viewport().set_input_as_handled()
+		_open_card_menu()
+		return
+
 	if not event.is_action_pressed("ui_cancel"):
 		return
 	get_viewport().set_input_as_handled()
