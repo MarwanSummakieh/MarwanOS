@@ -45,8 +45,31 @@ const STEAM_INSTALL_LINES := {
 ## render in TEXT_ALERT, same argument as the rail's subtitle had.
 const STEAM_ALERT_STATES := ["no-network", "no-space", "failed"]
 
+## What the page says while marwanos-appctl is working on THIS store's
+## application, and after it has finished. Separate from the table above because
+## that one narrates the first-boot installer and this one narrates a request
+## the person just made from this screen -- the same word would be describing
+## two different machines.
+const APPCTL_LINES := {
+	"installing": "Installing -- this is a large download, give it minutes",
+	"uninstalling": "Removing",
+	"failed": "That did not work -- journalctl -t marwanos-appctl has the story",
+	"refused": "This machine will not manage that application",
+}
+
+## appctl states that are a problem rather than progress.
+const APPCTL_ALERT_STATES := ["failed", "refused"]
+
+## What A does, and it is not always the same verb. An application that is not
+## on the machine cannot be opened, and until this existed the tab offered to
+## open it anyway and launched a `flatpak run` that failed instantly with
+## nothing on screen to say why.
+const HINT_OPEN := "Open store"
+const HINT_INSTALL := "Install"
+
 var _tabs: Array = []
 var _selected: Dictionary = {}
+var _hints: HBoxContainer = null
 
 var _page_hero: Panel = null
 var _page_title: Label = null
@@ -124,6 +147,11 @@ func _ready() -> void:
 		first.grab_focus()
 
 	SystemStatus.steam_changed.connect(_on_steam_changed)
+	# Both halves of "is it here yet": appctl says what is being done about it,
+	# the installed seam says whether it has actually arrived or gone. The page
+	# and the A hint depend on both, so both are watched.
+	Apps.state_changed.connect(_on_apps_state_changed)
+	Installed.apps_changed.connect(_on_installed_changed)
 	Launcher.launch_started.connect(_on_launch_started)
 	Launcher.launch_finished.connect(_on_launch_finished)
 
@@ -201,12 +229,39 @@ func _build_page() -> Control:
 
 
 func _build_hints() -> Control:
-	var hints := HBoxContainer.new()
-	hints.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	hints.add_theme_constant_override("separation", TvTheme.HINT_GAP)
-	hints.add_child(TvTheme.hint("A", "Open store"))
-	hints.add_child(TvTheme.hint("B", "Back"))
-	return hints
+	_hints = HBoxContainer.new()
+	_hints.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_hints.add_theme_constant_override("separation", TvTheme.HINT_GAP)
+	_refresh_hints()
+	return _hints
+
+
+## Rebuilt rather than relabelled: TvTheme.hint returns an assembled badge and
+## caption and does not hand back the caption to edit, and a hint row of two
+## children is cheap enough that reaching into its internals to save two node
+## allocations would be the worse trade.
+func _refresh_hints() -> void:
+	if _hints == null:
+		return
+	for child in _hints.get_children():
+		_hints.remove_child(child)
+		child.queue_free()
+	_hints.add_child(TvTheme.hint("A", HINT_OPEN if _selected_installed() else HINT_INSTALL))
+	_hints.add_child(TvTheme.hint("B", "Back"))
+
+
+## Is the selected store's application actually on the machine? Answered from
+## the installed seam -- the same list the rail draws -- rather than from the
+## install state file, which says what the FIRST-BOOT installer last did and
+## goes on saying it after someone removes the application by hand.
+func _selected_installed() -> bool:
+	var app_id := str(_selected.get("app_id", ""))
+	if app_id.is_empty():
+		return false
+	for app in Installed.apps:
+		if str(app.get("id", "")) == app_id and str(app.get("state", "")) == "installed":
+			return true
+	return false
 
 
 ## The settings list's table, verbatim: one axis, hard stops, perpendicular
@@ -236,6 +291,9 @@ func _render_page(entry: Dictionary) -> void:
 	_page_tagline.text = str(entry.get("tagline", ""))
 	_page_description.text = str(entry.get("description", ""))
 	_refresh_status()
+	# The A hint belongs to the SELECTED store, so it changes with the tab and
+	# not only when an install state does.
+	_refresh_hints()
 
 
 ## Only the Steam page has an install narration today, because Steam is the
@@ -245,6 +303,34 @@ func _render_page(entry: Dictionary) -> void:
 func _refresh_status() -> void:
 	if _page_status == null or _selected.is_empty():
 		return
+
+	# WHAT THE PERSON JUST ASKED FOR WINS. If appctl is working on -- or has
+	# just failed on -- this very application, that is the most recent true
+	# thing about it, and it outranks both the first-boot installer's narration
+	# and the static "installed" line. Matched on the app id so a request about
+	# one store never narrates another's page.
+	var app_id := str(_selected.get("app_id", ""))
+	if not app_id.is_empty() and Apps.app == app_id and APPCTL_LINES.has(Apps.state):
+		var line := str(APPCTL_LINES[Apps.state])
+		# appctl's own detail is preferred where it has one, for the installer's
+		# reason: a specific sentence beats a general one.
+		if Apps.state == "failed" and not Apps.detail.is_empty():
+			line = "%s -- %s" % [Apps.detail, line]
+		_page_status.text = line
+		_page_status.add_theme_color_override(
+			"font_color",
+			TvTheme.TEXT_ALERT if APPCTL_ALERT_STATES.has(Apps.state) else TvTheme.TEXT_SECONDARY)
+		return
+
+	# Nothing in flight and the application is not here. This is what a store
+	# page says after someone removes the application from the rail, and it is
+	# the state that used to render as "Checking the install state" forever.
+	if not _selected_installed() and SystemStatus.steam_detail.is_empty() \
+			and SystemStatus.steam != "downloading" and SystemStatus.steam != "waiting-network":
+		_page_status.text = "Not installed -- A downloads and installs it"
+		_page_status.add_theme_color_override("font_color", TvTheme.TEXT_SECONDARY)
+		return
+
 	var state := SystemStatus.steam
 	# The installer's live progress line wins over the fixed wording, for the
 	# rail's reason: a number that moves is the difference between "working"
@@ -262,7 +348,40 @@ func _on_steam_changed(_state: String) -> void:
 	_refresh_status()
 
 
+func _on_apps_state_changed(_state: String, _app: String, _detail: String) -> void:
+	_refresh_status()
+	_refresh_hints()
+
+
+func _on_installed_changed(_apps: Array) -> void:
+	_refresh_status()
+	_refresh_hints()
+
+
 func _on_store_opened(entry: Dictionary) -> void:
+	# A MEANS TWO DIFFERENT THINGS, and which one is not a preference -- an
+	# application that is not on the machine cannot be opened. Before this the
+	# tab launched `flatpak run` regardless, which failed in milliseconds and
+	# left the page exactly as it was, so the button read as broken.
+	var app_id := str(entry.get("app_id", ""))
+	if not _selected_installed():
+		if app_id.is_empty():
+			ShellLog.error("store %s carries no app_id; cannot install it"
+				% str(entry.get("id", "")))
+			return
+		if Apps.is_busy():
+			ShellLog.info("install requested while another request is in flight; ignoring")
+			return
+		Apps.request_install(app_id)
+		# Said immediately rather than waiting for the seam's next poll: the
+		# request file is consumed within half a second, but the person pressed
+		# a button and a screen that does not change for two seconds is a screen
+		# that did not hear them.
+		if _page_status != null:
+			_page_status.text = str(APPCTL_LINES["installing"])
+			_page_status.add_theme_color_override("font_color", TvTheme.TEXT_SECONDARY)
+		return
+
 	# Through the launch seam like every launch in the project. The screen
 	# stays open underneath: when the store quits, this page is what the
 	# person lands back on, which is the PS Store's own behaviour too.

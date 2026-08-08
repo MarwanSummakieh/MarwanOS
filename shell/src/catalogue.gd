@@ -57,3 +57,69 @@ const STEAM_STORE := {
 
 static func stores() -> Array:
 	return [STEAM_STORE]
+
+
+## THE APPLICATIONS THIS IMAGE SHIPS, whether or not they are on the machine.
+##
+## The rail draws what is installed, and that was a complete answer right up
+## until an application could be REMOVED. After that, "not installed" stopped
+## meaning "never heard of it" and started meaning "gone, and gettable back" --
+## with nowhere on the rail to say so. The stores screen offers Steam back
+## because Steam is a store; nothing offered Kodi back, so removing it was a
+## one-way door on a machine with no terminal.
+##
+## So an entry here that is not in the installed list becomes a card in the
+## `available` state: it looks like an application, says it is not installed,
+## and downloads itself when pressed (see tile.gd's _on_pressed).
+##
+## THE IDS MUST MATCH appctl's SHIPPED_APPS. That list is the privilege
+## boundary and this one is only what gets drawn -- a name here that is not
+## there produces a card whose press is refused by root, which is the safe
+## direction for the two to disagree in. Phase 1 deletes both: marwand serves
+## the shipped set and the installed set from one place.
+const AVAILABLE_APPS := [
+	{
+		"id": "com.valvesoftware.Steam",
+		"title": "Steam",
+		"accent": "#2A3F5A",
+	},
+	{
+		"id": "app.zen_browser.zen",
+		"title": "Zen Browser",
+		"accent": "#3B2F5A",
+	},
+	{
+		"id": "tv.kodi.Kodi",
+		"title": "Kodi",
+		"accent": "#1F4E63",
+	},
+]
+
+## What an available card says under its title. One sentence, and it is the
+## instruction rather than the state: "Not installed" alone tells someone what
+## is wrong without telling them that the thing they are looking at fixes it.
+const AVAILABLE_SUBTITLE := "Not installed -- press A to download it"
+
+
+## Rail entries for every shipped application that the installed seam does not
+## already know about, in whatever state.
+##
+## Matched against EVERY installed record rather than only the installed ones:
+## an application part-way through its first download is already on the rail as
+## a pending card with a live progress line, and a second card next to it
+## offering to start the same download would be both wrong and pressable.
+static func available(known_ids: Array) -> Array:
+	var result: Array = []
+	for app in AVAILABLE_APPS:
+		if known_ids.has(str(app["id"])):
+			continue
+		result.append({
+			"id": str(app["id"]),
+			"title": str(app["title"]),
+			"subtitle": AVAILABLE_SUBTITLE,
+			"icon": "",
+			"exec": [],
+			"state": "available",
+			"accent": str(app["accent"]),
+		})
+	return result
