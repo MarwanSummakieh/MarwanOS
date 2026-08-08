@@ -1,27 +1,47 @@
-// MarwanOS boot splash. Deliberately static: a held wordmark reads as "loading"
-// without inventing progress that nothing measures yet. M2 owns the polish
-// (handoff sequencing, maybe motion); this owns "no scrolling text".
+// MarwanOS boot splash: the wordmark in a comic font on black, a spinner
+// turning under it. The wordmark is a transparent PNG -- no field, no banner,
+// no rectangle -- so the black below is the plymouth background, not baked into
+// the art. scripts/make-splash.sh draws both PNGs from a recipe; edit there.
 
-// Sampled from the artwork's own background (#05347C) so the image sits on a
-// continuous field rather than a black box, whatever the screen's aspect ratio.
-// Plymouth wants 0..1 floats, not bytes.
-Window.SetBackgroundTopColor(0.0196, 0.2039, 0.4863);
-Window.SetBackgroundBottomColor(0.0196, 0.2039, 0.4863);
+// PURE BLACK, both stops. The owner asked for black rather than the old blue
+// field, and a single flat colour also means the wordmark's transparency reads
+// identically whatever the screen's aspect ratio does to the letterboxing.
+Window.SetBackgroundTopColor(0.0, 0.0, 0.0);
+Window.SetBackgroundBottomColor(0.0, 0.0, 0.0);
 
 logo.image = Image("splash.png");
 
-// Fit to two thirds of the screen width. The artwork is a wide banner rather
-// than a small mark, so it has to be read from couch distance on a TV without
-// spilling off the edges of a 14" panel -- proportional beats fixed either way.
-scale = Window.GetWidth() * 0.66 / logo.image.GetWidth();
-
-// Never upscale past the source: enlarging a 1599px-wide bitmap on a 4K TV
-// would soften exactly the crisp comic linework the art is made of.
+// A little under half the screen width. The comic wordmark is a compact block
+// of type rather than a wide banner, so it reads from the couch at this size
+// without crowding a 14" panel.
+scale = Window.GetWidth() * 0.45 / logo.image.GetWidth();
 if (scale > 1) { scale = 1; }
 
 logo.scaled = logo.image.Scale(logo.image.GetWidth() * scale,
                                logo.image.GetHeight() * scale);
-
 logo.sprite = Sprite(logo.scaled);
 logo.sprite.SetX(Window.GetWidth() / 2 - logo.scaled.GetWidth() / 2);
-logo.sprite.SetY(Window.GetHeight() / 2 - logo.scaled.GetHeight() / 2);
+// Above centre, leaving the lower third for the spinner.
+logo.sprite.SetY(Window.GetHeight() * 0.42 - logo.scaled.GetHeight() / 2);
+
+// The spinner. A 300-degree amber arc rotated a step per refresh, centred below
+// the wordmark. This is the "little loading circle" the owner asked for, and it
+// is the one moving thing on the screen -- which is what turns a held image
+// into "loading" without inventing a progress bar that measures nothing.
+spinner.image = Image("spinner.png");
+spinner.cx = Window.GetWidth() / 2;
+spinner.cy = Window.GetHeight() * 0.72;
+spinner.angle = 0;
+
+fun refresh() {
+    // ~6 degrees per refresh; plymouth refreshes near 50Hz, so roughly one turn
+    // every 1.2s -- brisk enough to read as spinning, slow enough not to strobe.
+    spinner.angle += 0.1;
+    if (spinner.angle > 6.2832) { spinner.angle -= 6.2832; }
+    rotated = spinner.image.Rotate(spinner.angle);
+    spinner.sprite = Sprite(rotated);
+    spinner.sprite.SetX(spinner.cx - rotated.GetWidth() / 2);
+    spinner.sprite.SetY(spinner.cy - rotated.GetHeight() / 2);
+}
+
+Plymouth.SetRefreshFunction(refresh);
