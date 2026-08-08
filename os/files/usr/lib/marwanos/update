@@ -152,6 +152,35 @@ do_restart() {
 }
 
 
+# ---------------------------------------------------------------------------
+# The power verbs. They live in this service rather than in a fourth daemon
+# because it is already the machine-lifecycle seam -- restart has been a verb
+# here since the updater existed -- and because the alternative, the shell
+# calling `systemctl poweroff` itself, stakes the whole power menu on polkit
+# treating the greetd session as active. That is probably true and unverifiable
+# until a bench boot; a root service is true by construction.
+#
+# Neither verb touches update.state: the Updates screen's state belongs to
+# updates, and "Sleeping" is not an update state. The only feedback a power
+# action needs is the machine visibly doing it. Both are deferred two seconds
+# so the journal line lands and the shell can finish drawing the press.
+#
+# Suspend is offered although Phase 0's non-goals parked sleep/resume: the
+# owner asked, the verb costs three lines, and whether resume survives the
+# NVIDIA driver and gamescope is exactly the kind of question only the bench
+# can answer. The journal will carry the attempt either way.
+
+do_poweroff() {
+    info "power off requested"
+    ( sleep 2; systemctl poweroff ) &
+}
+
+do_suspend() {
+    info "suspend requested"
+    ( sleep 2; systemctl suspend ) &
+}
+
+
 state idle "$(current_version)"
 
 while :; do
@@ -171,6 +200,8 @@ while :; do
             check) do_check ;;
             apply) do_apply ;;
             restart) do_restart ;;
+            poweroff) do_poweroff ;;
+            suspend) do_suspend ;;
             "") ;;
             *) warn "ignoring a request with an unrecognised verb" ;;
         esac

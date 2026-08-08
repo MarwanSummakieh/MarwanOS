@@ -42,6 +42,7 @@ var _overlay: AppOverlay = null
 var _wifi: Glyphs = null
 var _store_button: IconButton = null
 var _gear_button: IconButton = null
+var _power_button: IconButton = null
 
 var _tiles: Array = []
 var _last_focused: Control = null
@@ -73,6 +74,8 @@ func _ready() -> void:
 	Settings.settings_closed.connect(_on_surface_closed)
 	Stores.stores_opened.connect(_on_surface_opened)
 	Stores.stores_closed.connect(_on_surface_closed)
+	Power.power_opened.connect(_on_surface_opened)
+	Power.power_closed.connect(_on_surface_closed)
 	PlayerOne.player_one_present.connect(_on_player_one_present)
 	PlayerOne.player_one_absent.connect(_on_player_one_absent)
 	SystemStatus.network_changed.connect(_on_network_changed)
@@ -256,6 +259,16 @@ func _build_topbar() -> Control:
 
 	bar.add_child(_bar_gap())
 
+	# The power menu, asked for by name: off, restart, sleep, next to the other
+	# two. Last of the three focusables so a thumb overshooting the gear lands
+	# on it rather than on nothing.
+	_power_button = IconButton.new()
+	_power_button.setup("power", "Power")
+	_power_button.activated.connect(Power.open)
+	bar.add_child(_power_button)
+
+	bar.add_child(_bar_gap())
+
 	# The network's answer as a glyph next to the time, from SystemStatus. In
 	# the bar for the same reason the controller state is: connectivity coming
 	# and going should never take the home screen away, only annotate it.
@@ -413,17 +426,23 @@ func _wire_focus_neighbours() -> void:
 	_store_button.focus_neighbor_top = _store_button.get_path_to(_store_button)
 
 	_gear_button.focus_neighbor_left = _gear_button.get_path_to(_store_button)
-	_gear_button.focus_neighbor_right = _gear_button.get_path_to(_gear_button)
+	_gear_button.focus_neighbor_right = _gear_button.get_path_to(_power_button)
 	_gear_button.focus_neighbor_top = _gear_button.get_path_to(_gear_button)
+
+	_power_button.focus_neighbor_left = _power_button.get_path_to(_gear_button)
+	_power_button.focus_neighbor_right = _power_button.get_path_to(_power_button)
+	_power_button.focus_neighbor_top = _power_button.get_path_to(_power_button)
 
 	if count > 0:
 		_store_button.focus_neighbor_bottom = _store_button.get_path_to(_tiles[0])
 		_gear_button.focus_neighbor_bottom = _gear_button.get_path_to(_tiles[0])
+		_power_button.focus_neighbor_bottom = _power_button.get_path_to(_tiles[0])
 	else:
 		# Nothing below the bar on an empty rail. Pointed at self rather than
 		# left unset, so Control's geometric search cannot find the hint row.
 		_store_button.focus_neighbor_bottom = _store_button.get_path_to(_store_button)
 		_gear_button.focus_neighbor_bottom = _gear_button.get_path_to(_gear_button)
+		_power_button.focus_neighbor_bottom = _power_button.get_path_to(_power_button)
 
 
 # ---------------------------------------------------------------------------
@@ -495,6 +514,7 @@ func _scroll_to_selected() -> void:
 	var selected: Control = _tiles[index]
 	_store_button.focus_neighbor_bottom = _store_button.get_path_to(selected)
 	_gear_button.focus_neighbor_bottom = _gear_button.get_path_to(selected)
+	_power_button.focus_neighbor_bottom = _power_button.get_path_to(selected)
 
 
 func _ensure_focus() -> void:

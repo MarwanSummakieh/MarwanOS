@@ -1,24 +1,24 @@
 extends Control
 
-## The shell's icon glyphs -- a storefront, a gear, and a wifi fan -- drawn
-## with canvas primitives in _draw().
+## An icon that draws itself to whatever size its parent gives it.
 ##
-## Primitives rather than an icon font or PNGs, and that is a repo decision
-## more than an art one: either alternative would be the project's first binary
-## asset, authored by a tool outside the repo and unreviewable in a diff. Three
-## glyphs' worth of arcs and rectangles is twenty lines a person can read, and
-## they inherit the theme's colours the same way every Label does. If the
-## glyph count ever grows past a handful, that is the signal to revisit -- the
-## same tripwire shape as launcher.gd's "if something wants to grow here".
+## THE API SURVIVED ITS OWN IMPLEMENTATION. This started as hand-drawn
+## primitives -- arcs for the wifi fan, rectangles for the store bag -- which
+## was right for five glyphs and wrong for a full icon language (see icons.gd
+## for that argument). The `kind` + `color` interface is unchanged, so the
+## rework touched no call site: the same node that drew arcs now draws a
+## Phosphor glyph, and consumers cannot tell.
 ##
-## The control draws to whatever size its parent gives it; callers set
-## custom_minimum_size. Stroke weight is TOPBAR_GLYPH_WIDTH so the marks read
-## as one family with the focus ring.
+## Kept as a _draw control rather than replaced by Icons.label at every call
+## site, because several consumers size the glyph by the box they give it (the
+## icon buttons, the overlay circles, the wifi indicator) -- a font Label sizes
+## the box by the glyph, which is backwards for all of them.
 
 const TvTheme = preload("res://src/tv_theme.gd")
+const Icons = preload("res://src/icons.gd")
 
-## Which glyph: "store", "gear", "wifi", or "wifi-off". Anything else draws
-## nothing, which on a TV is better than drawing the wrong claim.
+## An icon name from icons.gd. Anything unknown draws nothing, which on a TV is
+## better than drawing the wrong claim; icons.gd logs the miss.
 var kind: String = "":
 	set(value):
 		kind = value
@@ -31,73 +31,27 @@ var color: Color = TvTheme.TEXT_PRIMARY:
 
 
 func _draw() -> void:
-	match kind:
-		"store":
-			_draw_store()
-		"gear":
-			_draw_gear()
-		"wifi":
-			_draw_wifi(false)
-		"wifi-off":
-			_draw_wifi(true)
-		"close":
-			_draw_close()
-		"minimize":
-			_draw_minimize()
+	if kind.is_empty():
+		return
+	var glyph := Icons.glyph(kind)
+	if glyph.is_empty():
+		return
 
+	# The glyph fills the shorter axis of the box. Phosphor is drawn on a
+	# square em with its shapes reaching close to the edges, so font_size ==
+	# box height renders at the size the caller laid out for.
+	var font: Font = Icons.font()
+	var font_size := int(minf(size.x, size.y))
+	if font_size <= 0:
+		return
 
-## A shopping bag: an outlined body with a handle arced over its top edge.
-func _draw_store() -> void:
-	var s := size
-	var w := TvTheme.TOPBAR_GLYPH_WIDTH
-	var body := Rect2(Vector2(s.x * 0.14, s.y * 0.36), Vector2(s.x * 0.72, s.y * 0.52))
-	draw_rect(body, color, false, w)
-	# The handle: the upper half-circle, angles PI..TAU because y grows
-	# downward on a canvas and that sweep passes through straight up.
-	draw_arc(Vector2(s.x * 0.5, s.y * 0.36), s.x * 0.20, PI, TAU, 16, color, w, true)
+	# Centred by measurement rather than by alignment flags: draw_string's
+	# alignment centres horizontally, but vertical centring needs the ascent,
+	# and doing both by hand keeps them from disagreeing.
+	var glyph_size := font.get_string_size(
+		glyph, HORIZONTAL_ALIGNMENT_CENTER, -1, font_size)
+	var position := Vector2(
+		(size.x - glyph_size.x) * 0.5,
+		(size.y - glyph_size.y) * 0.5 + font.get_ascent(font_size))
 
-
-## A gear: a ring, a hub, and eight radial teeth. Reads as "settings" at three
-## metres, which is the entire acceptance test.
-func _draw_gear() -> void:
-	var s := size
-	var w := TvTheme.TOPBAR_GLYPH_WIDTH
-	var center := s / 2.0
-	var tooth_tip := minf(center.x, center.y) - w * 0.5
-	var ring := tooth_tip * 0.62
-	draw_arc(center, ring, 0.0, TAU, 32, color, w, true)
-	draw_circle(center, ring * 0.34, color)
-	for i in 8:
-		var direction := Vector2.from_angle(TAU * i / 8.0)
-		draw_line(center + direction * ring, center + direction * tooth_tip, color, w, true)
-
-
-## An X. Drawn corner to corner of the inset box rather than as a glyph, so it
-## scales with the circle and stays optically centred inside it.
-func _draw_close() -> void:
-	var s := size
-	var w := TvTheme.TOPBAR_GLYPH_WIDTH * 1.5
-	draw_line(Vector2(0, 0), s, color, w, true)
-	draw_line(Vector2(s.x, 0), Vector2(0, s.y), color, w, true)
-
-
-## A single horizontal bar, the universal minimise mark.
-func _draw_minimize() -> void:
-	var s := size
-	var w := TvTheme.TOPBAR_GLYPH_WIDTH * 1.5
-	draw_line(Vector2(0, s.y * 0.5), Vector2(s.x, s.y * 0.5), color, w, true)
-
-
-## The wifi fan: a dot and three arcs opening upward. `struck` lays a diagonal
-## through it -- the difference between "connected" and "not", carried by shape
-## as well as colour, because colour alone is unreliable on a TV (the same
-## argument as the focus ring's three channels).
-func _draw_wifi(struck: bool) -> void:
-	var s := size
-	var w := TvTheme.TOPBAR_GLYPH_WIDTH
-	var base := Vector2(s.x * 0.5, s.y * 0.85)
-	draw_circle(base, w * 0.85, color)
-	for radius in [s.y * 0.30, s.y * 0.52, s.y * 0.74]:
-		draw_arc(base, radius, -3.0 * PI / 4.0, -PI / 4.0, 24, color, w, true)
-	if struck:
-		draw_line(Vector2(s.x * 0.18, s.y * 0.08), Vector2(s.x * 0.82, s.y * 0.92), color, w, true)
+	draw_string(font, position, glyph, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size, color)
