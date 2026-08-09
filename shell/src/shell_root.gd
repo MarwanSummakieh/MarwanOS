@@ -919,6 +919,11 @@ func _open_overlay() -> void:
 	# it. See Kiosk.set_overlay -- if this does not take, the overlay still
 	# works, it just covers the app.
 	Kiosk.set_overlay(true)
+	# While the menu is up the pad belongs to the menu. Without this a bridged
+	# application (Dolphin) receives an arrow for every menu move and a
+	# BackSpace for the B that closes the menu -- input delivered twice, acted
+	# on twice, visible once.
+	Launcher.set_pad_keys_paused(true)
 
 
 func _on_overlay_closed() -> void:
@@ -933,6 +938,7 @@ func _close_overlay() -> void:
 	overlay.get_parent().remove_child(overlay)
 	overlay.queue_free()
 	Kiosk.set_overlay(false)
+	Launcher.set_pad_keys_paused(false)
 
 
 ## The options menu for the selected card. Guarded rather than always available,

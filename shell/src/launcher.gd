@@ -41,6 +41,9 @@ signal launch_finished(entry: Dictionary)
 signal minimized(entry: Dictionary)
 
 const LaunchPlaceholder = preload("res://src/launch_placeholder.gd")
+const LaunchSplash = preload("res://src/launch_splash.gd")
+const PadKeys = preload("res://src/pad_keys.gd")
+const Catalogue = preload("res://src/catalogue.gd")
 
 var _current: Dictionary = {}
 
@@ -48,6 +51,18 @@ var _current: Dictionary = {}
 # statically -- GDScript treats a missing member on a typed variable as an error,
 # which is the point.
 var _placeholder: LaunchPlaceholder = null
+
+# The splash over the gap between spawn and the app's first frame. Owned here
+# rather than by shell_root because only this file knows which branch _run
+# took: the placeholder branch draws its own screen and must not get a second
+# one. Removed on launch_finished like everything else the seam puts up.
+var _splash: LaunchSplash = null
+
+# The pad-to-keyboard bridge, alive only while a PAD_KEY_APPS application is
+# confirmed on screen. Created by the watchdog's ELSEWHERE branch -- never
+# earlier, so nothing types into an application that has not drawn -- and
+# freed wherever the launch ends. See pad_keys.gd for what it is.
+var _pad_keys: PadKeys = null
 
 
 func is_busy() -> bool:
@@ -104,7 +119,10 @@ func _run(entry: Dictionary) -> void:
 ## M1 and does not exist yet. Writing marwand to answer a feasibility question
 ## would be building the answer before knowing whether the question has one. So
 ## this stays until marwand lands and then it goes -- _run() sends `Launch` over
-## the WebSocket and this function is deleted whole, along with the poll timer.
+## the WebSocket and this function is deleted whole, along with the poll timer
+## and the window watchdog below it. The launch splash survives the deletion:
+## every marwand launch is a real process, so it goes up when the Launch is
+## sent, and marwand's events replace the watchdog as what clears it.
 ##
 ## WHY IT SHOULD WORK. The shell is an X client on gamescope's XWayland, and a
 ## child process inherits DISPLAY, so the app lands on the same compositor with
@@ -137,6 +155,7 @@ func _spawn(exec: Array) -> void:
 		args.append(str(exec[i]))
 
 	ShellLog.info("spawning %s %s" % [program, " ".join(args)])
+	_close_escalate_ticks = 0
 	_pid = OS.create_process(program, args)
 
 	if _pid <= 0:
@@ -155,6 +174,127 @@ func _spawn(exec: Array) -> void:
 	_poll.timeout.connect(_check_exit)
 	add_child(_poll)
 	_poll.start()
+
+	# The splash and its watchdog exist only on this branch: a real process
+	# takes real seconds to put a frame up, and the placeholder is its own
+	# screen already. Both are torn down in _finish with everything else.
+	_splash = LaunchSplash.new()
+	_splash.entry = _current
+	get_tree().root.add_child(_splash)
+	_start_watchdog()
+
+
+## ============================================================================
+## THE WINDOW WATCHDOG -- part of the spike, deleted with it.
+##
+## The exit poll above answers "is the process alive"; this answers the
+## question that actually matters on a TV: "did anything appear". They are
+## different questions, and the desktop Steam client is the proof -- a wrapper
+## pid that lives for hours in front of a screen showing nothing. gamescope
+## publishes GAMESCOPE_FOCUSED_WINDOW on the X root, Kiosk reads it (see the
+## focus question there), and this compares the answer to the shell's own
+## window: the moment focus belongs to anyone else, the app is on screen and
+## the splash has done its job.
+##
+## If the deadline passes with the shell STILL focused and the pid still
+## alive, the splash swaps to its honest failure state instead of promising
+## forever. UNKNOWN -- no gamescope, so a desk run or the Xvfb harness --
+## never fails and never clears: the plain splash simply holds until
+## launch_finished, which keeps this safe headless.
+##
+## In Phase 1 marwand supervises the window question along with the process
+## and this whole block goes with _spawn: the splash stays, driven by launch
+## events instead of a poll.
+## ============================================================================
+
+## One ask per second: a person waits whole seconds for a client to draw, so
+## finer polling buys nothing, and each ask is an xprop round trip.
+const WINDOW_POLL_SECONDS := 1.0
+
+## How long a spawned process gets to put a window up before the splash stops
+## promising. Steam's cold start -- sandbox, update check, CEF -- is the
+## slowest thing this machine launches and lands well inside 25 s; a launch
+## still windowless past it has taken the desktop-client failure shape.
+const WINDOW_DEADLINE_SECONDS := 25.0
+
+var _watch: Timer = null
+var _watched_seconds := 0.0
+
+
+func _start_watchdog() -> void:
+	_watched_seconds = 0.0
+	_watch = Timer.new()
+	_watch.wait_time = WINDOW_POLL_SECONDS
+	_watch.timeout.connect(_check_window)
+	add_child(_watch)
+	_watch.start()
+
+
+func _check_window() -> void:
+	_watched_seconds += WINDOW_POLL_SECONDS
+
+	match Kiosk.focused_window():
+		Kiosk.Focus.ELSEWHERE:
+			# Someone else owns the screen: the app arrived. The splash goes
+			# now rather than at launch_finished, so the frame the app exits
+			# on shows the rail and not a stale "Starting".
+			ShellLog.info("focus moved off the shell after %.0f s; %s is on screen"
+				% [_watched_seconds, _label(_current)])
+			_stop_watchdog()
+			_remove_splash()
+			# The one moment the bridge may start: there is now provably an
+			# application on screen to type into. Which is also why a desk run
+			# never gets one -- the watchdog only answers ELSEWHERE where
+			# gamescope exists, and that is the only place XTEST injection
+			# lands where a person can see what it did.
+			if _pad_keys == null and Catalogue.pad_key_app(str(_current.get("id", ""))):
+				_pad_keys = PadKeys.new()
+				get_tree().root.add_child(_pad_keys)
+		Kiosk.Focus.SHELL:
+			if _watched_seconds >= WINDOW_DEADLINE_SECONDS \
+					and _pid > 0 and is_instance_valid(_splash):
+				ShellLog.warn("%s alive as pid %d but no window after %.0f s; offering Close"
+					% [_label(_current), _pid, _watched_seconds])
+				_splash.show_failure()
+				# Nothing left to decide: the splash now holds until the app
+				# exits or the person closes it, both of which reach _finish.
+				_stop_watchdog()
+		_:
+			# UNKNOWN. No claim, no action -- see the header. The plain splash
+			# stands until launch_finished.
+			pass
+
+
+func _stop_watchdog() -> void:
+	if is_instance_valid(_watch):
+		_watch.stop()
+		_watch.queue_free()
+		_watch = null
+
+
+func _remove_splash() -> void:
+	var splash := _splash
+	_splash = null
+	if is_instance_valid(splash):
+		# Same two-step as the placeholder in _finish: queue_free alone leaves
+		# the node drawn for the rest of the frame.
+		splash.get_parent().remove_child(splash)
+		splash.queue_free()
+
+
+func _remove_pad_keys() -> void:
+	var bridge := _pad_keys
+	_pad_keys = null
+	if is_instance_valid(bridge):
+		bridge.queue_free()
+
+
+## shell_root's lever for the home menu: the same press must not both move
+## the menu and type into the application behind it. A no-op while no bridge
+## exists, which is most launches.
+func set_pad_keys_paused(value: bool) -> void:
+	if is_instance_valid(_pad_keys):
+		_pad_keys.set_paused(value)
 
 
 ## Whether there is a running process this seam could stop. False for the
@@ -175,17 +315,25 @@ func can_close() -> bool:
 ##
 ## So a flatpak entry is closed with `flatpak kill <app-id>`, which is the
 ## documented way to stop a sandbox, and anything else falls back to the pid.
-## Both paths then let _check_exit notice the process is gone through the same
-## poll as a normal exit, so there is exactly one route back to the rail.
+##
+## THE RAIL COMES BACK ON EVIDENCE, NOT ON HOPE. An earlier version armed the
+## quiet-poll flag here and declared the process "terminated on request" on
+## the very next tick, without checking -- so a `flatpak kill` that achieved
+## nothing (a sandbox instance not yet registered, which is plausible in
+## exactly the hung-startup state the failure splash sends people here from)
+## returned the rail underneath an application that was still alive and could
+## still map a window minutes later. Now the flatpak path stays on the normal
+## exit poll -- the wrapper is unreaped until it actually dies, so asking
+## is_process_running about it is safe and honest -- and only escalates to
+## the wrapper SIGKILL if the sandbox has ignored the request for 10 s. The
+## quiet flag is armed solely by _kill_pid, whose OS.kill is the thing that
+## makes a later is_process_running an engine ERROR in the journal.
 func close_current() -> void:
 	if _current.is_empty():
 		return
 
 	var exec: Array = _current.get("exec", [])
 	var app_id := _flatpak_app_id(exec)
-	# Armed before either kill path, so the very next poll takes the quiet
-	# branch rather than asking about a pid that is already gone.
-	_terminating = _pid > 0
 
 	if not app_id.is_empty():
 		ShellLog.info("closing flatpak %s" % app_id)
@@ -195,6 +343,8 @@ func close_current() -> void:
 		if pid <= 0:
 			ShellLog.warn("could not run `flatpak kill %s`; falling back to the pid" % app_id)
 			_kill_pid()
+			return
+		_close_escalate_ticks = CLOSE_ESCALATE_TICKS
 		return
 
 	_kill_pid()
@@ -219,14 +369,37 @@ func minimize_current() -> void:
 		return
 	ShellLog.info("minimize requested for %s; app stays running"
 		% str(_current.get("title", "")))
+	# If the splash is somehow still up -- possible only where the watchdog
+	# answers UNKNOWN and nothing ever cleared it -- it must not cover the rail
+	# this call is bringing back. The app keeps running; only the seam's own
+	# furniture goes. The bridge goes with it: a rail the person is driving
+	# must not also be typing arrows into a backgrounded file manager.
+	_stop_watchdog()
+	_remove_splash()
+	_remove_pad_keys()
 	DisplayServer.window_move_to_foreground()
 	minimized.emit(_current)
+
+
+## How many exit polls a `flatpak kill` gets to actually end the sandbox
+## before the wrapper is killed outright. Ten seconds: Steam takes seconds to
+## shut down cleanly and must get them, but the person who pressed Close is
+## watching a screen that claims to be closing, and half a minute of that is
+## the button reading as broken.
+const CLOSE_ESCALATE_TICKS := 20
+
+var _close_escalate_ticks := 0
 
 
 func _kill_pid() -> void:
 	if _pid <= 0:
 		return
 	ShellLog.info("terminating pid %d" % _pid)
+	# The quiet-poll flag is armed HERE and only here: OS.kill is what makes a
+	# later is_process_running an engine ERROR about a reaped pid, so this is
+	# the one path that must stop asking. Every other close keeps polling and
+	# the rail comes back when the process is actually gone.
+	_terminating = true
 	# OS.kill is SIGKILL on Unix. Abrupt, and acceptable here: this is the
 	# button someone presses because the thing on screen will not go away, and
 	# an application that ignored a polite request is exactly the case it
@@ -273,6 +446,14 @@ func _check_exit() -> void:
 		return
 
 	if _pid > 0 and OS.is_process_running(_pid):
+		# A close is pending and being ignored: give `flatpak kill` its ten
+		# seconds, then stop asking politely. _kill_pid arms the quiet branch,
+		# so the tick after the SIGKILL is the one that finishes.
+		if _close_escalate_ticks > 0:
+			_close_escalate_ticks -= 1
+			if _close_escalate_ticks == 0:
+				ShellLog.warn("flatpak kill has not ended pid %d after 10 s; killing the wrapper" % _pid)
+				_kill_pid()
 		return
 	ShellLog.info("pid %d exited" % _pid)
 	_pid = -1
@@ -297,6 +478,16 @@ func _on_closed() -> void:
 func _finish() -> void:
 	var entry := _current
 	_current = {}
+
+	# The watchdog and splash go whatever state they are in: a launch that
+	# ended ends the question of whether it drew, and a failure-state splash
+	# left up over the returning rail would be the seam lying in the other
+	# direction. The escalation counter dies with the launch it was counting
+	# for, so a close pending on THIS app can never SIGKILL the next one.
+	_close_escalate_ticks = 0
+	_stop_watchdog()
+	_remove_splash()
+	_remove_pad_keys()
 
 	var placeholder := _placeholder
 	_placeholder = null

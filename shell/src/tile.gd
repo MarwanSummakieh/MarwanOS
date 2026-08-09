@@ -37,6 +37,13 @@ signal selected(entry: Dictionary)
 
 var entry: Dictionary = {}
 
+## How large the card grows when focused. The rail's 340 by default; the store
+## grid dials it down before add_child, because a growth that opens up a strip
+## along one axis shoves a grid around on two. A variable rather than a second
+## card class -- the difference is one number, and everything else about being
+## a card (the press semantics especially) must stay identical.
+var focused_size: int = TvTheme.CARD_FOCUSED_SIZE
+
 var _idle_box: StyleBoxFlat
 var _focus_box: StyleBoxFlat
 var _ring: Panel
@@ -144,7 +151,7 @@ func _build_icon() -> void:
 	if path.is_empty():
 		return
 
-	var image := _load_icon_image(path)
+	var image := load_icon_image(path)
 	if image == null:
 		ShellLog.warn("could not load icon %s for %s" % [path, str(entry.get("id", ""))])
 		return
@@ -192,7 +199,13 @@ const ICON_RASTER_PX := 512
 ## the caller falls back to the wash -- which is the behaviour appscan's old
 ## comment was protecting, kept, but decided here where it can be detected
 ## instead of assumed.
-func _load_icon_image(path: String) -> Image:
+##
+## STATIC AND SHARED, not private: launch_splash.gd draws the same icon the
+## card carried, and two copies of the SVG two-pass would drift the first time
+## one of them learned something the other did not. It lives here rather than
+## in a module of its own because the card is where every rule above was paid
+## for, and Phase 1's key-art pass replaces both call sites at once.
+static func load_icon_image(path: String) -> Image:
 	if path.get_extension().to_lower() != "svg":
 		return Image.load_from_file(path)
 
@@ -220,7 +233,7 @@ func _load_icon_image(path: String) -> Image:
 ## Grows or shrinks the card in the layout. See the class header for why this is
 ## custom_minimum_size and not scale.
 func set_selected_size(is_selected: bool) -> void:
-	var target := float(TvTheme.CARD_FOCUSED_SIZE if is_selected else TvTheme.CARD_SIZE)
+	var target := float(focused_size if is_selected else TvTheme.CARD_SIZE)
 
 	if _size_tween != null and _size_tween.is_valid():
 		_size_tween.kill()

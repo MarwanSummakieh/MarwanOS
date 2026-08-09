@@ -297,3 +297,95 @@ func set_overlay(enabled: bool) -> void:
 			% [OVERLAY_PROPERTY, value, window_id, code, " ".join(output)])
 		return
 	ShellLog.info("%s=%s on window %s" % [OVERLAY_PROPERTY, value, window_id])
+
+
+# ---------------------------------------------------------------------------
+# THE FOCUS QUESTION
+#
+# gamescope publishes what it is doing as root-window X properties, and
+# GAMESCOPE_FOCUSED_WINDOW is the one that answers "whose pixels are on the
+# TV". The launch seam needs that answer while a spawn is in flight, because a
+# pid is not evidence of a window: the desktop Steam client's wrapper stays
+# alive whether or not anything ever mapped, and the difference between "the
+# app is on screen" and "the shell is still what the TV shows" is exactly this
+# property. See Launcher's watchdog for what is done with the answer.
+#
+# xprop again rather than Godot, for the overlay switch's reason: Godot
+# exposes the window handle and no X property API at all. Reading the root
+# window lives here, next to the shell's other xprop call, so the launch seam
+# stays free of X plumbing that Phase 1 would otherwise have to delete twice.
+#
+# THE THIRD ANSWER IS LOAD-BEARING. On a desk run and under the Xvfb harness
+# there is no gamescope and no property, and "cannot tell" must not collapse
+# into either of the other two: reported as SHELL it would declare every desk
+# launch failed at the deadline, reported as ELSEWHERE it would clear the
+# splash on evidence that does not exist. So UNKNOWN is its own value and the
+# caller is expected to do nothing on it.
+
+enum Focus { SHELL, ELSEWHERE, UNKNOWN }
+
+const FOCUSED_WINDOW_PROPERTY := "GAMESCOPE_FOCUSED_WINDOW"
+
+## Set after the first line that had CONTENT but yielded no id, so the journal
+## carries exactly one sample of the shape this parser did not expect instead
+## of either silence or a line per second. The property's exact print format
+## depends on its TYPE (xprop prints `NAME = 123` for a CARDINAL and
+## `NAME: window id # 0x2000004` for a WINDOW), and which type gamescope
+## declares has not been measured on the bench yet -- this is the line that
+## answers it if the answer is "neither of the two handled below".
+var _focus_parse_warned := false
+
+
+## Who gamescope says owns the screen, as one of the three answers above.
+##
+## Blocking, like set_overlay's xprop, and acceptable for the same reason:
+## one small X round trip, made at most once a second and only while a launch
+## is in flight. The parse is deliberately paranoid -- xprop prints
+## "GAMESCOPE_FOCUSED_WINDOW:  not found." at exit 0 when the property does
+## not exist, so a missing "=" is the absence signal, not the exit code; and a
+## line that parses to no usable ids at all is garbage, which is UNKNOWN
+## rather than a claim about focus.
+func focused_window() -> int:
+	var handle := DisplayServer.window_get_native_handle(DisplayServer.WINDOW_HANDLE)
+	if handle == 0:
+		return Focus.UNKNOWN
+
+	var output: Array = []
+	var code := OS.execute("xprop",
+		PackedStringArray(["-root", "-notype", FOCUSED_WINDOW_PROPERTY]), output, true)
+	if code != 0 or output.is_empty():
+		return Focus.UNKNOWN
+
+	var line := str(output[0]).strip_edges()
+
+	# "not found." has neither separator; that is the honest absence signal.
+	# PAST the separator, ids are dug out of whatever prose surrounds them:
+	# xprop's value formatting depends on the property's declared TYPE --
+	# `= 123, 456` for CARDINALs, `: window id # 0x2000004` for WINDOWs -- and
+	# betting the whole watchdog on gamescope declaring one rather than the
+	# other would fail as a permanent, silent UNKNOWN. Scanning every token
+	# for a number swallows both shapes, and the list form gamescope's other
+	# properties use, without caring which one this is.
+	var value := ""
+	if line.contains("="):
+		value = line.get_slice("=", 1)
+	elif line.contains(":"):
+		value = line.get_slice(":", 1)
+	if value.is_empty():
+		return Focus.UNKNOWN
+
+	var saw_id := false
+	for word in value.replace(",", " ").split(" ", false):
+		var text := word.strip_edges()
+		var id := text.hex_to_int() if text.begins_with("0x") else text.to_int()
+		if id == 0:
+			continue
+		saw_id = true
+		if id == handle:
+			return Focus.SHELL
+	if not saw_id:
+		if not _focus_parse_warned:
+			_focus_parse_warned = true
+			ShellLog.warn("cannot read an id out of xprop's answer: %s" % line)
+		return Focus.UNKNOWN
+	return Focus.ELSEWHERE
