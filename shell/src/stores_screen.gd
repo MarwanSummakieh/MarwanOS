@@ -542,6 +542,12 @@ func _refresh_hints() -> void:
 		return
 
 	_hints.add_child(TvTheme.hint("A", HINT_OPEN if _selected_installed() else HINT_INSTALL))
+	# The desktop client is a second, deliberate way to open the same store
+	# application -- see Catalogue.steam_desktop_entry for why the in-client
+	# switch cannot be that way. Offered only while installed: X on a store
+	# that is not here would be a second Install with a stranger name.
+	if _selected_installed() and str(_selected.get("id", "")) == "store.steam":
+		_hints.add_child(TvTheme.hint("X", "Desktop mode"))
 	_hints.add_child(TvTheme.hint("B", "Back"))
 
 
@@ -738,6 +744,25 @@ func _on_launch_finished(_entry: Dictionary) -> void:
 
 
 func _unhandled_input(event: InputEvent) -> void:
+	# X on the Steam page: the desktop client, with the stick as a mouse. The
+	# entry's icon prefers appscan's resolved path -- the same art the tab
+	# draws -- so the launch splash shows the real logo, not the cache's
+	# maybe-stale copy.
+	if event.is_action_pressed("ui_shell_x"):
+		if str(_selected.get("id", "")) != "store.steam" or not _selected_installed():
+			return
+		get_viewport().set_input_as_handled()
+		if Launcher.is_busy():
+			return
+		var entry := Catalogue.steam_desktop_entry()
+		var app_id := str(entry.get("app_id", ""))
+		for app in Installed.apps:
+			if str(app.get("id", "")) == app_id and not str(app.get("icon", "")).is_empty():
+				entry["icon"] = str(app.get("icon", ""))
+				break
+		Launcher.launch(entry)
+		return
+
 	if not event.is_action_pressed("ui_cancel"):
 		return
 	# Consumed so the home rail underneath never sees the same press.

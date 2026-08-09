@@ -56,8 +56,9 @@ const STEAM_STORE := {
 	"title": "Steam",
 	"tagline": "Valve's storefront and library, installed from Flathub",
 	"description": "Browse and buy on the Steam store, and pull your library"
-		+ " down to this machine. Pressing A opens Steam itself, fullscreen,"
-		+ " on its storefront; quitting Steam lands back on this page.",
+		+ " down to this machine. A opens Big Picture on the storefront;"
+		+ " X opens the desktop client with the stick as a mouse. Quitting"
+		+ " Steam lands back on this page.",
 	"accent": "#2A3F5A",
 	"exec": ["flatpak", "run", "com.valvesoftware.Steam", "-gamepadui", "steam://store"],
 	# The desktop-entry id, which is how the tab finds the application's REAL
@@ -69,6 +70,32 @@ const STEAM_STORE := {
 	# actually installed.
 	"app_id": "com.valvesoftware.Steam",
 }
+
+
+## Steam's OTHER face: the desktop client, launched deliberately from the
+## shell rather than reached through Big Picture's own "Switch to Desktop".
+## The in-client switch can never work here and is not a bug in this shell's
+## power to fix: it restarts the client into the tray-centric multi-window
+## desktop UI mid-session, under a compositor built to seat one fullscreen
+## window -- the exact shape that ran invisibly for days. Launching desktop
+## mode FROM THE SHELL is different in the two ways that matter: gamescope's
+## --force-windows-fullscreen manages the windows from their first map, and
+## the launch seam attaches the pad bridge in pointer mode (see pad_keys.gd)
+## from the first frame -- because the desktop client is a mouse UI and this
+## machine's only mouse is the right stick.
+##
+## A separate id, not a flag on STEAM_STORE: the launch seam, the splash and
+## the bridge all key on the entry id, and "Steam as a storefront" and "Steam
+## as a desktop program" want different treatment from every one of them.
+static func steam_desktop_entry() -> Dictionary:
+	return {
+		"id": "store.steam.desktop",
+		"title": "Steam",
+		"accent": str(STEAM_STORE["accent"]),
+		"exec": ["flatpak", "run", "com.valvesoftware.Steam"],
+		"app_id": str(STEAM_STORE["app_id"]),
+		"icon": store_icon_path(str(STEAM_STORE["app_id"])),
+	}
 
 
 ## The system's own shelf in the stores screen: every application the image
@@ -243,19 +270,28 @@ const STORE_DIR := "/var/marwanos/store"
 const STORE_DIR_ENV := "MARWANOS_SHELL_STORE_DIR"
 
 
-## THE APPLICATIONS THE PAD-KEYS BRIDGE COVERS: desktop programs with no
-## gamepad support of their own, which the shell drives by translating pad
-## presses into X key events while they run (see pad_keys.gd). A LIST, not a
-## flag on the entry, because installed entries come from apps.tsv and a
-## column there would put shell input policy into a scanner whose whole job
-## is reporting what is on disk. Games and TV-native apps must never appear
-## here: Steam and Kodi read the pad themselves, and double-delivered input
-## is worse than none.
-const PAD_KEY_APPS := ["org.kde.dolphin"]
+## THE APPLICATIONS THE PAD BRIDGE COVERS, and how each is driven: desktop
+## programs with no gamepad support of their own, which the shell drives by
+## injecting X events while they run (see pad_keys.gd). "keys" walks a
+## keyboard-navigable UI with arrows and Return -- right for a file manager.
+## "pointer" moves a real cursor with the stick and clicks -- right for a
+## mouse-first UI like the Steam desktop client, where arrow keys go nowhere.
+## A TABLE, not a flag on the entry, because installed entries come from
+## apps.tsv and a column there would put shell input policy into a scanner
+## whose whole job is reporting what is on disk. Gamepad-native apps must
+## never appear here: Steam's Big Picture and Kodi read the pad themselves,
+## and double-delivered input is worse than none -- which is also why the
+## desktop launch has its own id, so Big Picture's cannot match it.
+const PAD_KEY_APPS := {
+	"org.kde.dolphin": "keys",
+	"store.steam.desktop": "pointer",
+}
 
 
-static func pad_key_app(app_id: String) -> bool:
-	return PAD_KEY_APPS.has(app_id)
+## The bridge mode for an entry id: "keys", "pointer", or empty for the apps
+## that speak gamepad natively and get no bridge at all.
+static func pad_key_mode(app_id: String) -> String:
+	return str(PAD_KEY_APPS.get(app_id, ""))
 
 
 ## The one-line description AVAILABLE_APPS carries for an id, or empty. The

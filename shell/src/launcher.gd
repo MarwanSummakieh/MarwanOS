@@ -247,8 +247,10 @@ func _check_window() -> void:
 			# never gets one -- the watchdog only answers ELSEWHERE where
 			# gamescope exists, and that is the only place XTEST injection
 			# lands where a person can see what it did.
-			if _pad_keys == null and Catalogue.pad_key_app(str(_current.get("id", ""))):
+			var mode := Catalogue.pad_key_mode(str(_current.get("id", "")))
+			if _pad_keys == null and not mode.is_empty():
 				_pad_keys = PadKeys.new()
+				_pad_keys.mode = mode
 				get_tree().root.add_child(_pad_keys)
 		Kiosk.Focus.SHELL:
 			if _watched_seconds >= WINDOW_DEADLINE_SECONDS \

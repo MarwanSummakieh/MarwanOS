@@ -1,46 +1,49 @@
 extends Node
 
-## The pad-to-keyboard bridge: how a gamepad drives an application that has
-## never heard of one.
+## The pad bridge: how a gamepad drives an application that has never heard
+## of one. Two dialects, chosen per application by Catalogue.PAD_KEY_APPS.
 ##
-## Dolphin is the reason this exists. The person on the couch wants a real
-## file manager, a real file manager is a Qt desktop application, and a Qt
-## desktop application listens to keyboards and mice -- neither of which this
-## machine has. What it does have is a shell that KEEPS RECEIVING PAD INPUT
-## while another client owns the screen (both read evdev; see stores_screen's
-## deafness note, which exists because of exactly this), and an X server on
-## which XTEST can type into whatever holds focus -- which under gamescope is
-## the running application. So: pad events in, `xdotool key` out, and Dolphin
-## behaves as if a very disciplined typist were sitting at it.
+## "keys" -- Dolphin's dialect. Arrows, open, back, context menu: the verbs a
+## keyboard-navigable UI can honour from a stick. Dolphin is why it exists:
+## a real file manager is a Qt desktop application, and a Qt desktop
+## application listens to keyboards -- so the shell types.
 ##
-## THE MAPPING IS NAVIGATION, NOT A KEYBOARD. Arrows, open, back, context
-## menu -- the verbs a file manager can honour from a stick. Anything that
-## needs typing (rename, a path bar) needs the on-screen keyboard grown up
-## into an injector, which is Phase 1 work; mapping X to a key nobody can
-## follow up on would be a button that breaks a flow instead of one that is
-## honestly absent.
+## "pointer" -- the Steam desktop client's dialect. That client is a
+## mouse-first UI; arrows land nowhere useful, so the stick moves a real X
+## cursor instead (relative moves at a fixed cadence), A clicks, Y
+## right-clicks, B sends Escape, and the shoulders scroll. The same trick
+## every console's built-in browser plays, done here with xdotool because the
+## X server is already there and XTEST aims at whatever holds focus -- which
+## under gamescope is the running application.
+##
+## WHAT MAKES INJECTION SAFE HERE: the shell KEEPS RECEIVING PAD INPUT while
+## another client owns the screen (both read evdev; see stores_screen's
+## deafness note, which exists because of exactly this), so no focus, grab or
+## protocol needs negotiating. The bridge listens where the shell already
+## hears, and xdotool delivers where gamescope already points.
 ##
 ## WHO STARTS AND STOPS THIS IS THE SEAM'S BUSINESS, NOT OURS. Launcher
 ## creates the bridge only once the window watchdog has SEEN the application
-## take the screen (Focus.ELSEWHERE) -- typing into an app that has not drawn
-## yet is how a splash-covered machine ends up with three phantom keystrokes
-## queued -- and frees it when the launch finishes or is minimized. While the
-## home menu is over the application, shell_root pauses it: the same press
-## must not both move the menu and type into the app behind it. The pause is
-## explicit rather than inferred from focus, because a launch from the stores
-## screen leaves a deaf store tab holding GUI focus the whole time and any
-## focus-based inference reads that as "shell UI active" forever.
+## take the screen (Focus.ELSEWHERE) -- injecting into an app that has not
+## drawn yet queues phantom input behind a splash -- and frees it when the
+## launch finishes or is minimized. While the home menu is over the
+## application, shell_root pauses it: the same press must not both move the
+## menu and reach the app behind it. The pause is explicit rather than
+## inferred from focus, because a launch from the stores screen leaves a deaf
+## store tab holding GUI focus the whole time and any focus-based inference
+## reads that as "shell UI active" forever.
 ##
-## Per-press process spawn is the cost, and it is fine: xdotool is a few
-## milliseconds of X round trip, create_process does not block the frame, and
-## a file manager is driven at human browsing speed. If a future bridge needs
-## gaming-rate input it needs uinput and a daemon, not a faster xdotool.
+## Per-event process spawn is the cost, and it is priced per dialect: keys
+## fire at human browsing speed, and pointer moves are batched to
+## POINTER_FLUSH_SECONDS so a held stick costs twenty tiny processes a
+## second, not sixty. If a future bridge needs gaming-rate input it needs
+## uinput and a daemon, not a faster xdotool.
 
 const REPEAT_DELAY := 0.4
 const REPEAT_INTERVAL := 0.12
 
-## Action -> X keysym. Only the arrows repeat; Return, BackSpace and Menu on
-## hold would be a machine gun pointed at a file tree.
+## Keys dialect: action -> X keysym. Only the arrows repeat; Return,
+## BackSpace and Menu on hold would be a machine gun pointed at a file tree.
 const KEY_FOR_ACTION := {
 	"ui_up": "Up",
 	"ui_down": "Down",
@@ -53,10 +56,45 @@ const KEY_FOR_ACTION := {
 
 const REPEATING := ["ui_up", "ui_down", "ui_left", "ui_right"]
 
+## Pointer dialect: button actions -> what they inject. Movement is not in
+## this table -- it is read as axis strength in _process, so the stick's
+## whole range matters and the dpad (bound to the same actions) nudges.
+const POINTER_FOR_ACTION := {
+	"ui_accept": ["click", "1"],
+	"ui_shell_y": ["click", "3"],
+	"ui_cancel": ["key", "--clearmodifiers", "Escape"],
+}
+
+## Full-tilt cursor speed, in pixels per second of the DESIGN surface. Brisk
+## enough to cross 1920 in about two seconds, slow enough to land on a row in
+## a library list. The response curve below is what makes both true at once.
+const POINTER_SPEED := 900.0
+
+## Squaring the deflection gives the stick a slow edge without costing the
+## fast middle -- the same curve every console pointer uses.
+const POINTER_CURVE := 2.0
+
+## How often accumulated movement becomes one xdotool call. Twenty a second
+## reads as continuous on a TV and keeps the spawn cost trivial.
+const POINTER_FLUSH_SECONDS := 0.05
+
+## Scroll clicks (X buttons 4/5) repeat at this interval while a shoulder is
+## held. Joypad shoulder buttons arrive as raw button events because the
+## shell's nine actions deliberately do not cover them.
+const SCROLL_INTERVAL := 0.1
+
+## "keys" or "pointer"; set by Launcher before the node enters the tree.
+var mode := "keys"
+
 var paused := false
 
 var _held := ""
 var _repeat: Timer = null
+
+var _pointer_acc := Vector2.ZERO
+var _flush_clock := 0.0
+var _scroll_button := 0
+var _scroll: Timer = null
 
 ## Said once if xdotool cannot be run, not once per press: the bridge failing
 ## is one fact, and the journal needs it exactly one time to name the missing
@@ -69,11 +107,21 @@ func _ready() -> void:
 	_repeat.one_shot = true
 	_repeat.timeout.connect(_on_repeat)
 	add_child(_repeat)
-	ShellLog.info("pad-keys bridge up")
+
+	_scroll = Timer.new()
+	_scroll.wait_time = SCROLL_INTERVAL
+	_scroll.timeout.connect(_on_scroll_tick)
+	add_child(_scroll)
+
+	set_process(mode == "pointer")
+	ShellLog.info("pad bridge up in %s mode" % mode)
 
 
 func _input(event: InputEvent) -> void:
 	if paused:
+		return
+	if mode == "pointer":
+		_pointer_input(event)
 		return
 
 	for action in KEY_FOR_ACTION:
@@ -81,7 +129,7 @@ func _input(event: InputEvent) -> void:
 			# Consumed so the deaf-but-listening shell surfaces underneath
 			# never act on the same press the application just received.
 			get_viewport().set_input_as_handled()
-			_send(str(KEY_FOR_ACTION[action]))
+			_run(["key", "--clearmodifiers", str(KEY_FOR_ACTION[action])])
 			if REPEATING.has(action):
 				_held = action
 				_repeat.start(REPEAT_DELAY)
@@ -93,6 +141,60 @@ func _input(event: InputEvent) -> void:
 			return
 
 
+func _pointer_input(event: InputEvent) -> void:
+	for action in POINTER_FOR_ACTION:
+		if event.is_action_pressed(action):
+			get_viewport().set_input_as_handled()
+			_run(POINTER_FOR_ACTION[action].duplicate())
+			return
+
+	# The shoulders scroll, and they arrive as raw buttons because no action
+	# covers them -- the input map's nine are the shell's own vocabulary and
+	# scrolling is not in it. First press scrolls immediately; the timer
+	# carries the hold.
+	if event is InputEventJoypadButton:
+		var button := 0
+		if event.button_index == JOY_BUTTON_LEFT_SHOULDER:
+			button = 4
+		elif event.button_index == JOY_BUTTON_RIGHT_SHOULDER:
+			button = 5
+		if button == 0:
+			return
+		if event.pressed and _scroll_button != button:
+			_scroll_button = button
+			_run(["click", str(button)])
+			_scroll.start()
+		elif not event.pressed and _scroll_button == button:
+			_scroll_button = 0
+			_scroll.stop()
+
+
+## Movement is polled, not event-driven: an analogue stick held at half tilt
+## produces no further events, and a cursor that only moves on wiggle is a
+## broken mouse. Accumulated in floats so slow deflections still add up to
+## whole pixels instead of rounding to zero forever.
+func _process(delta: float) -> void:
+	if paused:
+		return
+	var dx := Input.get_action_strength("ui_right") - Input.get_action_strength("ui_left")
+	var dy := Input.get_action_strength("ui_down") - Input.get_action_strength("ui_up")
+	var tilt := Vector2(dx, dy)
+	if tilt.length() > 1.0:
+		tilt = tilt.normalized()
+	_pointer_acc += tilt * tilt.length() ** (POINTER_CURVE - 1.0) * POINTER_SPEED * delta
+
+	_flush_clock += delta
+	if _flush_clock < POINTER_FLUSH_SECONDS:
+		return
+	_flush_clock = 0.0
+	var step := Vector2i(_pointer_acc)
+	if step == Vector2i.ZERO:
+		return
+	_pointer_acc -= Vector2(step)
+	# `--` so a leftward move's negative number is not read as an option.
+	_run(["mousemove_relative", "--", str(step.x), str(step.y)])
+
+
 ## Releasing the pause mid-hold must not resurrect a repeat armed before the
 ## menu opened; the person's thumb has long since moved on.
 func set_paused(value: bool) -> void:
@@ -100,20 +202,29 @@ func set_paused(value: bool) -> void:
 	if paused:
 		_held = ""
 		_repeat.stop()
+		_scroll_button = 0
+		_scroll.stop()
+		_pointer_acc = Vector2.ZERO
 
 
 func _on_repeat() -> void:
 	if _held.is_empty() or paused:
 		return
-	_send(str(KEY_FOR_ACTION[_held]))
+	_run(["key", "--clearmodifiers", str(KEY_FOR_ACTION[_held])])
 	_repeat.start(REPEAT_INTERVAL)
 
 
-func _send(key: String) -> void:
-	# --clearmodifiers: gamescope or a previous injection can leave a phantom
-	# modifier latched, and "Down" arriving as "Shift+Down" turns navigation
-	# into range selection.
-	var pid := OS.create_process("xdotool", ["key", "--clearmodifiers", key])
+func _on_scroll_tick() -> void:
+	if _scroll_button == 0 or paused:
+		return
+	_run(["click", str(_scroll_button)])
+
+
+func _run(args: Array) -> void:
+	var packed := PackedStringArray()
+	for arg in args:
+		packed.append(str(arg))
+	var pid := OS.create_process("xdotool", packed)
 	if pid <= 0 and not _spawn_warned:
 		_spawn_warned = true
-		ShellLog.warn("cannot run xdotool; the pad-keys bridge is typing into a void")
+		ShellLog.warn("cannot run xdotool; the pad bridge is gesturing into a void")
