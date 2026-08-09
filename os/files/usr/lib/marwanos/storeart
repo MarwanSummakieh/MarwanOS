@@ -1,0 +1,156 @@
+#!/usr/bin/env bash
+#
+# Prefetch store artwork, so the store screen renders from disk.
+#
+# WHY THIS EXISTS. The store screen draws a card for every application the
+# image ships, installed or not (catalogue.gd's AVAILABLE_APPS) -- and for the
+# not-installed ones there is nothing on the machine to draw. No flatpak, no
+# desktop entry, no exported icon: marwanos-appscan can only name icons for
+# things that are actually here. So an available card was a coloured rectangle
+# with a title on it, and the real logo arrived only after the multi-gigabyte
+# install it was supposed to be advertising. A store whose shelves are blank
+# until you buy something has it exactly backwards -- the PS5 look this shell
+# is chasing shows the artwork FIRST.
+#
+# So this fetches each shipped application's icon from Flathub's appstream
+# tree once, into /var/marwanos/store/icons/<id>.png, where the shell reads it
+# like any other file. /var rather than /run because artwork is worth keeping:
+# it survives reboots, so a machine that was online once renders a full store
+# forever after, including offline.
+#
+# THE SHELL NEVER FETCHES. Same rule as netcheck and appscan: the shell is a
+# renderer, it opens no sockets, and the desk harness runs it under
+# --network=none to keep that true. The system fetches; the shell draws files.
+#
+# OFFLINE IS A QUIET NO-OP, and the answer is read rather than measured:
+# marwanos-netcheck already probes the exact host this would download from,
+# and a second probe here would be a second opinion about the same wire. No
+# state file or an `offline` in it means "do not try" -- the timer that runs
+# this re-fires soon enough, and icons are decoration, not something worth
+# hammering a dead link for.
+#
+# ICONS ARE FETCHED ONCE AND NEVER REFRESHED. An icon that exists is skipped,
+# so a machine that has them all does a handful of stats and exits. That is
+# deliberate: application icons change on the timescale of rebrands, this list
+# changes only with the image, and "refresh on missing only" means this can
+# run every fifteen minutes forever without costing anything or being able to
+# break artwork that already works. A rebrand ships by deleting the file from
+# /var on the bench, or waiting for Phase 1, where marwand owns AppStream
+# metadata wholesale and this script is deleted.
+#
+# Phase 1 note: same retirement plan as appscan and netcheck -- marwand serves
+# real AppStream data (names, descriptions, screenshots, icons) over RPC, and
+# this unit, its timer and its directory convention go away together.
+#
+set -uo pipefail
+
+TAG=marwanos-storeart
+STATE_DIR=/run/marwanos
+STATE="$STATE_DIR/storeart.state"
+NET_STATE="$STATE_DIR/network.state"
+## Shared with marwanos-appctl -- see that file's header for why sharing it is
+## safe and the list file's own header for what may go in it.
+SHIPPED=/usr/lib/marwanos/shipped-apps
+ICON_DIR=/var/marwanos/store/icons
+## Flathub publishes every app's appstream icon at a predictable path; 128x128
+## is the size the catalogue tree always carries. The store cards scale it --
+## soft beats blank, and Phase 1 replaces this with real AppStream anyway.
+ICON_BASE=https://dl.flathub.org/repo/appstream/x86_64/icons/128x128
+
+info() { printf '<6>%s: %s\n' "$TAG" "$*"; }
+err()  { printf '<3>%s: %s\n' "$TAG" "$*" >&2; }
+
+## One line for the shell, same seam as netcheck's network.state: `done N`
+## (N icons on disk), `offline` (missing icons, no network to fetch them), or
+## `failed` (tried and could not). /run empties every boot so a stale claim
+## cannot outlive the boot that wrote it. Atomic via rename: the shell may
+## poll this and must never read half a line.
+state() {
+    { printf '%s\n' "$*" > "$STATE.tmp" && mv -f "$STATE.tmp" "$STATE"; } \
+        || err "cannot write $STATE"
+}
+
+install -d "$STATE_DIR" || err "cannot create $STATE_DIR"
+
+# 0755 root-owned, matching tmpfiles.d/50-marwanos.conf, which also creates
+# it: the shell (player) only ever reads here, and root writing what player
+# reads is the same one-way flow as every other seam in this tree. Created
+# here as well so a run never depends on which of the two got there first.
+if ! install -d -m 0755 "$ICON_DIR"; then
+    err "cannot create $ICON_DIR -- the store will draw fallback washes"
+    state failed
+    exit 1
+fi
+
+# The allow-list, one id per line, comments and blanks stripped. An empty
+# result is a broken image rather than an empty store -- the file ships with
+# ids -- so it is loud, not a quiet zero-icon success.
+mapfile -t apps < <(grep -Ev '^[[:space:]]*(#|$)' "$SHIPPED" 2>/dev/null)
+if [ "${#apps[@]}" -eq 0 ]; then
+    err "$SHIPPED is missing or empty -- no artwork to fetch, and appctl is refusing everything too"
+    state failed
+    exit 1
+fi
+
+# What is actually missing, before touching the network: the common case after
+# the first successful run is "nothing", and that case must cost stats only.
+missing=()
+for app in "${apps[@]}"; do
+    [ -f "$ICON_DIR/$app.png" ] || missing+=("$app")
+done
+
+if [ "${#missing[@]}" -eq 0 ]; then
+    state "done ${#apps[@]}"
+    exit 0
+fi
+
+# netcheck's answer, not a probe of our own -- see the header. A missing file
+# is a boot too young to have answered yet, which reads the same as offline:
+# do not try, the timer comes back.
+net="$(cat "$NET_STATE" 2>/dev/null)" || net=""
+if [ "$net" != "online" ]; then
+    info "${#missing[@]} icon(s) missing and the network is not there; waiting for a later run"
+    state offline
+    exit 0
+fi
+
+failed=0
+for app in "${missing[@]}"; do
+    tmp="$ICON_DIR/.$app.png.tmp"
+    # Atomic via rename, like every state file here, but for a better reason
+    # than polling: the shell may load this PNG at the exact moment it lands,
+    # and a half-written image is a corrupt-texture error on the TV where a
+    # missing one is just the fallback wash a moment longer.
+    if ! curl -fsSL --max-time 30 --retry 2 -o "$tmp" "$ICON_BASE/$app.png"; then
+        err "could not fetch the icon for $app"
+        rm -f "$tmp"
+        failed=$(( failed + 1 ))
+        continue
+    fi
+    # Prove it is a PNG rather than trust the exit code, in the spirit of the
+    # Containerfile's ELF check on the shell binary: -f catches a 404, but a
+    # CDN that answers 200 with an error page would land HTML in a .png, and
+    # the failure would surface as a broken texture on the TV instead of here.
+    if [ "$(od -An -tx1 -N8 "$tmp" | tr -d ' \n')" != "89504e470d0a1a0a" ]; then
+        err "the download for $app is not a PNG -- discarding it"
+        rm -f "$tmp"
+        failed=$(( failed + 1 ))
+        continue
+    fi
+    chmod 0644 "$tmp"
+    mv -f "$tmp" "$ICON_DIR/$app.png"
+    info "fetched the icon for $app"
+done
+
+if [ "$failed" -gt 0 ]; then
+    err "$failed icon(s) could not be fetched; the timer will retry"
+    state failed
+    exit 1
+fi
+
+present=0
+for app in "${apps[@]}"; do
+    [ -f "$ICON_DIR/$app.png" ] && present=$(( present + 1 ))
+done
+info "store artwork complete: $present icon(s) on disk"
+state "done $present"

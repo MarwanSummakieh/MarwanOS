@@ -1,0 +1,44 @@
+[Unit]
+# Prefetches each shipped application's Flathub icon into
+# /var/marwanos/store/icons, so the store screen renders artwork from disk.
+# See the script header for why the shell cannot fetch this itself.
+#
+# Started by marwanos-storeart.timer, not by a wants link of its own: the
+# timer is what gives an offline boot a second chance, and one starter means
+# one story about when this runs.
+#
+# After network-online like marwanos-flatpak-install, because on the boot path
+# this is pure download; after netcheck because its state file is the only
+# network answer this consults -- ordering does not guarantee the file has an
+# answer yet (netcheck needs one probe first), but a run that early just says
+# `offline` and the timer comes back.
+#
+# Deliberately NOT ordered before greetd, same as flatpak-install: the shell
+# must come up whether or not artwork ever arrives, and a missing icon is a
+# fallback wash on a card, not a broken appliance.
+Description=Prefetch store artwork from Flathub (/var/marwanos/store/icons)
+Documentation=file:///usr/lib/marwanos/storeart
+After=network-online.target marwanos-netcheck.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/marwanos/storeart
+
+# Seven icons at ~10 KB each is seconds, but the link this runs on has been
+# measured taking minutes to do anything -- and the default 90s would turn a
+# slow fetch into a kill mid-write. The script's own curl timeouts keep any
+# single icon bounded.
+TimeoutStartSec=300
+
+# Failure must never cascade, and never loop hot: the TIMER is the retry
+# mechanism, so the unit itself does not restart. A run that failed says so
+# in storeart.state and gets another chance in fifteen minutes.
+Restart=no
+
+# Journal-shaped like everything else here, so `journalctl -t marwanos-storeart`
+# is the whole story and the <N> prefixes survive as syslog priorities.
+StandardOutput=journal
+StandardError=journal
+SyslogLevelPrefix=true
+SyslogIdentifier=marwanos-storeart

@@ -60,10 +60,15 @@ err()  { printf '<3>%s[%s]: %s\n' "$TAG" "$APP" "$*" >&2; }
 ## exactly the metadata this table stands in for.
 display_name() {
     case "$1" in
-        com.valvesoftware.Steam) printf 'Steam' ;;
-        app.zen_browser.zen)     printf 'Zen Browser' ;;
-        tv.kodi.Kodi)            printf 'Kodi' ;;
-        *)                       printf '%s' "$1" ;;
+        com.valvesoftware.Steam)        printf 'Steam' ;;
+        app.zen_browser.zen)            printf 'Zen Browser' ;;
+        tv.kodi.Kodi)                   printf 'Kodi' ;;
+        org.kde.dolphin)                printf 'Dolphin' ;;
+        org.libretro.RetroArch)         printf 'RetroArch' ;;
+        org.videolan.VLC)               printf 'VLC' ;;
+        com.moonlight_stream.Moonlight) printf 'Moonlight' ;;
+        com.spotify.Client)             printf 'Spotify' ;;
+        *)                              printf '%s' "$1" ;;
     esac
 }
 

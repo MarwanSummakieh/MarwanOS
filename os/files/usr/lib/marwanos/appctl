@@ -21,17 +21,21 @@
 # question. Two things narrow it:
 #
 #   * The verb is matched against a fixed case, as in marwanos-update.
-#   * The application id must appear in SHIPPED_APPS below -- a hand-written
-#     list, not a pattern. A pattern that "looks like a flatpak id" would still
-#     let the shell name anything on Flathub; a list means the reverse channel
-#     is "pick one of the two applications this image ships", which is about as
-#     narrow as a parameterised request gets.
+#   * The application id must appear in /usr/lib/marwanos/shipped-apps -- a
+#     hand-written list, not a pattern. A pattern that "looks like a flatpak
+#     id" would still let the shell name anything on Flathub; a list means the
+#     reverse channel is "pick one of the applications this image ships",
+#     which is about as narrow as a parameterised request gets.
 #
-# The list duplicates what the Containerfile's .wants symlinks already name, and
-# that duplication is deliberate rather than overlooked: this file is a
-# privilege boundary and its allow-list should be readable in one place without
-# resolving symlinks in another. Phase 1 deletes both -- marwand owns the app
-# set and this seam becomes an RPC.
+# The list used to live inline here, which was right when this was its only
+# reader; marwanos-storeart needs the same list to prefetch artwork, and two
+# hand-written copies of an ALLOW-LIST drifting apart is worse than two copies
+# of an installer doing so -- the drift would be a card the store draws whose
+# press root refuses, or an id root honours that no card can name. Moving it
+# to a file does not move the trust boundary: /usr/lib is image state,
+# read-only at runtime under composefs, so only the image can say what is
+# shipped, exactly as before. Phase 1 deletes the file and this seam both --
+# marwand owns the app set and this becomes an RPC.
 #
 # UNINSTALL STICKS ACROSS REBOOTS. Removing the flatpak alone would not: the
 # install unit is gated on /var/marwanos/installed.<id>, so clearing that stamp
@@ -53,12 +57,13 @@ STAMP_DIR=/var/marwanos
 POLL=0.5
 
 ## The applications this image ships, and therefore the only ones a request may
-## name. See the header for why this is a list and not a pattern.
-SHIPPED_APPS=(
-    com.valvesoftware.Steam
-    app.zen_browser.zen
-    tv.kodi.Kodi
-)
+## name. See the header for why this is a list and not a pattern, and why
+## reading it from a file under /usr/lib does not widen the boundary. Read
+## ONCE, at start: the file cannot change under a running image, and a list
+## re-read per request would let a transient read failure turn into a
+## transient hole.
+SHIPPED_LIST=/usr/lib/marwanos/shipped-apps
+mapfile -t SHIPPED_APPS < <(grep -Ev '^[[:space:]]*(#|$)' "$SHIPPED_LIST" 2>/dev/null)
 
 info() { printf '<6>%s: %s\n' "$TAG" "$*" >&2; }
 warn() { printf '<4>%s: %s\n' "$TAG" "$*" >&2; }
@@ -67,6 +72,14 @@ err()  { printf '<3>%s: %s\n' "$TAG" "$*" >&2; }
 install -d -m 0755 "$RUN_DIR" || { err "cannot create $RUN_DIR"; exit 1; }
 install -d -m 0700 -o player -g player "$REQ_DIR" \
     || { err "cannot create $REQ_DIR -- the shell could never ask for anything"; exit 1; }
+
+# An empty list fails towards refusal -- is_shipped matches nothing -- which is
+# the safe direction, but it is a broken image rather than a valid state (the
+# file always ships ids), so it must not be a silent one: every button in
+# the store would be refused with nothing anywhere saying why. Loud, then keep
+# running, because the uninstall-side plumbing is not what is broken.
+[ "${#SHIPPED_APPS[@]}" -gt 0 ] \
+    || err "$SHIPPED_LIST is missing or empty -- every request will be refused"
 
 
 ## `<state>TAB<app>TAB<detail>`. States: idle, installing, uninstalling, done,

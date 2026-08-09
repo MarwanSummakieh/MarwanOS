@@ -380,12 +380,19 @@ RUN --mount=type=cache,dst=/var/cache/libdnf5,sharing=locked \
 # still pass any test where the pad was plugged in at boot; and libvulkan, the
 # loader every renderer path here goes through. ldconfig writes to a file rather
 # than a pipe for the same SIGPIPE reason the initramfs greps below spell out.
+# xdotool is the pad-keys bridge's injector (shell/src/pad_keys.gd): the shell
+# translates gamepad presses into XTEST key events for desktop applications
+# that have no controller support of their own -- Dolphin is the first. It is
+# a tool, not a library, so the dlopen loop below rightly does not know it;
+# the verify block asserts it next to xprop, its sibling in "small X clients
+# the shell shells out to".
 RUN --mount=type=cache,dst=/var/cache/libdnf5,sharing=locked \
     set -euxo pipefail; \
     dnf -y install \
         greetd \
         gamescope \
         cage \
+        xdotool \
         vulkan-tools \
         egl-wayland \
         plymouth-plugin-script \
@@ -657,6 +664,8 @@ RUN set -euxo pipefail; \
     chmod 0644 /usr/lib/systemd/system/marwanos-wifi.service; \
     chmod 0644 /usr/lib/systemd/system/marwanos-update.service; \
     chmod 0644 /usr/lib/systemd/system/marwanos-appctl.service; \
+    chmod 0644 /usr/lib/systemd/system/marwanos-storeart.service; \
+    chmod 0644 /usr/lib/systemd/system/marwanos-storeart.timer; \
     chmod 0644 "/usr/lib/systemd/system/marwanos-flatpak-install@.service"; \
     chmod 0755 /usr/lib/marwanos/session/marwanos-session; \
     chmod 0755 /usr/lib/marwanos/display/panel-policy; \
@@ -666,6 +675,10 @@ RUN set -euxo pipefail; \
     chmod 0755 /usr/lib/marwanos/wifi; \
     chmod 0755 /usr/lib/marwanos/update; \
     chmod 0755 /usr/lib/marwanos/appctl; \
+    chmod 0755 /usr/lib/marwanos/storeart; \
+    : "shipped-apps is deliberately NOT in the 0755 list: it is data both"; \
+    : "appctl and storeart read, not a program, and the find above has"; \
+    : "already normalised it to 0644."; \
     systemd-sysusers /usr/lib/sysusers.d/50-marwanos.conf; \
     for g in video render input; do \
         gid="$(getent group "$g" | cut -d: -f3)"; \
@@ -709,6 +722,14 @@ RUN set -euxo pipefail; \
         /usr/lib/systemd/system/multi-user.target.wants/marwanos-update.service; \
     ln -sf ../marwanos-appctl.service \
         /usr/lib/systemd/system/multi-user.target.wants/marwanos-appctl.service; \
+    : "storeart is enabled through its TIMER, and only the timer: the timer"; \
+    : "starts the service half a minute after boot and again every fifteen"; \
+    : "minutes, which is what gives an offline boot a second chance at its"; \
+    : "artwork. A second wants link on the service itself would be a second"; \
+    : "starter with a subtly different story about when it runs."; \
+    mkdir -p /usr/lib/systemd/system/timers.target.wants; \
+    ln -sf ../marwanos-storeart.timer \
+        /usr/lib/systemd/system/timers.target.wants/marwanos-storeart.timer; \
     systemctl --no-reload mask getty@tty1.service autovt@tty1.service \
                                serial-getty@ttyS0.service; \
     ln -sf /dev/null /usr/lib/systemd/user/xdg-desktop-portal-gtk.service; \
@@ -735,6 +756,17 @@ RUN set -euxo pipefail; \
     test -x /usr/lib/marwanos/wifi; \
     test -x /usr/lib/marwanos/update; \
     test -x /usr/lib/marwanos/appctl; \
+    test -x /usr/lib/marwanos/storeart; \
+    : "The shared allow-list, asserted from both ends. Missing or empty,"; \
+    : "appctl refuses every store request and storeart fetches nothing --"; \
+    : "both failing silently on a machine with no console. The Steam grep is"; \
+    : "the exact-id check: matching everywhere is string equality, so this"; \
+    : "also catches the stray whitespace or BOM that would make an id"; \
+    : "silently stop existing."; \
+    test -s /usr/lib/marwanos/shipped-apps; \
+    grep -q '^com\.valvesoftware\.Steam$' /usr/lib/marwanos/shipped-apps; \
+    grep -q '^org\.libretro\.RetroArch$' /usr/lib/marwanos/shipped-apps; \
+    test -L /usr/lib/systemd/system/timers.target.wants/marwanos-storeart.timer; \
     test -L /usr/lib/systemd/system/multi-user.target.wants/marwanos-panel.service; \
     test -L "/usr/lib/systemd/system/multi-user.target.wants/marwanos-flatpak-install@com.valvesoftware.Steam.service"; \
     test -L "/usr/lib/systemd/system/multi-user.target.wants/marwanos-flatpak-install@app.zen_browser.zen.service"; \
@@ -759,6 +791,14 @@ RUN set -euxo pipefail; \
     : "answers; a base image without it would make the network indicator"; \
     : "permanently say offline while the machine sat happily connected."; \
     command -v curl; \
+    : "xprop is how the shell marks its window GAMESCOPE_EXTERNAL_OVERLAY so"; \
+    : "gamescope layers it over games; the base image happens to ship it today,"; \
+    : "and a base bump that dropped it would silently break overlay stacking."; \
+    command -v xprop; \
+    : "xdotool is how pad presses reach applications with no gamepad support"; \
+    : "of their own (the pad-keys bridge); without it Dolphin installs fine"; \
+    : "and then ignores every button on the controller."; \
+    command -v xdotool; \
     test -L /etc/systemd/system/ModemManager.service; \
     test -f /usr/lib/systemd/logind.conf.d/50-marwanos-lid.conf; \
     test -L /etc/systemd/system/getty@tty1.service; \
