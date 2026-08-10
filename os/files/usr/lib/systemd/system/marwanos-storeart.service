@@ -7,6 +7,16 @@
 # and appscan's steam_art() for how the second job's request and answer are
 # both just files.
 #
+# It also fetches, for every installed game rather than only the bare ones, the
+# wide hero image (into the same icons directory) and the store description
+# (into /var/marwanos/store/meta, as the raw appdetails `data` object). Those
+# two are not filling a reported gap -- a card with a good portrait still has
+# nothing behind it and nothing under it -- so they are surveyed from every
+# `steam.` row in apps.tsv rather than from the ones with an empty icon column.
+#
+# The description half is paced at one request per second and is the only thing
+# in this unit that talks to Valve's store API rather than its CDN.
+#
 # Started by marwanos-storeart.timer, not by a wants link of its own: the
 # timer is what gives an offline boot a second chance, and one starter means
 # one story about when this runs.
@@ -26,7 +36,7 @@
 # means this run finds no games to fetch for, and the timer's next pass reads
 # whatever appscan has published by then. Ordering would buy nothing, because
 # the interesting file appears minutes after appscan STARTS, not at its start.
-Description=Prefetch store and Steam game artwork (/var/marwanos/store/icons)
+Description=Prefetch store artwork and Steam game art and metadata (/var/marwanos/store)
 Documentation=file:///usr/lib/marwanos/storeart
 After=network-online.target marwanos-netcheck.service
 Wants=network-online.target
@@ -39,13 +49,15 @@ ExecStart=/usr/lib/marwanos/storeart
 # measured taking minutes to do anything -- and the default 90s would turn a
 # slow fetch into a kill mid-write. The script's own curl timeouts keep any
 # single icon bounded.
-# Bounded by the WORST run, not the usual one: each artless-but-unreachable
-# appid can legitimately burn ~180 s (two names x --max-time 30 x --retry 2),
-# so 300 s was two bad games on a bad link and then SIGTERM mid-write. Fifteen
-# minutes matches the timer's own cadence -- a run may take up to one full
-# period before the next one is due, and the script's per-curl timeouts keep
-# any single fetch bounded.
-TimeoutStartSec=900
+# Bounded by the WORST run, not the usual one -- and re-derived when the
+# Steam half grew its third fetch family. Per game the ceiling is now
+# portrait+header (~180 s unreachable-worst), hero (~90 s), one appdetails
+# call, and the 1 s/request pacing on top; a modest library on a genuinely
+# bad link can straddle the timer's own 15-minute cadence. Thirty minutes
+# says "two timer periods", which is where a run that slow has earned its
+# SIGTERM: atomic renames mean the kill costs a stale .tmp, never a corrupt
+# file, and the next firing resumes from what landed.
+TimeoutStartSec=1800
 
 # Failure must never cascade, and never loop hot: the TIMER is the retry
 # mechanism, so the unit itself does not restart. A run that failed says so

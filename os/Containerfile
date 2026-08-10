@@ -860,6 +860,12 @@ RUN set -euxo pipefail; \
     : "answers; a base image without it would make the network indicator"; \
     : "permanently say offline while the machine sat happily connected."; \
     command -v curl; \
+    : "jq is how marwanos-storeart parses Valve's appdetails JSON into the"; \
+    : "per-game metadata files the shell draws descriptions from. It comes"; \
+    : "from the base image rather than a dnf line here, which is exactly why"; \
+    : "it is asserted: a base bump that dropped it would leave every game"; \
+    : "card with a title and no sentence under it, silently, at runtime."; \
+    command -v jq; \
     : "xprop is how the shell marks its window GAMESCOPE_EXTERNAL_OVERLAY so"; \
     : "gamescope layers it over games; the base image happens to ship it today,"; \
     : "and a base bump that dropped it would silently break overlay stacking."; \
