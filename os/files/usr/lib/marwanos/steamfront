@@ -1,0 +1,609 @@
+#!/usr/bin/env bash
+#
+# Steam's public storefront, fetched for the shell to draw itself.
+#
+# WHY THIS EXISTS, and what it is NOT. The stores screen's header says, at
+# length, that embedding the Steam client's own window inside a Godot control is
+# compositor work gamescope does not offer one of its clients -- so the Steam
+# tab drew a paragraph ABOUT the store and a button that opened somebody else's
+# fullscreen application. That was honest and it was also a store page with no
+# store on it. Valve publishes the same front page as JSON over a public HTTP
+# endpoint, so the wish that could not be granted by embedding is granted by
+# RENDERING: this fetches the data, the shell draws it at its own fidelity, and
+# the tab becomes a storefront instead of a description of one.
+#
+# MONEY NEVER CHANGES HANDS ANYWHERE NEAR HERE. This fetches names, pictures and
+# prices; buying happens inside Valve's own client, reached by the shell's
+# "Open in Steam" action. See the shell side (shell/src/stores_screen.gd) for
+# the same sentence at the point where a person could otherwise expect a
+# purchase button.
+#
+# THE SEAM IS THE WIFI SEAM, a fourth time (wifi, update, appctl, this). The
+# shell writes a one-line REQUEST file into a player-owned directory; this,
+# running as root, consumes it, does the network work, and writes results the
+# shell reads back:
+#
+#   the shell writes  /run/marwanos/steamfront/request      (0700 player dir)
+#   this writes       /run/marwanos/steamfront.state        <word>TAB<detail>
+#                     /var/marwanos/store/front/<name>.json  normalised results
+#                     /var/marwanos/store/front/art/*.jpg    the pictures
+#
+# The two requests are:
+#
+#   featured                  the front page: three categories of games
+#   app<TAB><appid>           one game's detail, for the panel's sub-view
+#
+# and `<name>` is `featured` or `app.<appid>`. Nothing else is honoured, the
+# appid must be digits, and no part of a request is ever interpolated into a
+# shell string or into a path before it has been checked -- the same rule
+# appctl's allow-list enforces, expressed here as a character class because the
+# space of legal Steam appids is "the integers" rather than a list this image
+# could ship.
+#
+# WHY /var AND NOT /run, for the results. Same argument as marwanos-storeart's
+# icons: a storefront that has been fetched once should still draw on a machine
+# that boots offline. The JSON and the art survive reboots on purpose, and the
+# shell renders whatever is on disk while the state file says separately whether
+# the network could be reached this time.
+#
+# RATE COURTESY IS A DESIGN CONSTRAINT, not a nicety. This is somebody else's
+# public endpoint with no key and no contract, and the shell polls. So:
+#
+#   * ONE API call per served request. Never a call per item, never a fan-out.
+#   * A request whose JSON is younger than CACHE_SECONDS is answered from disk
+#     and the network is not touched at all. Walking into the store tab twice
+#     in a minute costs Valve nothing.
+#   * A request that FAILED is not retried for RETRY_SECONDS, so a shell that
+#     re-asks on every screen open cannot turn an outage into a hammer.
+#   * Art is fetched only for what the answered request actually named, and an
+#     appid whose picture is already on disk is skipped before the network is
+#     considered.
+#
+# THE PARSER IS jq, and that was checked rather than assumed: the runtime image
+# carries jq-1.8.1 and python3-3.14 from the ublue base, neither of them named
+# in any of the Containerfile's dnf lines. Since it arrives as somebody else's
+# dependency, the Containerfile's verify block now asserts `command -v jq`
+# alongside curl and nmcli -- a base bump that dropped it would otherwise
+# surface as a store tab that permanently says Steam's store did not answer.
+# jq over python3 because the whole job is a JSON-to-JSON reshape, which is the
+# one thing jq is for, and because the reshape is then reviewable as a filter
+# instead of as a program.
+#
+# THE SHELL NEVER SEES A URL. The normalised JSON carries appids, names, prices
+# and nothing that could be fetched -- the picture for an item is
+# `art/<appid>.jpg`, a path the shell derives from the appid it already has.
+# That is deliberate: the shell is a renderer that opens no sockets, and putting
+# a live URL in a file it reads is an invitation for a later change to make it
+# one that does.
+#
+# Phase 1 note: marwand owns catalogue data, and this seam goes the way of
+# storeart and appscan when it does.
+#
+set -uo pipefail
+
+TAG=marwanos-steamfront
+RUN_DIR=/run/marwanos
+REQ_DIR="$RUN_DIR/steamfront"
+REQ="$REQ_DIR/request"
+## Where a consumed request is moved before being read, in root-owned RUN_DIR.
+## See the loop for why the move rather than a test-then-read.
+CONSUMED="$RUN_DIR/steamfront-request.consumed"
+STATE="$RUN_DIR/steamfront.state"
+## netcheck's answer, which is the only opinion about the network this holds.
+## Probing again here would be a second opinion about the same wire.
+NET_STATE="$RUN_DIR/network.state"
+
+FRONT_DIR=/var/marwanos/store/front
+ART_DIR="$FRONT_DIR/art"
+
+API_FEATURED='https://store.steampowered.com/api/featuredcategories'
+API_APP='https://store.steampowered.com/api/appdetails'
+
+## THE CATEGORIES, and this is a judgement made against the real response rather
+## than from the endpoint's documentation (there is none). What comes back is
+## six numbered "Spotlights" blocks, then specials, coming_soon, top_sellers,
+## new_releases, genres, trailerslideshow and status. Measured 2026-08-10:
+##
+##   specials       10 items, every one priced, every one discounted, every one
+##                  with a 616x353 capsule. The richest block in the response
+##                  and the only one that exercises an honest discounted price.
+##   top_sellers    10 items, all priced, all with capsules. What a storefront's
+##                  front page is FOR.
+##   new_releases   30 items, all with capsules, 3 of them with no price yet.
+##
+##   coming_soon    10 items and ALL TEN have original_price null and
+##                  final_price 0 -- an unreleased game has no price, so a
+##                  category of them renders as a shelf of things that look
+##                  free. Excluded for that reason and no other.
+##   genres, trailerslideshow, the numbered Spotlights, status
+##                  no per-item price/art shape at all; nothing to draw.
+##
+## Order matters: it is the order the shelves appear in on the TV.
+CATEGORIES=(specials top_sellers new_releases)
+
+## How many items per shelf. Bounds three things at once -- the size of the
+## JSON, the number of art fetches a single request can cause (3 x 8 = 24 at
+## the absolute worst, and only on a machine with an empty cache), and how far
+## a thumb has to travel along a row. new_releases returns thirty; nobody
+## browses thirty tiles on a television.
+ITEMS_PER_CATEGORY=8
+
+## How long a stored answer is served without asking Valve again. An hour is
+## chosen against what the data IS: a storefront's specials change daily and
+## its top sellers hourly at the fastest, so an hour is fresh by the standards
+## of the thing being shown, and it means a person opening the store tab
+## repeatedly during one evening makes exactly one request.
+CACHE_SECONDS=3600
+
+## How long a FAILED request is refused before it may be tried again. The shell
+## asks on every screen open, so without this an outage would be answered with
+## one request per visit; with it, the worst a person leaning on the button can
+## do is one request a minute.
+RETRY_SECONDS=60
+
+## How often to look for a request. Matches the other three seams: a person has
+## just pressed a button and is watching the screen.
+POLL=0.5
+
+## Per-request network ceiling. The API answers in well under a second on a
+## working link; the retry is what covers a lossy one, and the whole point of
+## the number is that a dead link fails in seconds rather than hanging the
+## single-threaded loop below.
+CURL_MAX_TIME=20
+
+## ALL THREE WRITE TO STDERR, for marwanos-wifi's reason: functions here return
+## data through command substitution, and a log line on stdout would become
+## part of that data. systemd parses the <N> prefix on both streams.
+info() { printf '<6>%s: %s\n' "$TAG" "$*" >&2; }
+warn() { printf '<4>%s: %s\n' "$TAG" "$*" >&2; }
+err()  { printf '<3>%s: %s\n' "$TAG" "$*" >&2; }
+
+install -d -m 0755 "$RUN_DIR" || { err "cannot create $RUN_DIR"; exit 1; }
+# 0700 and player-owned: the shell must be able to drop a request here. FATAL
+# rather than logged, for the wifi seam's reason -- without this directory the
+# loop below runs forever answering nothing, `active (running)` with the
+# feature dead, on a machine with no console to notice.
+install -d -m 0700 -o player -g player "$REQ_DIR" \
+    || { err "cannot create $REQ_DIR -- the shell could never ask for anything"; exit 1; }
+# 0755 root-owned, matching tmpfiles.d/50-marwanos.conf, which also creates
+# these: root writes, the shell (player) reads, the same one-way flow as every
+# other seam. Created here too so a run never depends on which got there first.
+install -d -m 0755 /var/marwanos/store "$FRONT_DIR" "$ART_DIR" \
+    || { err "cannot create $FRONT_DIR -- there is nowhere to put a storefront"; exit 1; }
+
+
+## One word plus a detail, for the shell to render. Atomic via rename, the same
+## contract as every other state file here.
+##
+## Words: idle, fetching, done, offline, failed. The detail is the request name
+## (`featured`, `app.<appid>`) for the first four, and a short reason for
+## failed. The shell decides the sentences -- see stores_screen.gd -- because
+## the system reports a state and the shell says how it reads on a television.
+state() {
+    local word="$1" detail="${2:-}"
+    { printf '%s\t%s\n' "$word" "$detail" > "$STATE.tmp" && mv -f "$STATE.tmp" "$STATE"; } \
+        || err "cannot write $STATE"
+}
+
+
+## Is netcheck saying the machine is online? A missing file is a boot too young
+## to have answered, which reads the same as offline: do not try.
+online() {
+    local net
+    net="$(cat "$NET_STATE" 2>/dev/null)" || net=""
+    [ "$net" = "online" ]
+}
+
+
+## Age in seconds of a file, or a very large number if it is not there. Used for
+## both the cache and the failure cooldown, so "no file" has to sort as "old".
+age_of() {
+    local path="$1" mtime now
+    mtime="$(stat -c %Y "$path" 2>/dev/null)" || { printf '999999999'; return; }
+    now="$(date +%s)"
+    printf '%s' "$(( now - mtime ))"
+}
+
+
+## Fetch one picture into ART_DIR/<name>, if it is not already there.
+##
+## Bounded, skip-existing and JPEG-checked, exactly as marwanos-storeart's
+## steam_fetch is and for the same three reasons: art already on disk is the
+## steady state and must cost one stat, `curl -f` keeps out the 404s but not a
+## CDN edge answering 200 with an error page, and a half-written file read by
+## the shell mid-write is a corrupt texture on the TV where a missing one is
+## just a wash a moment longer. FFD8FF is the JPEG SOI marker plus the first
+## byte of the next.
+##
+## Returns 0 if the file is there afterwards (fetched or already present), 1 if
+## it is not. A missing picture is never a failed request: the shell draws a
+## wash under the name, which is the same fallback every other icon here has.
+fetch_art() {
+    local url="$1" name="$2"
+    local dest="$ART_DIR/$name" tmp
+
+    [ -n "$url" ] || return 1
+    [ -f "$dest" ] && return 0
+
+    # Only Valve's own hosts, and this is a real check rather than tidiness:
+    # the URL comes out of a response body, and without it a compromised or
+    # merely creative answer could point this curl anywhere on the internet.
+    case "$url" in
+        https://shared.akamai.steamstatic.com/*|https://cdn.akamai.steamstatic.com/*|\
+https://cdn.cloudflare.steamstatic.com/*|https://shared.cloudflare.steamstatic.com/*|\
+https://steamcdn-a.akamaihd.net/*) ;;
+        *) warn "ignoring artwork served from an unexpected host"; return 1 ;;
+    esac
+
+    tmp="$dest.tmp"
+    if ! curl -fsSL --max-time "$CURL_MAX_TIME" --retry 1 -o "$tmp" "$url" 2>/dev/null; then
+        rm -f "$tmp"
+        return 1
+    fi
+    if [ "$(od -An -tx1 -N3 "$tmp" | tr -d ' \n')" != "ffd8ff" ]; then
+        warn "a storefront picture came back as something other than a JPEG -- discarding it"
+        rm -f "$tmp"
+        return 1
+    fi
+    # 0644 explicitly rather than by umask: the shell reads these as `player`.
+    chmod 0644 "$tmp"
+    mv -f "$tmp" "$dest"
+    return 0
+}
+
+
+## Publish a normalised result file. Atomic via rename, 0644, and the caller has
+## already satisfied itself that the content is worth publishing -- see
+## do_featured for why an empty answer must never replace a good cached one.
+publish() {
+    local name="$1" body="$2"
+    local dest="$FRONT_DIR/$name.json" tmp
+    tmp="$dest.tmp"
+    printf '%s\n' "$body" > "$tmp" || { err "cannot write $tmp"; rm -f "$tmp"; return 1; }
+    chmod 0644 "$tmp"
+    mv -f "$tmp" "$dest" || { err "cannot install $dest"; rm -f "$tmp"; return 1; }
+    return 0
+}
+
+
+# ---------------------------------------------------------------------------
+# featured
+# ---------------------------------------------------------------------------
+
+## The front page. One API call, reshaped into the only structure the shell
+## knows about:
+##
+##   { "request": "featured", "fetched": <epoch>,
+##     "categories": [ { "id": "specials", "name": "Specials",
+##                       "items": [ { "appid": 1091500, "name": "...",
+##                                    "discounted": true, "discount_percent": 70,
+##                                    "original_price": 5999, "final_price": 1799,
+##                                    "currency": "USD" }, ... ] }, ... ] }
+##
+## PRICES STAY AS NUMBERS. The shell decides how money reads on a television,
+## the same division of labour installed.gd's PENDING_SUBTITLES comment states
+## for install states: the system reports, the shell words it. Valve's own
+## `*_formatted` strings exist on the per-app endpoint and NOT on this one, so
+## using them where they exist would mean the same game's price rendered two
+## different ways on two halves of the same panel.
+##
+## Minor units, verified rather than assumed: a USD 59.99 game comes back as
+## 5999, and the same game at cc=jp comes back as 877800 for a price Valve
+## itself formats as "8,778". So every currency this endpoint serves is in
+## hundredths, and the shell's divide-by-100 is right everywhere; what differs
+## is only how many decimals a currency shows, which is the shell's problem.
+do_featured() {
+    local raw body count
+
+    raw="$(curl -fsSL --max-time "$CURL_MAX_TIME" --retry 1 "$API_FEATURED" 2>/dev/null)" || raw=""
+    if [ -z "$raw" ]; then
+        err "Steam's featured endpoint did not answer"
+        state failed "no answer"
+        return
+    fi
+
+    # The categories are passed IN as data rather than spliced into the filter
+    # text: a jq program built by string concatenation is the same class of
+    # mistake as a shell command built that way, even when both ends are ours.
+    body="$(printf '%s' "$raw" | jq -c \
+        --argjson n "$ITEMS_PER_CATEGORY" \
+        --arg cats "${CATEGORIES[*]}" \
+        --argjson now "$(date +%s)" '
+        ($cats | split(" ")) as $keys
+        | {
+            request: "featured",
+            fetched: $now,
+            categories: [
+                $keys[] as $key
+                | (.[$key] // empty)
+                | select((type == "object") and ((.items | type) == "array"))
+                | {
+                    id: $key,
+                    name: (.name // $key),
+                    items: [
+                        .items[]
+                        | select((.id | type) == "number")
+                        | select(((.name // "") | length) > 0)
+                        | {
+                            appid: .id,
+                            name: .name,
+                            discounted: (.discounted // false),
+                            discount_percent: (.discount_percent // 0),
+                            original_price: (.original_price // 0),
+                            final_price: (.final_price // 0),
+                            currency: (.currency // "")
+                          }
+                    ][0:$n]
+                  }
+            ]
+          }' 2>/dev/null)" || body=""
+
+    if [ -z "$body" ]; then
+        err "Steam's featured answer could not be parsed"
+        state failed "unreadable answer"
+        return
+    fi
+
+    # An answer with no items in it is NOT published, and that is the whole
+    # reason this count exists. Valve returning an empty or restructured body
+    # would otherwise overwrite a perfectly good cached storefront with a file
+    # that renders as an empty shelf -- turning one bad minute upstream into a
+    # store that stays blank until the next successful fetch.
+    count="$(printf '%s' "$body" | jq -r '[.categories[].items[]] | length' 2>/dev/null)" || count=0
+    case "$count" in ''|*[!0-9]*) count=0 ;; esac
+    if [ "$count" -eq 0 ]; then
+        err "Steam's featured answer carried no items; keeping whatever was cached"
+        state failed "empty answer"
+        return
+    fi
+
+    publish featured "$body" || { state failed "cannot write"; return; }
+    info "storefront fetched: $count item(s) across ${#CATEGORIES[@]} categories"
+
+    # THE PICTURES, from the raw answer rather than from what was published --
+    # the published file deliberately carries no URLs. Only the items that
+    # survived the reshape are wanted, so the same slice is applied here.
+    # large_capsule_image first (616x353, the shape a shelf tile wants), header
+    # as the fallback, which is what storeart already does for library art.
+    local appid url fetched=0
+    while IFS=$'\t' read -r appid url; do
+        [ -n "$appid" ] || continue
+        case "$appid" in ''|*[!0-9]*) continue ;; esac
+        fetch_art "$url" "$appid.jpg" && fetched=$(( fetched + 1 ))
+    done < <(printf '%s' "$raw" | jq -r \
+        --argjson n "$ITEMS_PER_CATEGORY" \
+        --arg cats "${CATEGORIES[*]}" '
+        ($cats | split(" ")) as $keys
+        | $keys[] as $key
+        | (.[$key] // empty)
+        | select((type == "object") and ((.items | type) == "array"))
+        | .items[0:$n][]
+        | select((.id | type) == "number")
+        | "\(.id)\t\(.large_capsule_image // .header_image // "")"' 2>/dev/null)
+
+    info "$fetched of $count storefront picture(s) on disk"
+    # Quoted because `done` is a shell keyword and an unquoted one here reads
+    # as the end of a loop that was never opened -- shellcheck SC1010, which is
+    # exactly the kind of thing this project runs it for.
+    state "done" featured
+}
+
+
+# ---------------------------------------------------------------------------
+# app
+# ---------------------------------------------------------------------------
+
+## One game's page. The `filters` list is what keeps this small: `basic` carries
+## the name and the short description, `price_overview` the money, `screenshots`
+## the one picture the detail view is worth showing -- without filters this
+## endpoint returns the full store page including every DLC id and the whole
+## HTML description, which is tens of kilobytes nobody draws.
+##
+##   { "request": "app.1091500", "fetched": <epoch>, "appid": 1091500,
+##     "name": "...", "short_description": "...", "is_free": false,
+##     "discounted": true, "discount_percent": 70,
+##     "original_price": 5999, "final_price": 1799, "currency": "USD" }
+##
+## THE TWO ENDPOINTS DISAGREE ABOUT CURRENCY, and no `cc` is passed to either,
+## which is a decision rather than an omission. Measured 2026-08-10 from the
+## same host, seconds apart: `featuredcategories` with no cc answers in USD,
+## while `appdetails` with no cc geolocates by IP and answered in EUR -- 104900
+## USD and 103900 EUR for the same item. Both honour an explicit `cc`, and this
+## image has no country setting to give one: the appliance has never asked
+## anybody where it is. Inventing a country would be a made-up answer to a
+## question with a real one, and discovering it would cost a second API call
+## per request, which is the one thing the rate-courtesy rules above forbid.
+##
+## So each price is published with the currency it arrived in, and the SHELL
+## resolves the disagreement by preferring the price it already drew on the
+## tile the person pressed -- one number, from one endpoint, for the whole
+## journey. See stores_screen.gd. What that price is NOT is a quote: the amount
+## anybody pays is the one Steam's own checkout shows, which is the same
+## boundary the missing Buy button draws.
+##
+## THE DETAIL VIEW'S PICTURE is the first screenshot at full size, landing as
+## `art/<appid>.shot.jpg`, with the capsule the grid already fetched as the
+## fallback. A capsule is 616 px wide and the detail pane is most of a
+## television, so the capsule upscaled is exactly the soft, obviously-stretched
+## art this whole change exists to stop drawing. One full screenshot is a few
+## hundred kilobytes, once, for a game somebody has actually opened -- which is
+## as bounded as artwork gets.
+do_app() {
+    local appid="$1" raw body
+
+    raw="$(curl -fsSL --max-time "$CURL_MAX_TIME" --retry 1 \
+        "$API_APP?appids=$appid&filters=basic,price_overview,screenshots" 2>/dev/null)" || raw=""
+    if [ -z "$raw" ]; then
+        err "Steam's app endpoint did not answer"
+        state failed "no answer"
+        return
+    fi
+
+    body="$(printf '%s' "$raw" | jq -c \
+        --arg id "$appid" \
+        --argjson now "$(date +%s)" '
+        (.[$id] // empty)
+        | select(.success == true)
+        | .data
+        | select((.name // "") != "")
+        | {
+            request: ("app." + $id),
+            fetched: $now,
+            appid: ($id | tonumber),
+            name: .name,
+            short_description: (.short_description // ""),
+            is_free: (.is_free // false),
+            discounted: (((.price_overview.discount_percent) // 0) > 0),
+            discount_percent: ((.price_overview.discount_percent) // 0),
+            original_price: ((.price_overview.initial) // 0),
+            final_price: ((.price_overview.final) // 0),
+            currency: ((.price_overview.currency) // "")
+          }' 2>/dev/null)" || body=""
+
+    # `success: false` is a NORMAL answer, not a failure of the wire: Valve
+    # returns it for an appid that is region-locked, delisted, or simply a
+    # package rather than an application. It has to read differently from a
+    # dead link, because one is worth retrying in a minute and the other never
+    # will be -- so it is still `failed` to the shell (there is nothing to
+    # draw) with a detail that says which.
+    if [ -z "$body" ]; then
+        warn "Steam has nothing to say about that application"
+        state failed "no such page"
+        return
+    fi
+
+    publish "app.$appid" "$body" || { state failed "cannot write"; return; }
+    # The appid, never the NAME, in the journal: the name came out of somebody
+    # else's response body and this is a log a person reads to triage a machine.
+    info "storefront page fetched for appid $appid"
+
+    # The screenshot, then the capsule as a floor. Neither being fetchable is
+    # not an error: the panel draws the name and the price over a wash.
+    local shot header
+    shot="$(printf '%s' "$raw" | jq -r --arg id "$appid" \
+        '(.[$id].data.screenshots[0].path_full) // ""' 2>/dev/null)" || shot=""
+    header="$(printf '%s' "$raw" | jq -r --arg id "$appid" \
+        '(.[$id].data.header_image) // ""' 2>/dev/null)" || header=""
+    fetch_art "$shot" "$appid.shot.jpg" || true
+    fetch_art "$header" "$appid.jpg" || true
+
+    state "done" "app.$appid"
+}
+
+
+# ---------------------------------------------------------------------------
+# The loop
+# ---------------------------------------------------------------------------
+
+state idle
+
+## The last request attempted and when, so a repeat of something that FAILED is
+## refused for RETRY_SECONDS. Kept in memory rather than on disk: a restart of
+## this service is a rare enough event that forgetting the cooldown across one
+## is fine, and a file would be state to invalidate.
+last_failed_name=""
+last_failed_at=0
+
+while :; do
+    # THE MOVE IS THE SECURITY BOUNDARY, and the reasoning is marwanos-wifi's
+    # verbatim: `player` owns REQ_DIR, so between any test and any read the
+    # file could become a symlink (a read anywhere on the system) or a FIFO
+    # (an open() that blocks this single-threaded loop forever, with the unit
+    # still "running" so Restart=always never fires). rename(2) follows
+    # neither and opens nothing, so moving it into root-owned RUN_DIR settles
+    # what is about to be read before it is read.
+    if mv -f "$REQ" "$CONSUMED" 2>/dev/null; then
+        line=""
+        if [ -L "$CONSUMED" ] || [ ! -f "$CONSUMED" ]; then
+            # Nothing is read from it -- in particular its contents never
+            # reach the journal.
+            warn "discarding a request that was not a regular file"
+        else
+            IFS= read -r line < "$CONSUMED" 2>/dev/null || true
+        fi
+        rm -f "$CONSUMED"
+
+        verb="${line%%	*}"
+        arg="${line#*	}"
+        # A line with no tab leaves verb and arg equal, which is a verb with no
+        # argument rather than an argument that happens to repeat the verb.
+        [ "$arg" = "$line" ] && arg=""
+
+        name=""
+        case "$verb" in
+            featured)
+                name=featured
+                ;;
+            app)
+                # DIGITS ONLY, AND THIS IS THE LOAD-BEARING CHECK in the whole
+                # file. The appid goes into a URL and into two filenames, and
+                # it arrives from a file an unprivileged process wrote. Numeric
+                # means it can be neither a path traversal, nor a second query
+                # parameter, nor a shell word. Ten digits is comfortably above
+                # anything Valve has issued and below anything that overflows.
+                case "$arg" in
+                    ''|*[!0-9]*) arg="" ;;
+                    ???????????*) arg="" ;;
+                esac
+                [ -n "$arg" ] && name="app.$arg"
+                if [ -z "$arg" ]; then
+                    warn "ignoring an app request whose appid is not a number"
+                fi
+                ;;
+            "")
+                ;;
+            *)
+                # The verb itself is NOT logged: everything in that file came
+                # from outside this script.
+                warn "ignoring a request with an unrecognised verb"
+                ;;
+        esac
+
+        if [ -n "$name" ]; then
+            cached="$FRONT_DIR/$name.json"
+            now="$(date +%s)"
+
+            if [ -f "$cached" ] && [ "$(age_of "$cached")" -lt "$CACHE_SECONDS" ]; then
+                # ANSWERED FROM DISK, with the network untouched -- see the
+                # header's rate-courtesy list. The shell re-reads the same file
+                # it would have read anyway; `done` is what tells it to.
+                state "done" "$name"
+            elif [ "$name" = "$last_failed_name" ] \
+                && [ "$(( now - last_failed_at ))" -lt "$RETRY_SECONDS" ]; then
+                # Still inside the cooldown from a failure. Re-stating `failed`
+                # rather than staying silent: a request that vanished is
+                # indistinguishable, from the couch, from a shell that never
+                # sent one.
+                state failed "waiting before trying again"
+            elif ! online; then
+                # netcheck's answer, not a probe of our own. The results file
+                # may well still be on disk from a previous boot, and the shell
+                # draws it -- `offline` says only that it could not be
+                # refreshed.
+                info "asked for $name with no network; the storefront stays as it was"
+                state offline "$name"
+            else
+                state fetching "$name"
+                last_failed_name=""
+                case "$verb" in
+                    featured) do_featured ;;
+                    app)      do_app "$arg" ;;
+                esac
+                # One read-back rather than a return code threaded through
+                # every branch of both functions: the state file is the record
+                # of what happened, so it is also what the cooldown consults.
+                if [ "$(cut -f1 < "$STATE" 2>/dev/null)" = "failed" ]; then
+                    last_failed_name="$name"
+                    last_failed_at="$(date +%s)"
+                fi
+            fi
+        fi
+
+        # Deliberately no sleep before looping: a second request may already be
+        # waiting (opening the grid and pressing A on a tile is two), and
+        # sleeping first would add latency to a queued press.
+        continue
+    fi
+
+    sleep "$POLL"
+done

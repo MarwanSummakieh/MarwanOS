@@ -30,11 +30,22 @@ extends Button
 const TvTheme = preload("res://src/tv_theme.gd")
 const Icons = preload("res://src/icons.gd")
 
+## The id prefix marwanos-appscan gives a Steam library entry, and the one thing
+## in this file that knows a card can be a GAME rather than an application. It is
+## the key into the artwork seam (GameArt) as well as the id of the record, which
+## is why the test is a prefix on the id rather than a column of its own.
+const STEAM_PREFIX := "steam."
+
 ## Emitted whenever this card takes focus, so the root can move the rail and swap
 ## the hero art. A signal rather than the root connecting to focus_entered
 ## directly: the root wants the entry, not the node, and this keeps the card's
 ## data private to the card.
 signal selected(entry: Dictionary)
+
+## Emitted when DOWN is pressed on this card: the request for the details panel.
+## See _gui_input for why the press is caught here rather than in shell_root's
+## _unhandled_input, which never sees it.
+signal details_requested()
 
 var entry: Dictionary = {}
 
@@ -147,9 +158,42 @@ func _wash() -> Color:
 ## every failure here falls back to it silently. appscan already guarantees the
 ## path is a PNG that existed at scan time; this handles the file disappearing
 ## between the scan and the frame.
+## The pictures this card would like to draw, best first.
+##
+## A GAME PREFERS ITS SQUARE ICON TO ITS PORTRAIT, and that is the whole of this
+## function. appscan puts Steam's library_600x900 portrait in the record's icon
+## column because it is the one picture every game has -- but a 2:3 portrait
+## letterboxed inside a square card is a thin strip of art with two bands of wash
+## either side, which is exactly what the rail looked like before the artwork
+## seam existed. The square icon Steam also caches fills the card the way an
+## application's logo does, so the rail reads as one family of cards instead of
+## two.
+##
+## THE PORTRAIT STAYS AS THE FALLBACK rather than being replaced: the icon
+## arrives when Steam's cache warms, which is minutes-to-never after a fresh
+## install, and a card that waited for it would be a wash with nothing on it in
+## the meantime. Ordered, not chosen, so a file that has gone missing between the
+## scan and this frame falls through to the next candidate instead of leaving a
+## blank card -- see the loop in _build_icon.
+func _art_candidates() -> Array:
+	var candidates: Array = []
+
+	var id := str(entry.get("id", ""))
+	if id.begins_with(STEAM_PREFIX):
+		var square := GameArt.icon_for(id)
+		if not square.is_empty():
+			candidates.append(square)
+
+	var stated := str(entry.get("icon", ""))
+	if not stated.is_empty():
+		candidates.append(stated)
+
+	return candidates
+
+
 func _build_icon() -> void:
-	var path := str(entry.get("icon", ""))
-	if path.is_empty():
+	var candidates := _art_candidates()
+	if candidates.is_empty():
 		# No file on disk to draw, but the entry may name a Phosphor glyph. A
 		# card that is only its accent wash reads as a loading failure next to
 		# neighbours with real logos, and an application whose flatpak exports
@@ -174,9 +218,20 @@ func _build_icon() -> void:
 		add_child(glyph)
 		return
 
-	var image := load_icon_image(path)
-	if image == null:
+	var image: Image = null
+	for path in candidates:
+		image = load_icon_image(str(path))
+		if image != null:
+			# Said out loud only when the game's own icon won, because that is the
+			# line that distinguishes "the artwork cache has warmed" from "the
+			# portrait is still all there is" on a machine with no screen to look
+			# at. The ordinary case -- an application drawing the icon appscan
+			# found -- stays silent, as it always has.
+			if path != str(entry.get("icon", "")):
+				ShellLog.info("card art: %s uses %s" % [str(entry.get("id", "")), path])
+			break
 		ShellLog.warn("could not load icon %s for %s" % [path, str(entry.get("id", ""))])
+	if image == null:
 		return
 
 	var icon := TextureRect.new()
@@ -281,7 +336,54 @@ func _on_focus_exited() -> void:
 	set_selected_size(false)
 
 
+## DOWN OPENS THE DETAILS PANEL, and it is caught here rather than in
+## shell_root's _unhandled_input because _unhandled_input never sees it.
+##
+## The rail's cards point focus_neighbor_bottom at THEMSELVES (see
+## shell_root._wire_focus_neighbours), which is the hard stop that keeps the
+## viewport's geometric search out of the hint row. But a hard stop is not a
+## discarded press: the viewport resolves the neighbour to this same card, grabs
+## focus on it, and calls set_input_as_handled -- so the event is consumed
+## several steps before any _unhandled_input handler runs. That is why DOWN has
+## looked like a dead axis, and it is dead in exactly the way that hides the
+## press from everything downstream.
+##
+## A focused Control's _gui_input runs BEFORE that navigation block, and only
+## for the control that holds focus -- which is the card the person is looking
+## at. accept_event() stops the navigation, so the hard stop is preserved for
+## every card that does not open a panel.
+##
+## ONLY AN INSTALLED CARD HAS DETAILS, the same policy _on_pressed applies and
+## for the same reason: the panel's one button launches, an application that is
+## not on the machine cannot be launched, and a panel whose button is correctly
+## refused is the shape of broken input on a machine with no other feedback. The
+## card's own subtitle already says what state it is in.
+func _gui_input(event: InputEvent) -> void:
+	if not event.is_action_pressed("ui_down"):
+		return
+	accept_event()
+
+	var state := str(entry.get("state", "installed"))
+	if state != "installed":
+		ShellLog.info("no details for \"%s\": %s"
+			% [str(entry.get("title", "")), state])
+		return
+
+	details_requested.emit()
+
+
 func _on_pressed() -> void:
+	activate()
+
+
+## The card's press, callable from somewhere that is not the card.
+##
+## SPLIT OUT FOR THE DETAILS PANEL'S PLAY BUTTON, which must do exactly what
+## pressing the card does -- including the two refusals below, which are policy
+## the panel has no business restating. The panel asks the card to act rather
+## than reaching for the launch seam itself, so there stays exactly one place
+## that decides what an A press on an entry means.
+func activate() -> void:
 	# An app that is still downloading has no exec yet, and handing an entry
 	# with an empty exec to the launch seam would take the placeholder branch
 	# -- a fullscreen scene claiming to have launched something that does not

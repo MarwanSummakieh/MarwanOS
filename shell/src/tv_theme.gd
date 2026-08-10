@@ -143,6 +143,21 @@ const HERO_ART_FADE_SECONDS := 0.22
 ## the subtitle falls to ~2.4:1 -- unreadable over a white box shot, which is
 ## exactly the case that has to work. What is left of the art at 30% is still
 ## unmistakably a picture, which is all a backdrop is for.
+##
+## ONE VALUE, AND THE SHARP HERO DOES NOT GET ITS OWN. A game's hero background
+## is now drawn unsoftened (shell_root._backdrop_texture), which is a real change
+## to what is behind the text -- so the number was re-derived rather than assumed
+## to carry. It carries, because the derivation above is about LUMINANCE and
+## nothing else: 0.70 is worked from the brightest pixel the machine can be
+## handed, and a white pixel is a white pixel whether it arrived sharp or as a
+## 50 px smear blown up. Resizing an image cannot make it brighter than its
+## brightest region, so a sharp hero's worst case is the case already solved, and
+## a hero-specific constant would be a second number to keep in step with the
+## same argument. What sharpness adds is DETAIL behind the text, not luminance --
+## and the bottom gradient (0.96 at the baseline, where the title and subtitle
+## sit) is the layer that answers that, unchanged and already stronger than the
+## flat scrim over it. Steam's own library draws these images edge to edge with
+## far less protection than this.
 const HERO_ART_SCRIM := 0.70
 
 ## A second gradient, at the TOP, only over the picture.
@@ -266,6 +281,42 @@ const SIZE_SUPPLEMENTAL := 26
 ## Vertical breathing room between the top bar, the title block, the rail and
 ## the hint row.
 const SECTION_GAP := 28
+
+# ---------------------------------------------------------------------------
+# The details panel (DOWN from a card on the home rail)
+#
+# A sheet that slides up over the LOWER PART of the home screen: the entry's
+# title, what the thing actually is, and one button that starts it. The top of
+# the surface is deliberately left alone, because what is up there is the game's
+# own background -- a panel that covered the whole screen would hide the picture
+# the person pressed down to find out about.
+
+## How tall the sheet is, against the 1080 design height.
+##
+## IT IS THE TITLE BLOCK THAT SETS THIS, not a fraction anyone liked the look of.
+## The home screen's rows are laid out from the bottom -- hints, rail, title,
+## with the slack pushed above them (shell_root._build) -- which puts the hero
+## title and its subtitle at roughly y 450 to 585 on the design surface. The
+## sheet restates the title, so it has to cover that block completely: 600 was
+## the first value tried and its top edge landed at 480, slicing the hero title
+## in half lengthwise, which on the Xvfb screenshot read as a rendering fault
+## rather than as a panel. 720 puts the top edge at 360, clear of the block by
+## enough that no future retune of SECTION_GAP re-opens the defect -- and still
+## leaves a third of the surface showing the picture, which is the whole reason
+## this is a sheet rather than a screen.
+const DETAILS_PANEL_HEIGHT := 720
+
+## How long the sheet takes to arrive. Longer than RAIL_TWEEN_SECONDS because it
+## is a large object travelling a long way -- the rail's slide is a card moving a
+## card's width -- and shorter than the eye spends reading the first word of the
+## title, so nothing is ever waited for.
+const DETAILS_SLIDE_SECONDS := 0.24
+
+## The Play button's width. A settings row expands to fill its column, which is
+## right for a list of rows and wrong for one button sitting under a paragraph:
+## full-width, it reads as another band of the panel rather than as the thing to
+## press. Comfortably wide enough for a word and a focus ring at three metres.
+const DETAILS_BUTTON_WIDTH := 420
 
 # ---------------------------------------------------------------------------
 # The settings screen
@@ -400,6 +451,23 @@ static func hero_top_gradient() -> GradientTexture2D:
 ## comes from.
 static func hero_scrim_color() -> Color:
 	return Color(BACKGROUND.r, BACKGROUND.g, BACKGROUND.b, HERO_ART_SCRIM)
+
+
+## The details sheet's surface: the card's box with its BOTTOM corners squared
+## off.
+##
+## Not card_idle_box, and the difference is not decoration. The sheet is flush
+## with the bottom of the screen, so a rounded bottom-left corner would be a
+## notch of background showing through at the very edge of the panel -- the same
+## "art leaking past its own border" defect card_art_box exists to fix, arriving
+## from the other direction. Rounded on top, where the sheet has an edge someone
+## can actually see.
+static func details_sheet_box() -> StyleBoxFlat:
+	var box := StyleBoxFlat.new()
+	box.bg_color = SURFACE
+	box.corner_radius_top_left = CARD_CORNER_RADIUS
+	box.corner_radius_top_right = CARD_CORNER_RADIUS
+	return box
 
 
 ## A row that is being pressed and has nothing else to say so. Brighter than

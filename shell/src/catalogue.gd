@@ -300,6 +300,58 @@ static func tagline_for(app_id: String) -> String:
 	return ""
 
 
+## ---------------------------------------------------------------------------
+## THE STEAM METADATA CACHE, read side.
+##
+## The same shape as the icon cache above and in the same tree: marwanos-storeart
+## writes /var/marwanos/store/meta/steam.<appid>.json, which is the `data` object
+## of Steam's own appdetails answer -- name, short_description and the rest of
+## what the store page says about a game. The shell never calls the API: it reads
+## whatever file is there, so a machine that has been online once describes its
+## library forever after, offline included.
+##
+## READ AT THE MOMENT IT IS SHOWN rather than polled into memory like the artwork
+## table, because there is exactly one consumer and it is a button press: the
+## details panel opens for one game at a time and asks for one file. Polling a
+## directory of hundreds of JSON documents to keep an answer nobody is looking at
+## would be the wrong trade in both directions.
+##
+## A MISSING OR MALFORMED FILE IS AN EMPTY ANSWER, not an error. The cache warms
+## per game and only when the machine has a network; the panel has two more
+## sources behind this one (see details_panel.gd) and drawing one of those is a
+## complete screen.
+const STORE_META_SUBDIR := "meta"
+
+
+## Steam's own words about a game, as the appdetails `data` object, or empty.
+static func steam_meta(entry_id: String) -> Dictionary:
+	if not entry_id.begins_with("steam."):
+		return {}
+
+	var base := OS.get_environment(STORE_DIR_ENV)
+	if base.is_empty():
+		base = STORE_DIR
+	var path := base.path_join(STORE_META_SUBDIR).path_join(entry_id + ".json")
+	if not FileAccess.file_exists(path):
+		return {}
+
+	var file := FileAccess.open(path, FileAccess.READ)
+	if file == null:
+		ShellLog.warn("could not open %s" % path)
+		return {}
+
+	var parsed: Variant = JSON.parse_string(file.get_as_text())
+	if typeof(parsed) != TYPE_DICTIONARY:
+		ShellLog.warn("%s is not a JSON object; ignoring it" % path)
+		return {}
+	return parsed
+
+
+## The one-paragraph description Steam shows under a game's title, or empty.
+static func steam_description(entry_id: String) -> String:
+	return str(steam_meta(entry_id).get("short_description", ""))
+
+
 ## The cached icon for an application id, or empty if none has landed yet.
 static func store_icon_path(app_id: String) -> String:
 	if app_id.is_empty():

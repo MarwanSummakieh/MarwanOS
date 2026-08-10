@@ -10,15 +10,26 @@ extends Node
 ## placeholder launch-a-scene seam becomes Launch over JSON-RPC", and this is
 ## where that bolts in.
 ##
-## When it does, exactly two functions change:
+## When it does, TWO FUNCTIONS AND A STATE MACHINE go:
 ##
 ##   _run(entry)    -> send `Launch { target_id }` to marwand over the WebSocket
 ##                     and return; do not wait.
 ##   _on_closed()   -> becomes the handler for marwand's `AppExited` event.
 ##
+## and the HANDOFF machinery below (_check_window_handoff and everything it
+## reads) is deleted rather than ported. That paragraph used to say "exactly two
+## functions change", and keeping it that way would now be a lie: a Steam game's
+## life is not its wrapper's life -- the wrapper hands a steam:// URL to a client
+## that is already running and exits in under a second -- so the shell had to
+## learn to watch the WINDOW instead of the pid to know when a game ends. marwand
+## is the right owner of that question (it supervises processes and knows what
+## Steam started), which is precisely why none of it survives the port: the
+## daemon's AppExited already means what four states and two deadlines mean here.
+##
 ## Nothing else moves. The home rail, the cards, the focus handling and the hint
 ## row only ever see launch_started and launch_finished, so they do not care
-## whether the thing that started was a placeholder scene or a Flatpak.
+## whether the thing that started was a placeholder scene, a Flatpak, or a game
+## some other process is running on this one's behalf.
 ##
 ## Deliberately single-purpose. No process management, no queue, no retry, no
 ## state machine beyond "one thing at a time". Phase 1 puts all of that in the
@@ -182,6 +193,17 @@ func _spawn(exec: Array) -> void:
 
 	ShellLog.info("spawning %s %s" % [program, " ".join(args)])
 	_close_escalate_ticks = 0
+	# Decided once, here, from the entry that is being started -- not asked again
+	# per tick. Everything downstream reads this flag, so "is this launch a
+	# handoff" has exactly one answer for the whole life of the launch even if
+	# the entry changes underneath it.
+	_handoff = str(_current.get("id", "")).begins_with(HANDOFF_PREFIX)
+	_handoff_seen = false
+	_handoff_shell_ticks = 0
+	_gamescope_answered = false
+	if _handoff:
+		ShellLog.info("handoff launch: %s is Steam's to run; watching the window, not the pid"
+			% _label(_current))
 	_pid = OS.create_process(program, args)
 
 	if _pid <= 0:
@@ -246,6 +268,81 @@ const WINDOW_DEADLINE_SECONDS := 25.0
 var _watch: Timer = null
 var _watched_seconds := 0.0
 
+## ============================================================================
+## HANDOFF -- when the wrapper's exit is not the app's exit.
+##
+## `flatpak run com.valvesoftware.Steam -gamepadui steam://rungameid/<appid>`
+## does not start a game. The Steam client is already running -- the session
+## starts it as furniture with no window -- so the flatpak wrapper hands the URL
+## to that instance and exits, in about a second, having succeeded completely.
+## The exit poll sees a dead pid, declares the launch over, and the rail snaps
+## back over a game that is at that moment showing its first splash. That was the
+## whole bug, and it is not fixable by waiting longer: the wrapper is genuinely,
+## correctly gone.
+##
+## So for these entries the pid stops being the lifecycle and the WINDOW becomes
+## it. The watchdog that already runs during every launch answers exactly the
+## right question once a second, and gains two more jobs:
+##
+##   ELSEWHERE                        the game is up. Splash goes, as always.
+##   SHELL, for RETURN_TICKS in a row, the game is gone. Finish the launch.
+##
+## The run of consecutive ticks is what makes the second one safe. A game's
+## window flickers off the compositor's focus for a frame or two at loading
+## screens, mode changes and its own splash teardown, and finishing on the first
+## SHELL answer would put the rail back over a game that had merely blinked. Five
+## seconds of the shell provably owning the screen is not a blink; it is someone
+## looking at the home screen.
+##
+## AND IT ALWAYS TERMINATES. Two ways out exist for the case where nothing ever
+## appears: an environment that cannot answer the window question at all (no
+## gamescope -- a desk run or the Xvfb harness) falls straight back to the
+## wrapper's exit, and an environment that can answer but never says ELSEWHERE
+## gives up at HANDOFF_DEADLINE_SECONDS. A launch that hangs forever would be the
+## worst failure this seam has: a black TV with the rail hidden behind it and no
+## button that comes back.
+## ============================================================================
+
+## The id prefix marwanos-appscan gives a Steam library game. The same string
+## tile.gd and shell_root test, and the same reason it is a prefix rather than a
+## column: the id IS the fact.
+const HANDOFF_PREFIX := "steam."
+
+## Steam's flatpak id, for the close path. Stated rather than dug out of the
+## exec, because close_current has to work after the wrapper is long gone and
+## `flatpak kill` is what reaches the sandbox the game is actually inside.
+const HANDOFF_APP_ID := "com.valvesoftware.Steam"
+
+## Consecutive one-second polls of the shell owning the screen before a handed-off
+## game is declared over. Five: below three and a loading screen's focus blink
+## ends the launch; much above five and the rail takes a visible age to come back
+## after quitting a game, which reads as the machine having hung on the way home.
+const HANDOFF_RETURN_TICKS := 5
+
+## How long a handoff launch waits for a window before giving the screen back.
+## Generous against WINDOW_DEADLINE_SECONDS because there is a whole extra
+## machine in the path -- the client has to receive the URL, resolve the appid,
+## possibly verify files, and start a process this shell never sees -- and the
+## cost of being wrong here is a rail that came back while a game was still
+## loading. Past a minute, nothing is coming.
+const HANDOFF_DEADLINE_SECONDS := 60.0
+
+## Whether this launch's lifecycle belongs to the window rather than to the pid.
+var _handoff := false
+
+## Whether the game has ever provably been on screen. Until it has, there is
+## nothing to watch for the END of, and the deadline above is what applies.
+var _handoff_seen := false
+
+## The current run of consecutive SHELL answers since the game was last up.
+var _handoff_shell_ticks := 0
+
+## Whether anything in this environment has ever answered the window question at
+## all. UNKNOWN is not an answer (see Kiosk.focused_window's third value), and
+## the difference between "gamescope says the shell has focus" and "there is no
+## gamescope to ask" is what decides whether a dead wrapper ends the launch.
+var _gamescope_answered := false
+
 
 func _start_watchdog() -> void:
 	_watched_seconds = 0.0
@@ -259,28 +356,20 @@ func _start_watchdog() -> void:
 func _check_window() -> void:
 	_watched_seconds += WINDOW_POLL_SECONDS
 
-	match Kiosk.focused_window():
+	var focus := Kiosk.focused_window()
+	# Recorded on every answer that IS one, whichever branch consumes it: this is
+	# the flag that tells a dead wrapper whether there is a window question worth
+	# waiting for. See _handoff_hands_over.
+	if focus != Kiosk.Focus.UNKNOWN:
+		_gamescope_answered = true
+
+	if _handoff:
+		_check_window_handoff(focus)
+		return
+
+	match focus:
 		Kiosk.Focus.ELSEWHERE:
-			# Someone else owns the screen: the app arrived. The splash goes
-			# now rather than at launch_finished, so the frame the app exits
-			# on shows the rail and not a stale "Starting".
-			ShellLog.info("focus moved off the shell after %.0f s; %s is on screen"
-				% [_watched_seconds, _label(_current)])
-			_stop_watchdog()
-			_remove_splash()
-			# The one moment the bridge may start: there is now provably an
-			# application on screen to type into. Which is also why a desk run
-			# never gets one -- the watchdog only answers ELSEWHERE where
-			# gamescope exists, and that is the only place XTEST injection
-			# lands where a person can see what it did.
-			var mode := Catalogue.pad_key_mode(str(_current.get("id", "")))
-			if _pad_keys == null and not mode.is_empty():
-				_pad_keys = PadKeys.new()
-				_pad_keys.mode = mode
-				# Born already respecting whatever surface owns the pad right
-				# now -- see _pad_keys_paused for the overlay-first race.
-				_pad_keys.paused = _pad_keys_paused
-				get_tree().root.add_child(_pad_keys)
+			_app_is_up()
 		Kiosk.Focus.SHELL:
 			if _watched_seconds >= WINDOW_DEADLINE_SECONDS \
 					and _pid > 0 and is_instance_valid(_splash):
@@ -294,6 +383,117 @@ func _check_window() -> void:
 			# UNKNOWN. No claim, no action -- see the header. The plain splash
 			# stands until launch_finished.
 			pass
+
+
+## Something other than the shell owns the screen: the application arrived.
+##
+## Shared by both watchdogs because it is one event with one response -- the
+## splash's job is done and the pad bridge may start -- and the only difference
+## is what happens to the WATCHDOG afterwards. An ordinary launch has had its
+## question answered and stops polling; a handoff launch keeps polling, because
+## the same answer coming back the other way is how it will learn the game ended.
+func _app_is_up() -> void:
+	# The splash goes now rather than at launch_finished, so the frame the app
+	# exits on shows the rail and not a stale "Starting".
+	ShellLog.info("focus moved off the shell after %.0f s; %s is on screen"
+		% [_watched_seconds, _label(_current)])
+	if not _handoff:
+		_stop_watchdog()
+	_remove_splash()
+	# The one moment the bridge may start: there is now provably an application
+	# on screen to type into. Which is also why a desk run never gets one -- the
+	# watchdog only answers ELSEWHERE where gamescope exists, and that is the only
+	# place XTEST injection lands where a person can see what it did.
+	var mode := Catalogue.pad_key_mode(str(_current.get("id", "")))
+	if _pad_keys == null and not mode.is_empty():
+		_pad_keys = PadKeys.new()
+		_pad_keys.mode = mode
+		# Born already respecting whatever surface owns the pad right now -- see
+		# _pad_keys_paused for the overlay-first race.
+		_pad_keys.paused = _pad_keys_paused
+		get_tree().root.add_child(_pad_keys)
+
+
+## The handoff state machine, one tick of it. See the block above HANDOFF_PREFIX
+## for what it is for; this is the whole of what it does.
+##
+##   not seen + ELSEWHERE  -> the game is up. Splash goes, start watching for the
+##                            way back.
+##   not seen + SHELL      -> still waiting. Past WINDOW_DEADLINE_SECONDS the
+##                            splash stops promising; past HANDOFF_DEADLINE_
+##                            SECONDS the launch is given up on.
+##   seen + ELSEWHERE      -> still playing. Any run of SHELL ticks is reset.
+##   seen + SHELL          -> maybe over. HANDOFF_RETURN_TICKS of these in a row
+##                            and it is.
+##   UNKNOWN               -> no claim, no action, and the run is NOT reset: a
+##                            failed xprop is not evidence a game came back.
+func _check_window_handoff(focus: int) -> void:
+	match focus:
+		Kiosk.Focus.ELSEWHERE:
+			_handoff_shell_ticks = 0
+			if _handoff_seen:
+				return
+			_handoff_seen = true
+			_app_is_up()
+		Kiosk.Focus.SHELL:
+			if not _handoff_seen:
+				_handoff_still_waiting()
+				return
+			_handoff_shell_ticks += 1
+			if _handoff_shell_ticks < HANDOFF_RETURN_TICKS:
+				return
+			ShellLog.info("handoff: the shell has owned the screen for %d s; %s has ended"
+				% [_handoff_shell_ticks, _label(_current)])
+			_stop_watchdog()
+			_forget_wrapper()
+			_on_closed()
+		_:
+			pass
+
+
+## A handed-off game that has not appeared yet, one tick older.
+##
+## The failure splash arrives on the ordinary deadline, because the sentence it
+## shows -- running, nothing on screen -- is exactly as true here, and B on it
+## reaches close_current, which for a handoff kills the client and everything it
+## started. The GIVING UP is a minute later and is this branch's own: unlike an
+## ordinary launch there is no pid left to keep the poll honest, so nothing else
+## would ever end this.
+func _handoff_still_waiting() -> void:
+	if _watched_seconds >= WINDOW_DEADLINE_SECONDS and is_instance_valid(_splash):
+		# show_failure is idempotent, so this may be said every tick and is said
+		# in the journal only once.
+		_splash.show_failure()
+
+	if _watched_seconds < HANDOFF_DEADLINE_SECONDS:
+		return
+
+	ShellLog.warn("handoff: nothing took the screen within %.0f s; giving %s back to the rail"
+		% [_watched_seconds, _label(_current)])
+	_stop_watchdog()
+	_forget_wrapper()
+	_on_closed()
+
+
+## Stop watching the wrapper without stopping it. Every handoff path that ends a
+## launch goes through this, because any of them can arrive while the process is
+## still alive.
+##
+## KILLING IT WOULD BE WRONG IN ALL OF THEM. When `flatpak run` finds no client
+## to hand the URL to, it BECOMES the client -- and the client is session
+## furniture whose life is longer than any one game, so the pid this seam happens
+## to be holding is Steam itself rather than the thing that just ended. (The one
+## place the client IS meant to die is close_current, and `flatpak kill` has
+## already done it by the time this is called.) Dropping the pid and stopping the
+## poll is what keeps an unrelated client exit an hour later from arriving as a
+## second launch_finished for a launch that is long over.
+func _forget_wrapper() -> void:
+	if _pid <= 0:
+		return
+	ShellLog.info("handoff: pid %d is the client's, not this launch's; stopping the exit poll"
+		% _pid)
+	_pid = -1
+	_stop_poll()
 
 
 func _stop_watchdog() -> void:
@@ -340,10 +540,18 @@ func set_splash_paused(value: bool) -> void:
 		_splash.set_paused(value)
 
 
-## Whether there is a running process this seam could stop. False for the
+## Whether there is a running application this seam could stop. False for the
 ## placeholder branch, which has no pid and is dismissed with B.
+##
+## TRUE FOR A HANDOFF WITH NO PID AT ALL, which is the shape this question was
+## not written for. A handed-off game outlives its wrapper by design, so `_pid >
+## 0` alone would answer "nothing to close" for the entire time a game is on
+## screen -- and this is the gate on the home button's app menu (shell_root's
+## _input), so the one button that gets a person out of a game would do nothing.
+## close_current knows how to end a handoff without a pid; this has to agree with
+## it.
 func can_close() -> bool:
-	return _pid > 0
+	return _pid > 0 or _handoff
 
 
 ## Ask the running application to go away.
@@ -373,6 +581,29 @@ func can_close() -> bool:
 ## makes a later is_process_running an engine ERROR in the journal.
 func close_current() -> void:
 	if _current.is_empty():
+		return
+
+	# A HANDOFF CLOSES STEAM ITSELF, and there is no gentler option. The game is
+	# a process inside the client's sandbox that this shell never started, never
+	# saw and cannot name; `flatpak kill com.valvesoftware.Steam` is the one call
+	# that reaches into that sandbox, and it takes the client down with the game.
+	# That is a real cost stated rather than hidden: the session respawns the
+	# client about thirty seconds later (it is started as furniture, with no
+	# window), so for half a minute after quitting a game this way, starting
+	# another one is slower than usual. The alternative -- leaving the game
+	# running and hoping -- is the failure this whole seam exists to avoid, a rail
+	# back on screen underneath something that is still there.
+	#
+	# The launch ends HERE rather than on the next exit poll, because for a
+	# handoff there is usually no pid left to poll: the wrapper died in the first
+	# second. Nothing would ever notice, and the splash or the app menu would sit
+	# over a screen that is already going back to the rail.
+	if _handoff:
+		ShellLog.info("closing %s, which ends the game and the client with it" % HANDOFF_APP_ID)
+		if OS.create_process("flatpak", ["kill", HANDOFF_APP_ID]) <= 0:
+			ShellLog.warn("could not run `flatpak kill %s`" % HANDOFF_APP_ID)
+		_forget_wrapper()
+		_on_closed()
 		return
 
 	var exec: Array = _current.get("exec", [])
@@ -503,7 +734,40 @@ func _check_exit() -> void:
 	ShellLog.info("pid %d exited" % _pid)
 	_pid = -1
 	_stop_poll()
+	# THE ONE PLACE A DEAD PROCESS DOES NOT END A LAUNCH. See _handoff_hands_over
+	# -- and note that the ordinary path below is reached unchanged whenever it
+	# answers no, which is every launch that is not a handoff and every handoff in
+	# an environment that cannot see windows.
+	if _handoff and _handoff_hands_over():
+		return
 	_on_closed()
+
+
+## The wrapper of a handoff launch has died. Does the window watchdog own the
+## rest of this launch, or was that the end of it?
+##
+## THE ENVIRONMENT IS ASKED HERE, NOT REMEMBERED FROM A TICK. `flatpak run
+## <id> steam://rungameid/...` exits in about a second, which is FASTER than the
+## watchdog's first poll -- so at this moment the flag may never have been set on
+## a machine that has gamescope, and reading it alone would send every real
+## launch down the headless path. One extra xprop round trip, once per handoff
+## launch, buys a deterministic answer instead of a race.
+func _handoff_hands_over() -> bool:
+	if not _gamescope_answered and Kiosk.focused_window() != Kiosk.Focus.UNKNOWN:
+		_gamescope_answered = true
+
+	if not _gamescope_answered:
+		# Nothing here can ever answer the window question -- no gamescope, so a
+		# desk run or the Xvfb harness. The wrapper's exit is the only evidence
+		# this environment produces, so it is taken, exactly as it was before
+		# handoff existed. This is the branch that keeps a headless run from
+		# hanging on a game that was never going to appear.
+		ShellLog.info("handoff: no window claim available here; the wrapper's exit ends the launch")
+		return false
+
+	ShellLog.info("handoff: wrapper exited, %s belongs to the running client now; watching the window"
+		% _label(_current))
+	return true
 
 
 func _stop_poll() -> void:
@@ -548,6 +812,14 @@ func _finish() -> void:
 	# direction. The escalation counter dies with the launch it was counting
 	# for, so a close pending on THIS app can never SIGKILL the next one.
 	_close_escalate_ticks = 0
+	# The handoff flags die with the launch they described, for the same reason
+	# and with one extra consequence: can_close() reads _handoff, so a stale true
+	# would have the home button offering to close a machine that is back at the
+	# rail with nothing running.
+	_handoff = false
+	_handoff_seen = false
+	_handoff_shell_ticks = 0
+	_gamescope_answered = false
 	# The remembered pause dies with the launch it described: the next launch
 	# starts with no overlay up, and inheriting a stale true would be a bridge
 	# that never speaks.
