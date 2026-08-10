@@ -60,19 +60,19 @@ const STEAM_STORE := {
 		+ " X opens the desktop client with the stick as a mouse. Quitting"
 		+ " Steam lands back on this page.",
 	"accent": "#2A3F5A",
-	# INSIDE ITS OWN NESTED GAMESCOPE, which is the SteamOS shape and the
-	# flicker fix. Steam presented directly to the outer compositor flickered
-	# on this NVIDIA driver no matter what the outer flags said -- the client
-	# renegotiates its swapchain constantly and every renegotiation was a
-	# visible blink. Nested, the INNER gamescope absorbs all of that (it is
-	# the exact environment Valve builds Big Picture against -- the -e flag
-	# turns on their integration) and hands the outer compositor one stable,
-	# already-composited buffer. {W}/{H} are filled in by Launcher._spawn from
-	# the real screen at launch time, because a nested gamescope left at its
-	# 1280x720 default is every client rendering soft and upscaled -- the Zen
-	# lesson, not repeated.
-	"exec": ["gamescope", "-W", "{W}", "-H", "{H}", "-e", "-f", "--force-windows-fullscreen",
-		"--", "flatpak", "run", "com.valvesoftware.Steam", "-gamepadui", "steam://store"],
+	# DIRECTLY UNDER THE SESSION'S OWN GAMESCOPE -- the nested-gamescope
+	# detour is over, and the bench journal is why. The nesting shipped as a
+	# flicker fix and lasted one evening: gamescope 3.16.23 as an inner
+	# compositor on NVIDIA 610.43.03 died of `terminate called without an
+	# active exception` three minutes into Hollow Knight (2026-08-10 10:33,
+	# coredump on the bench), taking the game with it and leaving the sandbox
+	# running behind a returned rail. The flicker it was chasing has a fix
+	# that does not stack compositors: the SESSION's gamescope now runs
+	# --force-composition, which closes the direct-scanout path the blinking
+	# came from. One compositor, half the crash surface; the nested shape can
+	# come back if a future gamescope survives it, and Launcher._spawn still
+	# fills {W}/{H} tokens for whatever needs them next.
+	"exec": ["flatpak", "run", "com.valvesoftware.Steam", "-gamepadui", "steam://store"],
 	# The desktop-entry id, which is how the tab finds the application's REAL
 	# icon: marwanos-appscan resolves an absolute path for everything installed,
 	# and store_tab.gd matches on this rather than on the "id" above. The two are

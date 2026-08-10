@@ -524,6 +524,24 @@ func _finish() -> void:
 	var entry := _current
 	_current = {}
 
+	# THE ORPHAN SWEEP. The watched pid and the application are not the same
+	# life when something WRAPS the flatpak: the nested-gamescope evening
+	# proved it -- the wrapper aborted, the poll saw an exit, the rail
+	# returned, and Steam kept running invisibly behind it. So a launch whose
+	# exec put a wrapper in front of `flatpak run` ends with a `flatpak kill`
+	# of the id, busting any sandbox that outlived its wrapper. Gated on the
+	# wrapper shape rather than fired always: when flatpak IS the watched
+	# process, its exit already means the sandbox is being torn down, and an
+	# unconditional kill would print one spurious journal error per normal
+	# quit. No wrapper exec exists today; this is the trap staying armed for
+	# the next one.
+	var swept_exec: Array = entry.get("exec", [])
+	if not swept_exec.is_empty() and not str(swept_exec[0]).ends_with("flatpak"):
+		var app_id := _flatpak_app_id(swept_exec)
+		if not app_id.is_empty():
+			ShellLog.info("wrapper exited; sweeping flatpak %s" % app_id)
+			OS.create_process("flatpak", ["kill", app_id])
+
 	# The watchdog and splash go whatever state they are in: a launch that
 	# ended ends the question of whether it drew, and a failure-state splash
 	# left up over the returning rail would be the seam lying in the other
