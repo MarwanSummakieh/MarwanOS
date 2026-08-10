@@ -1355,11 +1355,6 @@ func _open_overlay() -> void:
 	# Added to the root rather than to this node: the rail is hidden while an
 	# app runs, and a child of a hidden Control does not draw.
 	get_tree().root.add_child(_overlay)
-	# The window comes BACK before the overlay flag goes on, and the order is
-	# the whole of it: while an app is on screen this window is minimised (see
-	# Kiosk.yield_screen), and a menu composited into an unmapped window is a
-	# home button that does nothing.
-	Kiosk.yield_screen(false)
 	# Ask gamescope to composite us over the application rather than instead of
 	# it. See Kiosk.set_overlay -- if this does not take, the overlay still
 	# works, it just covers the app.
@@ -1402,12 +1397,6 @@ func _close_overlay() -> void:
 	overlay.get_parent().remove_child(overlay)
 	overlay.queue_free()
 	Kiosk.set_overlay(false)
-	# And back out of the way, if there is still something out there to get out
-	# of the way FOR. Asked of the launch seam rather than of is_busy(): a
-	# launch that never drew is busy too, and minimising for it would leave the
-	# TV with nothing on it at all. See Kiosk.yield_screen.
-	if Launcher.app_on_screen():
-		Kiosk.yield_screen(true)
 	Launcher.set_pad_keys_paused(false)
 	Launcher.set_splash_paused(false)
 

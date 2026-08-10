@@ -803,37 +803,6 @@ start_gamescope() {
         warn "applications will open at their own size and nothing will resize them"
     fi
 
-    # STEAM INTEGRATION, AND THIS REVERSES A DECISION MADE ABOVE. The comment a
-    # few lines up has said "No --steam ... that belongs to Steam, not to a
-    # compositor taking DRM master" since M1, and it was right when it was
-    # written: nothing on this machine was Steam, so a Steam-shaped flag was
-    # somebody else's session leaking into ours.
-    #
-    # Steam is now the workload, and the owner's report is the reason this
-    # flips -- "whenever steam runs the screen starts flickering as if it's
-    # trying to take over the graphics", which is what a compositor with no
-    # idea what Steam's windows ARE looks like from a sofa. The client is not
-    # one window: it is a main window plus notification popups, tooltips,
-    # hidden CEF helpers and an overlay, mapping and unmapping constantly --
-    # and every one of them is being forced to the size of the display by the
-    # flag directly above, so each transient becomes another fullscreen
-    # candidate for the focus heuristic to pick between. -e is what teaches
-    # steamcompmgr Steam's window hierarchy (the STEAM_GAME / STEAM_BIGPICTURE
-    # / STEAM_OVERLAY atoms) so it seats the one window that is the UI and
-    # leaves the rest alone. It is what the Deck's own session passes, running
-    # this same compositor against this same client.
-    #
-    # Passed under EVERY profile, because it is not a display configuration --
-    # it is the compositor being told what kind of client it is hosting, and
-    # that answer does not change with refresh rate or composition.
-    if gamescope_has_option "--steam"; then
-        set -- "$@" -e
-        log "steam integration: -e is ON (steamcompmgr knows Steam's windows)"
-    else
-        warn "gamescope --help ran and does NOT list --steam;"
-        warn "Steam's transient windows will compete with the shell for the screen"
-    fi
-
     # THE PROFILE'S OWN FLAGS. Everything above this line is the same under
     # every profile: the profile is a display configuration, not a different
     # session, and a switch that also moved the connector list or the resolution
