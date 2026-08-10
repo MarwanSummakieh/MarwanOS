@@ -113,6 +113,37 @@ const APPS_TAB := {
 }
 
 
+## THE SHELL'S OWN APPLICATIONS -- surfaces wearing a card. The file manager
+## is a screen the shell draws itself (see files_screen.gd for why it is not
+## the Dolphin flatpak any more), but in the person's mental model it is an
+## app: a thing on the rail you open, not a setting you visit. So it gets a
+## card, and the card carries a "surface" field instead of an "exec" --
+## tile.gd routes the press to the matching seam (Files.open) rather than to
+## the launch seam, because opening shell furniture is a screen swap and must
+## never become an RPC when Phase 1 rewires launcher.gd. "state" is
+## "installed" because it is: the binary drawing the card is the
+## installation. The "glyph" names a Phosphor mark for the card face -- a
+## built-in has no flatpak export and no storeart cache entry to draw.
+const FILES_APP := {
+	"id": "marwanos.files",
+	"title": "Files",
+	"subtitle": "Browse this machine and USB drives",
+	"tagline": "Browse this machine and USB drives",
+	"state": "installed",
+	"surface": "files",
+	"glyph": "folder",
+	"accent": "#33526B",
+}
+
+
+## Every card the shell provides from inside itself, in rail-entry shape.
+## Prepended to the rail ahead of the installed list (shell_root._populate):
+## the shell's own furniture is the one thing guaranteed present on a fresh
+## stick, and the rail's first card is where boot focus lands.
+static func builtin_apps() -> Array:
+	return [FILES_APP]
+
+
 static func stores() -> Array:
 	return [STEAM_STORE]
 
@@ -178,36 +209,11 @@ const AVAILABLE_APPS := [
 		"accent": "#1F4E63",
 		"tagline": "Your media library, ten feet tall",
 	},
-	{
-		"id": "org.kde.dolphin",
-		"title": "Dolphin",
-		"accent": "#22405A",
-		"tagline": "A real file manager, driven by the pad",
-	},
-	{
-		"id": "org.libretro.RetroArch",
-		"title": "RetroArch",
-		"accent": "#4A3A22",
-		"tagline": "Retro consoles, emulated",
-	},
-	{
-		"id": "org.videolan.VLC",
-		"title": "VLC",
-		"accent": "#5A3A1F",
-		"tagline": "Plays practically any video file",
-	},
-	{
-		"id": "com.moonlight_stream.Moonlight",
-		"title": "Moonlight",
-		"accent": "#2F4A3A",
-		"tagline": "Stream games from your gaming PC",
-	},
-	{
-		"id": "com.spotify.Client",
-		"title": "Spotify",
-		"accent": "#1F4A2A",
-		"tagline": "Music through the good speakers",
-	},
+	# The 2026-08-08 curation (RetroArch, VLC, Moonlight, Spotify, Dolphin) is
+	# gone on the owner's word: apps nobody asked for made the shelf read as
+	# filler, and the file manager the Dolphin flatpak stood in for is the
+	# shell's own screen now. The mechanism stays -- adding a shipped app is
+	# still one entry here and one id in shipped-apps.
 ]
 
 ## What an available card says under its title. One sentence, and it is the
@@ -282,8 +288,11 @@ const STORE_DIR_ENV := "MARWANOS_SHELL_STORE_DIR"
 ## never appear here: Steam's Big Picture and Kodi read the pad themselves,
 ## and double-delivered input is worse than none -- which is also why the
 ## desktop launch has its own id, so Big Picture's cannot match it.
+## "keys" currently has no member: the file manager it was built for
+## (Dolphin) was replaced by the shell's own Files screen, which reads the
+## pad natively. The dialect stays implemented -- the next keyboard-navigable
+## desktop app is one line here.
 const PAD_KEY_APPS := {
-	"org.kde.dolphin": "keys",
 	"store.steam.desktop": "pointer",
 }
 

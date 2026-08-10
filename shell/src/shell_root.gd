@@ -84,6 +84,8 @@ func _ready() -> void:
 	Stores.stores_closed.connect(_on_surface_closed)
 	Power.power_opened.connect(_on_surface_opened)
 	Power.power_closed.connect(_on_surface_closed)
+	Files.files_opened.connect(_on_surface_opened)
+	Files.files_closed.connect(_on_surface_closed)
 	PlayerOne.player_one_present.connect(_on_player_one_present)
 	PlayerOne.player_one_absent.connect(_on_player_one_absent)
 	SystemStatus.network_changed.connect(_on_network_changed)
@@ -434,7 +436,13 @@ func _populate() -> void:
 	for entry in Installed.apps:
 		known_ids.append(str(entry.get("id", "")))
 
-	var entries: Array = Installed.apps.duplicate()
+	# The shell's own surfaces ride in FRONT of the installed list: the file
+	# manager is an app in the person's mental model, it is the one card
+	# guaranteed present on a fresh stick, and the rail's first card is where
+	# boot focus lands -- so the thing that always works is the thing a first
+	# press always reaches. See Catalogue.FILES_APP for what a surface card is.
+	var entries: Array = Catalogue.builtin_apps().duplicate()
+	entries.append_array(Installed.apps)
 	entries.append_array(Catalogue.available(known_ids))
 
 	for entry in entries:
@@ -520,8 +528,13 @@ func _on_card_selected(entry: Dictionary) -> void:
 	# removed -- so on an available card the hint would advertise a button
 	# whose press is correctly ignored, which is the exact shape of "broken
 	# input" on a machine with no other feedback.
+	# ... and never on shell furniture: the menu's one verb is Uninstall, and
+	# a surface card (Files) has nothing behind it appctl could remove. A
+	# Steam game's card hides it too -- removal belongs to Steam itself.
 	if _options_hint != null:
-		_options_hint.visible = str(entry.get("state", "")) == "installed"
+		_options_hint.visible = str(entry.get("state", "")) == "installed" \
+			and str(entry.get("surface", "")).is_empty() \
+			and not str(entry.get("id", "")).begins_with("steam.")
 	_title.text = str(entry.get("title", ""))
 	_subtitle.text = str(entry.get("subtitle", ""))
 	_fade_hero_to(TvTheme.accent(str(entry.get("accent", ""))))
@@ -948,18 +961,31 @@ func _open_card_menu() -> void:
 		# A second press while it is up is a bounced button, not a request for
 		# two -- the same rule the other surfaces enforce.
 		return
-	if Settings.is_open() or Stores.is_open() or Power.is_open() or Launcher.is_busy():
+	if Settings.is_open() or Stores.is_open() or Power.is_open() or Files.is_open() \
+			or Launcher.is_busy():
 		# The rail is not what is on screen, so the selected card is not what the
 		# person is looking at.
 		return
 	if _selected_entry.is_empty():
 		ShellLog.info("Y at the rail with nothing selected; nothing to offer")
 		return
+	if not str(_selected_entry.get("surface", "")).is_empty():
+		# Shell furniture cannot be uninstalled -- the menu's one verb would be
+		# a request appctl correctly refuses, surfaced as a failure alert about
+		# a thing nobody did wrong.
+		ShellLog.info("Y on a built-in surface card; nothing to offer")
+		return
 	if str(_selected_entry.get("state", "")) != "installed":
 		# A card for an application that is still downloading has nothing to
 		# uninstall, and offering it would race the installer for the same
 		# flatpak. The installer's own states say what is happening instead.
 		ShellLog.info("Y on a card that is not installed yet; nothing to offer")
+		return
+	if str(_selected_entry.get("id", "")).begins_with("steam."):
+		# A Steam game's install lives inside Steam's own library, and appctl
+		# would rightly refuse its id. Removing one is Steam's job -- the menu
+		# not opening is more honest than a menu whose one entry is refused.
+		ShellLog.info("Y on a Steam game; removal belongs to Steam itself")
 		return
 	if Apps.is_busy():
 		ShellLog.info("Y while another install or removal is in flight; ignoring")

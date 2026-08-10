@@ -3,10 +3,11 @@ extends Node
 ## The pad bridge: how a gamepad drives an application that has never heard
 ## of one. Two dialects, chosen per application by Catalogue.PAD_KEY_APPS.
 ##
-## "keys" -- Dolphin's dialect. Arrows, open, back, context menu: the verbs a
-## keyboard-navigable UI can honour from a stick. Dolphin is why it exists:
-## a real file manager is a Qt desktop application, and a Qt desktop
-## application listens to keyboards -- so the shell types.
+## "keys" -- arrows, open, back, context menu: the verbs a keyboard-navigable
+## UI can honour from a stick. Built for the Dolphin flatpak before the shell
+## grew its own Files screen; no application uses it today, and it stays
+## because the next keyboard-driven desktop app is one catalogue line away
+## from needing exactly this again.
 ##
 ## "pointer" -- the Steam desktop client's dialect. That client is a
 ## mouse-first UI; arrows land nowhere useful, so the stick moves a real X

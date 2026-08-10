@@ -28,6 +28,7 @@ extends Button
 ## the whole appearance is one grep away from the constants that justify it.
 
 const TvTheme = preload("res://src/tv_theme.gd")
+const Icons = preload("res://src/icons.gd")
 
 ## Emitted whenever this card takes focus, so the root can move the rail and swap
 ## the hero art. A signal rather than the root connecting to focus_entered
@@ -149,6 +150,22 @@ func _wash() -> Color:
 func _build_icon() -> void:
 	var path := str(entry.get("icon", ""))
 	if path.is_empty():
+		# No file on disk to draw, but the entry may name a Phosphor glyph --
+		# the shell's built-in surfaces (the Files card) have no flatpak
+		# export and no storeart cache entry, and a card that is only its
+		# accent wash reads as a loading failure next to neighbours with real
+		# logos. The glyph is the card's icon the same way the wash is its
+		# art: sized to the same inset the PNG icons respect, so the two card
+		# kinds read as one family. It does not grow with the focus tween the
+		# way a texture does -- a Label's font size is fixed -- which is a
+		# known, minor asymmetry and cheaper than re-rendering type per frame.
+		var glyph_name := str(entry.get("glyph", ""))
+		if glyph_name.is_empty():
+			return
+		var glyph := Icons.label(glyph_name,
+			TvTheme.CARD_SIZE - 2 * TvTheme.CARD_ICON_INSET, TvTheme.TEXT_PRIMARY)
+		glyph.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+		add_child(glyph)
 		return
 
 	var image := load_icon_image(path)
@@ -270,6 +287,24 @@ func _on_pressed() -> void:
 	# It logs rather than doing nothing silently, for settings_row.gd's reason:
 	# on this machine a press that vanishes is indistinguishable from broken
 	# input, and the card's own subtitle already says why it will not open.
+	#
+	# A SURFACE CARD OPENS A SEAM, NOT A PROCESS. The shell's own screens wear
+	# cards too (the Files card), and their press is a screen swap through the
+	# surface's seam -- the same call the top bar's gear makes for settings.
+	# Routed here, before the state ladder, because a surface entry says
+	# "installed" truthfully and must still never reach Launcher.launch: there
+	# is no process to spawn, and the placeholder branch claiming one would be
+	# the exact lie the state checks below exist to prevent.
+	var surface := str(entry.get("surface", ""))
+	if not surface.is_empty():
+		match surface:
+			"files":
+				Files.open()
+			_:
+				ShellLog.error("card \"%s\" names surface \"%s\", which no seam answers"
+					% [str(entry.get("title", "")), surface])
+		return
+
 	var state := str(entry.get("state", "installed"))
 
 	# AN AVAILABLE CARD DOWNLOADS ITSELF. These are the applications the image

@@ -28,6 +28,14 @@
 #                pointed at by MARWANOS_SHELL_STATUS_DIR -- same seam and same
 #                file formats as run-shell-wsl.sh. Without it the shell makes
 #                no claims about network or apps.
+#   FILES_DIR    directory of file-manager fixtures, mounted at /files and
+#                pointed at by MARWANOS_SHELL_FILES_HOME, so the files
+#                screen's Home place browses it. Read-write, unlike
+#                STATUS_DIR: status files are root-written truth the shell
+#                must not touch, and this is a sandbox home whose whole point
+#                is that copy, rename and delete can be exercised against it.
+#                Without it the Home place is the container's HOME -- an
+#                empty tmpfs, which only ever proves the empty state.
 #   KEY_DELAY    seconds slept after every key (default 1).
 #   SETTLE       seconds slept once the window exists, before driving (default 3).
 #   SHOTS_DIR    if set, an ImageMagick `import` of the Xvfb root is written
@@ -78,6 +86,9 @@ podman image exists "$RUNTIME_IMAGE" \
 if [[ -n "${STATUS_DIR:-}" && ! -d "$STATUS_DIR" ]]; then
     die "STATUS_DIR=$STATUS_DIR is not a directory"
 fi
+if [[ -n "${FILES_DIR:-}" && ! -d "$FILES_DIR" ]]; then
+    die "FILES_DIR=$FILES_DIR is not a directory"
+fi
 
 say "Exporting the shell (only the shell-export stage rebuilds)"
 podman build \
@@ -107,6 +118,11 @@ if [[ -n "${STATUS_DIR:-}" ]]; then
     STATUS_ARGS=(-e MARWANOS_SHELL_STATUS_DIR=/status -v "${STATUS_DIR}:/status:ro")
 fi
 
+FILES_ARGS=()
+if [[ -n "${FILES_DIR:-}" ]]; then
+    FILES_ARGS=(-e MARWANOS_SHELL_FILES_HOME=/files -v "${FILES_DIR}:/files:rw")
+fi
+
 say "Starting the shell container"
 podman rm -f "$CTR" >/dev/null 2>&1 || true
 podman run -d --name "$CTR" \
@@ -116,6 +132,7 @@ podman run -d --name "$CTR" \
     -e XDG_RUNTIME_DIR=/godothome \
     -e MARWANOS_SHELL_WINDOWED=1 \
     "${STATUS_ARGS[@]}" \
+    "${FILES_ARGS[@]}" \
     --tmpfs /godothome:rw,mode=1777 \
     -v "${BIN_OUT}:/usr/lib/marwanos/shell/marwanos-shell:ro" \
     --entrypoint /usr/lib/marwanos/shell/marwanos-shell \

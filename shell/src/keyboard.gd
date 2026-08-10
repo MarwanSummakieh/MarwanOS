@@ -54,6 +54,13 @@ const KEY_GAP := 12
 var title_text: String = "Enter password"
 var masked: bool = true
 
+## What the entry line opens holding. Empty for a passphrase -- there is
+## nothing honest to prefill a secret with -- and the current name for the
+## file manager's rename, where starting blank would turn every one-letter
+## edit into a full retype with a thumbstick. Set before add_child, like
+## title_text and masked.
+var initial_text: String = ""
+
 var _text: String = ""
 var _shift: bool = false
 
@@ -123,6 +130,11 @@ func _ready() -> void:
 	column.add_child(_build_hints())
 
 	_wire_focus_neighbours()
+
+	# Applied here rather than defaulted into _text at declaration so the
+	# refresh below renders it: the caller sets the var before add_child, and
+	# _ready is the first moment this screen exists to draw anything.
+	_text = initial_text
 	_refresh_entry()
 
 	# Nothing navigates until something is focused. Opening on the first letter

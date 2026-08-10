@@ -347,6 +347,12 @@ func _grid_entries() -> Array:
 	for entry in Installed.apps:
 		if store_ids.has(str(entry.get("id", ""))):
 			continue
+		# Steam GAMES are on the rail but not on this shelf: the shelf's whole
+		# verb set is install/uninstall through appctl, and a game is neither
+		# installable nor removable by this machine's root -- Steam owns both
+		# sides of that. A card whose only button is refused is not a card.
+		if str(entry.get("id", "")).begins_with("steam."):
+			continue
 		var copy: Dictionary = entry.duplicate()
 		# An installed application's art comes from appscan; a PENDING one has
 		# no export yet, and the cache is what says what is downloading.

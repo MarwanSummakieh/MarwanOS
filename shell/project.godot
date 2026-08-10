@@ -52,6 +52,7 @@ Launcher="*res://src/launcher.gd"
 Settings="*res://src/settings.gd"
 Stores="*res://src/stores.gd"
 Power="*res://src/power.gd"
+Files="*res://src/files.gd"
 
 [display]
 
