@@ -544,6 +544,26 @@ RUN set -euxo pipefail; \
     grep -q 'nvidia\.ko' /tmp/ir-files.txt; \
     grep -q '/uas\.ko' /tmp/ir-files.txt; \
     grep -q 'themes/marwanos/splash\.png' /tmp/ir-files.txt; \
+    : "THE /boot BUDGET, asserted, because exceeding it does not fail here --"; \
+    : "it fails on somebody's television, months later, as a bootloader entry"; \
+    : "that boots to black. anaconda's autopart gives this machine a 1 GiB"; \
+    : "/boot; bootc keeps a kernel and an initramfs there per deployment, and"; \
+    : "an upgrade briefly holds THREE of them. 250 MB of initramfs plus an"; \
+    : "18 MB kernel is 268 MB a deployment, so three fit in 804 MB with room"; \
+    : "to spare. At the 342 MB this image shipped on 2026-08-10 the same sum"; \
+    : "was 1080 MB, the write ran out of partition, and the deployment that"; \
+    : "resulted booted to nothing. See 51-marwanos-nouveau.conf for where the"; \
+    : "weight went and why nouveau was the right 100 MB to cut."; \
+    ir_bytes="$(stat -c %s "/lib/modules/${KERNEL_VERSION}/initramfs.img")"; \
+    echo "initramfs: ${ir_bytes} bytes"; \
+    test "${ir_bytes}" -lt 262144000; \
+    : "The two halves of that cut, each asserted in its own direction: the"; \
+    : "blacklisted driver's firmware must be GONE, and the proprietary"; \
+    : "driver's -- which nvidia-drm.modeset needs to light the panel before"; \
+    : "plymouth draws -- must still be THERE. A dracut that started ignoring"; \
+    : "the drop-in would pass a size check by luck and fail this one."; \
+    ! grep -q 'firmware/nvidia/ga102' /tmp/ir-files.txt; \
+    grep -q 'firmware/nvidia/610\.43\.03' /tmp/ir-files.txt; \
     rm -f /tmp/ir-mods.txt /tmp/ir-files.txt
 
 # Session wiring. Separate from the package install so that editing a session
