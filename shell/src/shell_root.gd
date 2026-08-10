@@ -66,6 +66,9 @@ var _card_menu: CardMenu = null
 ## reaching into the launch seam on its own.
 var _details: DetailsPanel = null
 var _details_tile: Control = null
+## A gameart change that arrived while the details panel was open, replayed
+## when it closes -- see _on_gameart_changed for why the panel outranks art.
+var _gameart_pending := false
 ## The rail entry the cursor is on, kept because the card menu is opened from
 ## input handling rather than from the card itself.
 var _selected_entry: Dictionary = {}
@@ -1290,7 +1293,17 @@ func _on_apps_changed(_apps: Array) -> void:
 ## learned something. The list it is handed is the current installed list rather
 ## than a new one, because nothing about what is installed has changed -- only
 ## what it looks like.
+##
+## DEFERRED WHILE THE DETAILS PANEL IS UP, and review is why: the designed
+## traffic here is one tsv change per game as Steam's cache warms, minutes
+## apart, and _on_apps_changed's first act is closing the panel -- so a
+## warming cache was yanking the sheet out from under the person reading it,
+## to redraw a card they were not looking at. Better art can wait the length
+## of a description; the flag replays the rebuild the moment the panel goes.
 func _on_gameart_changed() -> void:
+	if _details != null:
+		_gameart_pending = true
+		return
 	_on_apps_changed(Installed.apps)
 
 
@@ -1456,6 +1469,11 @@ func _close_details() -> void:
 	_details_tile = null
 	panel.get_parent().remove_child(panel)
 	panel.queue_free()
+	# The artwork rebuild the open panel deferred -- see _on_gameart_changed.
+	# After the teardown so the rebuild's focus restore is the last word.
+	if _gameart_pending:
+		_gameart_pending = false
+		_on_apps_changed.call_deferred(Installed.apps)
 	# Only when the rail is what is on screen. A launch started from the panel
 	# hides this surface between the two, and grabbing focus into a hidden
 	# control would strand it there.

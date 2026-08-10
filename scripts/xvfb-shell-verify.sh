@@ -34,10 +34,14 @@
 #                directory, which is why the artwork seam deliberately did not
 #                get an override of its own).
 #   STORE_DIR    the artwork and metadata cache, mounted read-only and pointed
-#                at by MARWANOS_SHELL_STORE_DIR -- the /var/marwanos/store tree,
-#                i.e. icons/<app-id>.png and meta/steam.<appid>.json. Without it
-#                a store page draws its fallback glyph and the details panel has
-#                no description from Steam to show.
+#                at by MARWANOS_SHELL_STORE_DIR -- the /var/marwanos/store tree
+#                WHOLE: icons/<app-id>.png, meta/steam.<appid>.json, AND the
+#                storefront's front/featured.json + front/app.<appid>.json +
+#                front/art/<appid>[.shot].jpg. A fixture built without front/
+#                renders a storefront grid that says "Fetching the storefront"
+#                forever, which reads as a bug and is a missing directory.
+#                Without the whole tree a store page draws its fallback glyph
+#                and the details panel has no description from Steam to show.
 #   FILES_DIR    directory of file-manager fixtures, mounted at /files and
 #                pointed at by MARWANOS_SHELL_FILES_HOME, so the files
 #                screen's Home place browses it. Read-write, unlike
