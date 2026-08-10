@@ -110,50 +110,24 @@ static func steam_desktop_entry() -> Dictionary:
 	}
 
 
-## The system's own shelf in the stores screen: every application the image
-## ships, rendered as a grid of cards by the shell itself. Not a store entry --
-## it carries no exec and no app_id, because there is nothing to launch and
-## nothing to install ABOUT the tab; the cards on its page carry their own.
-## "mark" names the drawn 2x2 tab mark (see store_tab.gd) rather than a font
-## glyph, because the shipped Phosphor build carries no glyph names to look a
-## new codepoint up by, and a guessed codepoint renders as a missing-glyph box
-## on the one machine that matters.
-const APPS_TAB := {
-	"id": "store.apps",
-	"title": "Apps",
-	"mark": "grid",
-}
-
-
-## THE SHELL'S OWN APPLICATIONS -- surfaces wearing a card. The file manager
-## is a screen the shell draws itself (see files_screen.gd for why it is not
-## the Dolphin flatpak any more), but in the person's mental model it is an
-## app: a thing on the rail you open, not a setting you visit. So it gets a
-## card, and the card carries a "surface" field instead of an "exec" --
-## tile.gd routes the press to the matching seam (Files.open) rather than to
-## the launch seam, because opening shell furniture is a screen swap and must
-## never become an RPC when Phase 1 rewires launcher.gd. "state" is
-## "installed" because it is: the binary drawing the card is the
-## installation. The "glyph" names a Phosphor mark for the card face -- a
-## built-in has no flatpak export and no storeart cache entry to draw.
-const FILES_APP := {
-	"id": "marwanos.files",
-	"title": "Files",
-	"subtitle": "Browse this machine and USB drives",
-	"tagline": "Browse this machine and USB drives",
-	"state": "installed",
-	"surface": "files",
-	"glyph": "folder",
-	"accent": "#33526B",
-}
-
-
-## Every card the shell provides from inside itself, in rail-entry shape.
-## Prepended to the rail ahead of the installed list (shell_root._populate):
-## the shell's own furniture is the one thing guaranteed present on a fresh
-## stick, and the rail's first card is where boot focus lands.
-static func builtin_apps() -> Array:
-	return [FILES_APP]
+## THE APPS SHELF IS GONE FROM THE STORES SCREEN, on the owner's word, and
+## APPS_TAB with it. It was a tab whose page was a grid of every application
+## the image ships -- which is the same set the RAIL already draws, installed
+## cards and "press A to download it" cards side by side. Two screens listing
+## the same applications is the thing ADR 0006 keeps calling one-thing-two-homes,
+## and the store is the wrong one of the two to keep it in: a store is where you
+## go to reach somebody else's catalogue, and the shelf was this machine's own.
+## The rail is the library and stays the whole answer for what is on the
+## machine; store_tab.gd's drawn "mark" fallback went out with this, since Steam
+## and every store after it names a real application icon.
+##
+## THE FILES CARD IS GONE FROM THE RAIL for the mirror reason -- the file
+## manager is a top-bar icon next to the gear and the power button now (see
+## shell_root._build_topbar), so FILES_APP and builtin_apps() went with it.
+## Nothing replaced the "surface" field they were the only user of: a shell
+## surface is reached from the bar, and the bar's icons call their seam
+## directly, which is one fewer indirection than a card that named a seam in a
+## string.
 
 
 static func stores() -> Array:

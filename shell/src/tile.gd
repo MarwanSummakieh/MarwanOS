@@ -150,15 +150,21 @@ func _wash() -> Color:
 func _build_icon() -> void:
 	var path := str(entry.get("icon", ""))
 	if path.is_empty():
-		# No file on disk to draw, but the entry may name a Phosphor glyph --
-		# the shell's built-in surfaces (the Files card) have no flatpak
-		# export and no storeart cache entry, and a card that is only its
-		# accent wash reads as a loading failure next to neighbours with real
-		# logos. The glyph is the card's icon the same way the wash is its
+		# No file on disk to draw, but the entry may name a Phosphor glyph. A
+		# card that is only its accent wash reads as a loading failure next to
+		# neighbours with real logos, and an application whose flatpak exports
+		# no icon and whose Flathub art has not been fetched yet is exactly
+		# that card. The glyph is the card's icon the same way the wash is its
 		# art: sized to the same inset the PNG icons respect, so the two card
 		# kinds read as one family. It does not grow with the focus tween the
 		# way a texture does -- a Label's font size is fixed -- which is a
 		# known, minor asymmetry and cheaper than re-rendering type per frame.
+		#
+		# NO ENTRY NAMES ONE TODAY: the Files card was the only "glyph" in the
+		# catalogue and it is a top-bar icon now. Kept because appscan's
+		# records are the source of every other card and it cannot promise an
+		# icon path -- this is the fallback for the day one of them arrives
+		# bare, and it is nine lines.
 		var glyph_name := str(entry.get("glyph", ""))
 		if glyph_name.is_empty():
 			return
@@ -288,23 +294,12 @@ func _on_pressed() -> void:
 	# on this machine a press that vanishes is indistinguishable from broken
 	# input, and the card's own subtitle already says why it will not open.
 	#
-	# A SURFACE CARD OPENS A SEAM, NOT A PROCESS. The shell's own screens wear
-	# cards too (the Files card), and their press is a screen swap through the
-	# surface's seam -- the same call the top bar's gear makes for settings.
-	# Routed here, before the state ladder, because a surface entry says
-	# "installed" truthfully and must still never reach Launcher.launch: there
-	# is no process to spawn, and the placeholder branch claiming one would be
-	# the exact lie the state checks below exist to prevent.
-	var surface := str(entry.get("surface", ""))
-	if not surface.is_empty():
-		match surface:
-			"files":
-				Files.open()
-			_:
-				ShellLog.error("card \"%s\" names surface \"%s\", which no seam answers"
-					% [str(entry.get("title", "")), surface])
-		return
-
+	# EVERY CARD IS AN APPLICATION. A "surface" branch used to sit above this,
+	# routing the Files card's press to Files.open instead of to the launch
+	# seam; the file manager is a top-bar icon now (see catalogue.gd) and the
+	# branch went with its only entry. A shell surface reached from the bar
+	# calls its seam directly, which is what the gear and the power button
+	# always did.
 	var state := str(entry.get("state", "installed"))
 
 	# AN AVAILABLE CARD DOWNLOADS ITSELF. These are the applications the image

@@ -59,7 +59,12 @@ var _card_menu: CardMenu = null
 ## input handling rather than from the card itself.
 var _selected_entry: Dictionary = {}
 var _wifi: Glyphs = null
+## The bar's focusable cluster, in the order they sit. Kept as one array as
+## well as four members because every wiring loop below wants "all of them" --
+## and a fifth icon arriving should not be a fifth line in four places.
+var _bar_buttons: Array = []
 var _store_button: IconButton = null
+var _files_button: IconButton = null
 var _gear_button: IconButton = null
 var _power_button: IconButton = null
 
@@ -394,34 +399,31 @@ func _build_topbar() -> Control:
 
 	bar.add_child(_bar_gap())
 
-	# The bar's icon cluster, PS5-fashion (ADR 0006, third amendment): the
-	# store and the gear are the two FOCUSABLE things outside the rail -- up
-	# from any card lands on the store -- and the wifi glyph and clock after
-	# them are indicators, not controls. The order puts the two buttons
-	# together so left/right between them never crosses a non-focusable.
-	_store_button = IconButton.new()
-	_store_button.setup("store", "Store")
-	_store_button.activated.connect(Stores.open)
-	bar.add_child(_store_button)
+	# The bar's icon cluster, PS5-fashion (ADR 0006, third amendment): these are
+	# the FOCUSABLE things outside the rail -- up from any card lands on the
+	# store -- and the wifi glyph and clock after them are indicators, not
+	# controls. The order keeps them adjacent so left/right between them never
+	# crosses a non-focusable.
+	#
+	# FILES IS ONE OF THEM NOW, at the owner's request, and it stopped being a
+	# rail card in the same move. The rail is the library -- the applications
+	# this machine has -- and the file manager is a shell surface exactly like
+	# settings and power: a screen the binary draws, not a thing you install or
+	# remove. It had a card because "an app in the person's mental model" was a
+	# defensible reading; sitting next to the gear is the better one, and it
+	# frees the rail's first card to be something the person actually put there.
+	# One thing, one home (ADR 0006) is what forbids it being in both places.
+	_store_button = _bar_button("store", "Store", Stores.open)
+	_files_button = _bar_button("folder", "Files", Files.open)
+	_gear_button = _bar_button("gear", "Settings", Settings.open)
+	# The power menu, asked for by name: off, restart, sleep, next to the
+	# others. Last of the focusables so a thumb overshooting the gear lands on
+	# it rather than on nothing.
+	_power_button = _bar_button("power", "Power", Power.open)
 
-	bar.add_child(_bar_gap())
-
-	_gear_button = IconButton.new()
-	_gear_button.setup("gear", "Settings")
-	_gear_button.activated.connect(Settings.open)
-	bar.add_child(_gear_button)
-
-	bar.add_child(_bar_gap())
-
-	# The power menu, asked for by name: off, restart, sleep, next to the other
-	# two. Last of the three focusables so a thumb overshooting the gear lands
-	# on it rather than on nothing.
-	_power_button = IconButton.new()
-	_power_button.setup("power", "Power")
-	_power_button.activated.connect(Power.open)
-	bar.add_child(_power_button)
-
-	bar.add_child(_bar_gap())
+	for button in _bar_buttons:
+		bar.add_child(button)
+		bar.add_child(_bar_gap())
 
 	# The network's answer as a glyph next to the time, from SystemStatus. In
 	# the bar for the same reason the controller state is: connectivity coming
@@ -447,6 +449,17 @@ func _build_topbar() -> Control:
 	bar.add_child(_clock)
 
 	return bar
+
+
+## One icon in the bar's cluster, built and remembered. The registration into
+## _bar_buttons is the point: the neighbour tables below walk that array, so an
+## icon that is built is an icon that is wired, and the two cannot drift.
+func _bar_button(kind: String, label_text: String, action: Callable) -> IconButton:
+	var button := IconButton.new()
+	button.setup(kind, label_text)
+	button.activated.connect(action)
+	_bar_buttons.append(button)
+	return button
 
 
 func _bar_gap() -> Control:
@@ -520,11 +533,11 @@ func _build_hints() -> Control:
 	# how a person learns that, and the top bar's icons still take an A.
 	_open_hint = TvTheme.hint("A", "Open")
 	hints.add_child(_open_hint)
-	# Y is the only route to removing an application on a machine with no
+	# OPTIONS is the only route to removing an application on a machine with no
 	# terminal, so it is advertised rather than left to be discovered. Hidden
 	# with the A hint when the rail is empty -- there is nothing to have options
 	# about -- which is why it is a member too.
-	_options_hint = TvTheme.hint("Y", "Options")
+	_options_hint = TvTheme.hint("OPTIONS", "Options")
 	hints.add_child(_options_hint)
 	hints.add_child(TvTheme.hint("B", "Back"))
 	return hints
@@ -557,13 +570,11 @@ func _populate() -> void:
 	for entry in Installed.apps:
 		known_ids.append(str(entry.get("id", "")))
 
-	# The shell's own surfaces ride in FRONT of the installed list: the file
-	# manager is an app in the person's mental model, it is the one card
-	# guaranteed present on a fresh stick, and the rail's first card is where
-	# boot focus lands -- so the thing that always works is the thing a first
-	# press always reaches. See Catalogue.FILES_APP for what a surface card is.
-	var entries: Array = Catalogue.builtin_apps().duplicate()
-	entries.append_array(Installed.apps)
+	# THE RAIL IS APPLICATIONS ONLY. The Files card used to ride in front of the
+	# installed list; the file manager is a top-bar icon now, next to the gear
+	# and the power button, so a card for it here would be the same surface with
+	# two homes. See _build_topbar.
+	var entries: Array = Installed.apps.duplicate()
 	entries.append_array(Catalogue.available(known_ids))
 
 	for entry in entries:
@@ -612,28 +623,21 @@ func _wire_focus_neighbours() -> void:
 		tile.focus_neighbor_top = tile.get_path_to(_store_button)
 		tile.focus_neighbor_bottom = tile.get_path_to(tile)
 
-	_store_button.focus_neighbor_left = _store_button.get_path_to(_store_button)
-	_store_button.focus_neighbor_right = _store_button.get_path_to(_gear_button)
-	_store_button.focus_neighbor_top = _store_button.get_path_to(_store_button)
+	# The bar is the rail's argument on its own row: one axis, hard stops at both
+	# ends, up pointed at self so nothing above it can be found geometrically.
+	var bar_count := _bar_buttons.size()
+	for index in bar_count:
+		var button: Control = _bar_buttons[index]
+		var previous := index - 1 if index > 0 else index
+		var next := index + 1 if index + 1 < bar_count else index
 
-	_gear_button.focus_neighbor_left = _gear_button.get_path_to(_store_button)
-	_gear_button.focus_neighbor_right = _gear_button.get_path_to(_power_button)
-	_gear_button.focus_neighbor_top = _gear_button.get_path_to(_gear_button)
-
-	_power_button.focus_neighbor_left = _power_button.get_path_to(_gear_button)
-	_power_button.focus_neighbor_right = _power_button.get_path_to(_power_button)
-	_power_button.focus_neighbor_top = _power_button.get_path_to(_power_button)
-
-	if count > 0:
-		_store_button.focus_neighbor_bottom = _store_button.get_path_to(_tiles[0])
-		_gear_button.focus_neighbor_bottom = _gear_button.get_path_to(_tiles[0])
-		_power_button.focus_neighbor_bottom = _power_button.get_path_to(_tiles[0])
-	else:
+		button.focus_neighbor_left = button.get_path_to(_bar_buttons[previous])
+		button.focus_neighbor_right = button.get_path_to(_bar_buttons[next])
+		button.focus_neighbor_top = button.get_path_to(button)
 		# Nothing below the bar on an empty rail. Pointed at self rather than
 		# left unset, so Control's geometric search cannot find the hint row.
-		_store_button.focus_neighbor_bottom = _store_button.get_path_to(_store_button)
-		_gear_button.focus_neighbor_bottom = _gear_button.get_path_to(_gear_button)
-		_power_button.focus_neighbor_bottom = _power_button.get_path_to(_power_button)
+		var below: Control = _tiles[0] if count > 0 else button
+		button.focus_neighbor_bottom = button.get_path_to(below)
 
 
 # ---------------------------------------------------------------------------
@@ -644,17 +648,14 @@ func _on_card_selected(entry: Dictionary) -> void:
 	# Remembered for the card menu, which is opened from _unhandled_input and
 	# therefore has no card to ask.
 	_selected_entry = entry
-	# Y IS ONLY OFFERED WHERE IT DOES SOMETHING. The menu's one entry is
+	# OPTIONS IS ONLY OFFERED WHERE IT DOES SOMETHING. The menu's one entry is
 	# Uninstall, and an application that is not on the machine cannot be
 	# removed -- so on an available card the hint would advertise a button
 	# whose press is correctly ignored, which is the exact shape of "broken
-	# input" on a machine with no other feedback.
-	# ... and never on shell furniture: the menu's one verb is Uninstall, and
-	# a surface card (Files) has nothing behind it appctl could remove. A
-	# Steam game's card hides it too -- removal belongs to Steam itself.
+	# input" on a machine with no other feedback. A Steam game's card hides it
+	# too -- removal belongs to Steam itself.
 	if _options_hint != null:
 		_options_hint.visible = str(entry.get("state", "")) == "installed" \
-			and str(entry.get("surface", "")).is_empty() \
 			and not str(entry.get("id", "")).begins_with("steam.")
 	_title.text = str(entry.get("title", ""))
 	_subtitle.text = str(entry.get("subtitle", ""))
@@ -912,9 +913,8 @@ func _scroll_to_selected() -> void:
 	# Keep the bar's way back pointed at the selection, so up-then-down is a
 	# round trip rather than a teleport to the rail's start.
 	var selected: Control = _tiles[index]
-	_store_button.focus_neighbor_bottom = _store_button.get_path_to(selected)
-	_gear_button.focus_neighbor_bottom = _gear_button.get_path_to(selected)
-	_power_button.focus_neighbor_bottom = _power_button.get_path_to(selected)
+	for button in _bar_buttons:
+		button.focus_neighbor_bottom = button.get_path_to(selected)
 
 
 func _ensure_focus() -> void:
@@ -1306,28 +1306,22 @@ func _open_card_menu() -> void:
 		# person is looking at.
 		return
 	if _selected_entry.is_empty():
-		ShellLog.info("Y at the rail with nothing selected; nothing to offer")
-		return
-	if not str(_selected_entry.get("surface", "")).is_empty():
-		# Shell furniture cannot be uninstalled -- the menu's one verb would be
-		# a request appctl correctly refuses, surfaced as a failure alert about
-		# a thing nobody did wrong.
-		ShellLog.info("Y on a built-in surface card; nothing to offer")
+		ShellLog.info("OPTIONS at the rail with nothing selected; nothing to offer")
 		return
 	if str(_selected_entry.get("state", "")) != "installed":
 		# A card for an application that is still downloading has nothing to
 		# uninstall, and offering it would race the installer for the same
 		# flatpak. The installer's own states say what is happening instead.
-		ShellLog.info("Y on a card that is not installed yet; nothing to offer")
+		ShellLog.info("OPTIONS on a card that is not installed yet; nothing to offer")
 		return
 	if str(_selected_entry.get("id", "")).begins_with("steam."):
 		# A Steam game's install lives inside Steam's own library, and appctl
 		# would rightly refuse its id. Removing one is Steam's job -- the menu
 		# not opening is more honest than a menu whose one entry is refused.
-		ShellLog.info("Y on a Steam game; removal belongs to Steam itself")
+		ShellLog.info("OPTIONS on a Steam game; removal belongs to Steam itself")
 		return
 	if Apps.is_busy():
-		ShellLog.info("Y while another install or removal is in flight; ignoring")
+		ShellLog.info("OPTIONS while another install or removal is in flight; ignoring")
 		return
 
 	_card_menu = CardMenu.new()
@@ -1355,12 +1349,12 @@ func _close_card_menu() -> void:
 
 
 func _unhandled_input(event: InputEvent) -> void:
-	# Y OPENS THE CARD'S OPTIONS. It is checked before B because it is the only
-	# way to remove an application on a machine with no terminal, and it is on Y
-	# rather than on a long-press of A because a hold that means something
-	# different from a press is exactly the interaction a person on a sofa
-	# discovers by accident and cannot undo.
-	if InputMap.has_action("ui_shell_y") and event.is_action_pressed("ui_shell_y"):
+	# OPTIONS OPENS THE CARD'S OPTIONS. It is checked before B because it is the
+	# only way to remove an application on a machine with no terminal, and it is
+	# on the pad's own OPTIONS button rather than on a long-press of A because a
+	# hold that means something different from a press is exactly the
+	# interaction a person on a sofa discovers by accident and cannot undo.
+	if InputMap.has_action("ui_shell_options") and event.is_action_pressed("ui_shell_options"):
 		get_viewport().set_input_as_handled()
 		_open_card_menu()
 		return

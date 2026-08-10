@@ -412,17 +412,39 @@ static func row_pressed_box() -> StyleBoxFlat:
 	return box
 
 
-## The bordered square behind a button glyph in the hint row.
-static func glyph_box() -> StyleBoxFlat:
+## THE HINT BADGE IS A CIRCLE, and it was a rounded square until someone looked
+## at the appliance on a TV. A pad's face buttons ARE circles -- moulded round on
+## every controller in the room -- so a cross drawn inside a square box is the
+## legend disagreeing with the hardware it is a legend for, which is exactly the
+## kind of small wrongness that makes a hint row read as decoration rather than
+## as instruction.
+##
+## The number is the badge's outside diameter, and it is the one knob: the box's
+## corner radius is half of it (StyleBoxFlat clamps radii to the rect, so half
+## the height is a true circle and never an over-rounded rectangle), and the
+## badge Label is given the same value as a square minimum size. 46 rather than
+## something snug around SIZE_SUPPLEMENTAL's 26, because a circle circumscribes
+## the glyph where a square inscribed it -- a ring drawn tight to a 26 px mark
+## clips its corners.
+const HINT_BADGE_SIZE := 46
+
+
+## The circle behind a button glyph in the hint row -- see HINT_BADGE_SIZE.
+##
+## `word` is the escape hatch for a badge that is text rather than a face-button
+## mark ("OPTIONS", "Shift"): a circle cannot hold seven letters, so those get
+## the same fully-rounded box stretched into a lozenge. Still round-ended, still
+## not the square this replaced, and the two are one function so a retune of the
+## border or the fill cannot land on only one of them.
+static func glyph_box(word: bool = false) -> StyleBoxFlat:
 	var box := StyleBoxFlat.new()
 	box.bg_color = SURFACE
 	box.set_border_width_all(2)
 	box.border_color = TEXT_SECONDARY
-	box.set_corner_radius_all(6)
-	box.content_margin_left = 14
-	box.content_margin_right = 14
-	box.content_margin_top = 2
-	box.content_margin_bottom = 2
+	box.set_corner_radius_all(HINT_BADGE_SIZE / 2)
+	if word:
+		box.content_margin_left = 18
+		box.content_margin_right = 18
 	return box
 
 
@@ -450,19 +472,28 @@ static func hint(glyph: String, caption_text: String) -> Control:
 	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	row.add_theme_constant_override("separation", HINT_GLYPH_GAP)
 
+	var is_shape := HINT_SHAPES.has(glyph)
+
 	var badge := Label.new()
 	badge.add_theme_font_size_override("font_size", SIZE_SUPPLEMENTAL)
 	badge.add_theme_color_override("font_color", TEXT_PRIMARY)
-	badge.add_theme_stylebox_override("normal", glyph_box())
+	badge.add_theme_stylebox_override("normal", glyph_box(not is_shape))
 	badge.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	badge.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	# A face-button badge is a CIRCLE, so its box has to be square -- a Label
+	# sized by its own one glyph is taller than it is wide, and the rounded box
+	# would come out as a vertical lozenge. A word badge only pins the height,
+	# and its width follows the letters.
+	badge.custom_minimum_size = Vector2(
+		HINT_BADGE_SIZE if is_shape else 0, HINT_BADGE_SIZE)
 	badge.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	if HINT_SHAPES.has(glyph):
+	if is_shape:
 		# A face button: draw the PS shape in the icon font.
 		badge.add_theme_font_override("font", Icons.font())
 		badge.text = Icons.glyph(str(HINT_SHAPES[glyph]))
 	else:
-		# Anything else (a word like "Shift" on the keyboard's action row, or a
-		# button no shape table covers) stays text.
+		# Anything else (the OPTIONS button, or a word like "Shift" on the
+		# keyboard's action row) stays text.
 		badge.text = glyph
 	row.add_child(badge)
 

@@ -1,7 +1,11 @@
 extends Node
 
-## The eight actions the shell is allowed to use, defined here rather than in
+## The nine actions the shell is allowed to use, defined here rather than in
 ## project.godot.
+##
+## The ninth is ui_shell_options, on the pad's OPTIONS button -- see its
+## _define below for why the options menu moved off Triangle and onto the
+## button that says what it does.
 ##
 ## It was six until the on-screen keyboard landed (ADR 0006, fifth amendment).
 ## Six was never a cap for its own sake -- it was the count that fell out of
@@ -64,6 +68,11 @@ const REQUIRED_JOYPAD_ACTIONS := [
 	# Not merely a shortcut, unlike the two above: without a home button there
 	# is no way to leave a launched application from a controller at all.
 	"ui_shell_home",
+	# Nor is this one: OPTIONS is the only way to reach the options menu on the
+	# rail, in the file manager and on a store page -- which is to say the only
+	# way to uninstall an application, or to copy, rename or delete a file, on a
+	# machine with no terminal.
+	"ui_shell_options",
 ]
 
 
@@ -126,6 +135,32 @@ func _ready() -> void:
 	_define("ui_shell_y", [
 		_key(KEY_BACKSPACE),
 		_button(JOY_BUTTON_Y),
+	], STICK_DEADZONE)
+
+	# THE OPTIONS BUTTON, and it is the pad's own, not a face button standing in
+	# for one. Options lived on Triangle until the owner pointed out the obvious:
+	# the controller has a button with OPTIONS written next to it, and a console
+	# UI that puts its options menu somewhere else is asking a person to learn a
+	# mapping the hardware already told them.
+	#
+	# JOY_BUTTON_START is that button on every pad Godot's mapping database
+	# normalises: Options on a DualSense, Menu on an Xbox pad, + on a Switch
+	# controller. The kernel's hid-playstation driver reports it as BTN_START,
+	# which SDL maps to start.
+	#
+	# TRIANGLE IS NOT ALSO BOUND HERE, deliberately. ui_shell_y survives as the
+	# on-screen keyboard's backspace shortcut and nothing else; leaving it as a
+	# second door into the options menu would mean the one button whose label
+	# says what it does shares the job with one whose label says nothing, and the
+	# hint row could only advertise one of them.
+	#
+	# KEY_MENU is the desk equivalent -- the context-menu key, which is what the
+	# Xvfb harness drives it with (`xdotool key Menu`). It is not KEY_TAB on
+	# purpose: Godot's built-in ui_focus_next is still bound to Tab, and an
+	# action that also walks focus is an action that does two things per press.
+	_define("ui_shell_options", [
+		_key(KEY_MENU),
+		_button(JOY_BUTTON_START),
 	], STICK_DEADZONE)
 
 	# THE HOME BUTTON. JOY_BUTTON_GUIDE is the PS button on a DualSense and the

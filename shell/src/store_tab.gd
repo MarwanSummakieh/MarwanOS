@@ -68,18 +68,12 @@ func _ready() -> void:
 ## Replaces the base's name/value row entirely -- there is no HBox, no label and
 ## no ellipsis to configure, because there is nothing but the mark.
 func _build_contents() -> void:
-	# The Apps tab's mark is DRAWN, not typed. Phosphor has a squares-four
-	# glyph, but the shipped TTF's post table is format 3.0 -- no glyph names
-	# -- so a codepoint for it would be a guess against an alphabet nobody can
-	# check, and a wrong guess renders as the missing-glyph box on the TV.
-	# Four rounded panels are the same picture with no dictionary between the
-	# intent and the pixels. Store tabs are untouched: their mark is either
-	# the app's real icon or the storefront glyph whose codepoint is already
-	# proven on screen.
-	if str(entry.get("mark", "")) == "grid":
-		add_child(_grid_mark())
-		return
-
+	# A DRAWN 2x2 MARK USED TO BRANCH HERE, for the Apps tab -- the one tab that
+	# named no application and so had no icon to show. The shelf is gone from
+	# this screen on the owner's word (see catalogue.gd), and with it the only
+	# tab whose mark was not either a real application icon or the storefront
+	# glyph whose codepoint is already proven on screen. Every tab takes the one
+	# path below now.
 	_fallback = Icons.label(FALLBACK_ICON, TvTheme.STORE_TAB_GLYPH_SIZE, TvTheme.TEXT_PRIMARY)
 	_fallback.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	add_child(_fallback)
@@ -100,34 +94,6 @@ func _build_contents() -> void:
 	add_child(_art)
 
 	_refresh_icon()
-
-
-## The 2x2 of rounded squares that says "apps" on every console's shelf. Sized
-## off the glyph size the font marks use, so the drawn mark and the typed ones
-## read as the same family at a glance; the gap splits the difference between
-## touching (one blob) and scattered (four dots).
-func _grid_mark() -> Control:
-	var mark := GridContainer.new()
-	mark.columns = 2
-	var gap := int(TvTheme.STORE_TAB_GLYPH_SIZE * 0.14)
-	mark.add_theme_constant_override("h_separation", gap)
-	mark.add_theme_constant_override("v_separation", gap)
-	mark.set_anchors_preset(Control.PRESET_CENTER)
-	mark.grow_horizontal = Control.GROW_DIRECTION_BOTH
-	mark.grow_vertical = Control.GROW_DIRECTION_BOTH
-	mark.mouse_filter = Control.MOUSE_FILTER_IGNORE
-
-	var square := (TvTheme.STORE_TAB_GLYPH_SIZE - gap) / 2.0
-	for _i in 4:
-		var box := StyleBoxFlat.new()
-		box.bg_color = TvTheme.TEXT_PRIMARY
-		box.set_corner_radius_all(int(square * 0.28))
-		var cell := Panel.new()
-		cell.custom_minimum_size = Vector2(square, square)
-		cell.add_theme_stylebox_override("panel", box)
-		cell.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		mark.add_child(cell)
-	return mark
 
 
 func _on_apps_changed(_apps: Array) -> void:
