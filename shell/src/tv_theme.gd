@@ -551,12 +551,20 @@ static func card_focus_box() -> StyleBoxFlat:
 ## child above its full-bleed art, NOT as Button's "focus" stylebox -- a Button
 ## paints that box before its children, so the art would swallow it whole. See
 ## tile.gd's _build_contents.
-static func card_focus_ring() -> StyleBoxFlat:
+##
+## THE RADIUS IS AN ARGUMENT BECAUSE A CARD IS NO LONGER ALWAYS ROUNDED. A game
+## whose own artwork fills its tile edge to edge draws no plate at all, and a
+## rounded ring over square art is the leak card_art_box's comment above
+## describes, arriving from the other side: the art's four corners sit OUTSIDE
+## the ring's curve and poke past it. The default is unchanged, so every caller
+## that has a rounded box under it stays exactly as it was; the chromeless card
+## passes 0 and gets an outline that follows its picture.
+static func card_focus_ring(radius: int = CARD_CORNER_RADIUS) -> StyleBoxFlat:
 	var box := StyleBoxFlat.new()
 	box.draw_center = false
 	box.set_border_width_all(FOCUS_RING_WIDTH)
 	box.border_color = FOCUS_RING
-	box.set_corner_radius_all(CARD_CORNER_RADIUS)
+	box.set_corner_radius_all(radius)
 	return box
 
 

@@ -45,13 +45,58 @@ signal play_requested()
 signal closed()
 
 const TvTheme = preload("res://src/tv_theme.gd")
-const Catalogue = preload("res://src/catalogue.gd")
+## The catalogue is not preloaded here any more: every question this panel used
+## to ask it -- the Steam description, the hand-written tagline -- is now one
+## source among several inside GameMeta, which is the file that knows the order
+## they go in.
+const GameMeta = preload("res://src/gamemeta.gd")
 const ActionRow = preload("res://src/action_row.gd")
 
 ## Same prefix, same meaning as tile.gd's and shell_root's.
 const STEAM_PREFIX := "steam."
 
+## HOW MANY OF A REPEATING FIELD REACH THE FACT ROW. Genres and developers are
+## arrays and Valve puts no ceiling on either -- a compilation can carry six
+## genres and four studios, which at SIZE_SUPPLEMENTAL is a row wider than the
+## output. The row squeezes its labels when that happens rather than wrapping,
+## so every fact gets shorter to make room for one nobody needed. Three genres
+## and two studios is the point where the row still says the useful thing.
+const MAX_GENRES := 3
+const MAX_DEVELOPERS := 2
+
+## What sits between two facts on the row. Four spaces rather than a separator
+## character -- see the fact row's own comment in _build for why this shell
+## spends no codepoints it has not seen render.
+const FACT_SEPARATOR := "    "
+
+## THE FEATURES WORTH A TEN-FOOT SCREEN, out of the twenty-odd Steam publishes
+## as categories. gamemeta hands the list over whole and deliberately does not
+## choose (see its `features` branch); this is where the choosing happens,
+## because it is a question about a panel rather than about a game.
+##
+## CONTROLLER SUPPORT AND NOTHING ELSE, which is a short list with a long
+## reason. This appliance's entire premise is that the only input is a pad --
+## the acceptance criterion for the whole store milestone is "keyboard
+## unplugged" -- so "Full controller support" is the one category that changes
+## what happens when the person presses Play. "Steam Cloud", "Steam
+## Achievements", "Remote Play on TV" and the rest are true, and are noise on a
+## screen whose job is to say what a game is.
+##
+## Matched exactly against Valve's own strings rather than by substring: the two
+## live entries differ by one word, and "Partial Controller Support" contains
+## neither more nor less truth than a `contains("Controller")` would find in a
+## future category nobody has read.
+const SHOWN_FEATURES := [
+	"Full controller support",
+	"Partial Controller Support",
+]
+
 var entry: Dictionary = {}
+
+## The merged metadata record for `entry`, resolved once in _build and read by
+## the three functions that draw from it. Resolving per-drawer would re-open and
+## re-parse Steam's cached document once per line on the screen.
+var _meta: Dictionary = {}
 
 var _sheet: PanelContainer = null
 var _play: ActionRow = null
@@ -75,6 +120,20 @@ func _ready() -> void:
 
 
 func _build() -> void:
+	# Before anything is drawn, because the title, the description and the fact
+	# row all read from it. See GameMeta for what "resolve" means here -- it is
+	# a walk over a table of fields, not a fetch.
+	_meta = GameMeta.resolve(entry)
+
+	# THE WHOLE RESOLUTION IN ONE LINE, for the reason _description's own log
+	# line exists and generalised to every field at once: on this machine a
+	# panel with no fact row and a panel whose fact row failed to draw are the
+	# same photograph, and the sources map is the only thing that can tell them
+	# apart afterwards. It is one line per panel open, which is one line per
+	# deliberate button press.
+	ShellLog.info("details: %s resolved %s"
+		% [str(entry.get("id", "")), str(_meta.get("sources", {}))])
+
 	_sheet = PanelContainer.new()
 	_sheet.add_theme_stylebox_override("panel", TvTheme.details_sheet_box())
 	# Bottom-wide by hand rather than by preset, so the offsets are the ones
@@ -123,9 +182,62 @@ func _build() -> void:
 	description.add_theme_font_size_override("font_size", TvTheme.SIZE_BODY)
 	description.add_theme_color_override("font_color", TvTheme.TEXT_SECONDARY)
 	description.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	description.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	description.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	column.add_child(description)
+
+	# WHAT THE THING IS, in the fields Playnite would have downloaded. Added
+	# only when something answered: a game whose metadata has not been fetched
+	# yet, and every application that has no store page at all, draw the panel
+	# exactly as it was before this row existed rather than an empty band where
+	# a row would be.
+	#
+	# ONE LABEL, NOT A ROW OF THEM, and it was the other way round until the
+	# harness drew it. The obvious build is an HBoxContainer with a Label per
+	# fact and HINT_GAP between them -- the shape the hint row below already
+	# uses -- and it renders NOTHING. A Label that is allowed to trim reports a
+	# minimum width of zero, because being shrinkable is the whole point of
+	# trimming; five such Labels in a row with no expand flag are five controls
+	# the container is free to give zero width to, and it does. The facts were
+	# all there and all resolved, and the panel had an invisible band where they
+	# should have been -- which is exactly the failure this file's logging
+	# philosophy exists to catch, and it took a screenshot to catch it.
+	#
+	# A single Label fills the column's width, so trimming has something to trim
+	# against and the ellipsis lands at the end of the line instead of at the
+	# start of every field.
+	#
+	# SEPARATED BY SPACES RATHER THAN A GLYPH. The natural separator is a middle
+	# dot and this shell has no non-ASCII character anywhere in it -- the Play
+	# button a few lines below goes without an icon for exactly this reason,
+	# because a codepoint the font does not carry renders as a tofu box on the
+	# one screen nobody can inspect. The gap is wider than a word space so it
+	# cannot be read as one, and the commas inside a field (genres, studios) are
+	# what keep the two levels apart.
+	var facts := _fact_texts()
+	if not facts.is_empty():
+		var fact_row := Label.new()
+		fact_row.text = FACT_SEPARATOR.join(facts)
+		fact_row.add_theme_font_size_override("font_size", TvTheme.SIZE_SUPPLEMENTAL)
+		fact_row.add_theme_color_override("font_color", TvTheme.TEXT_SECONDARY)
+		fact_row.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+		fact_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		column.add_child(fact_row)
+
+	# THE SLACK LIVES HERE NOW, and it used to live on the description. Giving
+	# the description SIZE_EXPAND_FILL made its BOX absorb the column's spare
+	# height while its text stayed at the top of that box -- invisible when the
+	# description was the last thing above the button, and wrong the moment a
+	# fact row followed it, because the row got pushed to the bottom of the
+	# sheet and read as belonging to the Play button rather than to the sentence
+	# it qualifies. An empty Control taking the slack puts the two halves of
+	# "what this is" together and leaves Play where it has always been.
+	#
+	# With no fact row this draws exactly what it drew before: text at the top,
+	# button at the bottom, one expanding thing between them either way.
+	var spacer := Control.new()
+	spacer.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	spacer.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	column.add_child(spacer)
 
 	# The button lives in a row with the slack after it, so it takes a stated
 	# width instead of the sheet's -- see TvTheme.DETAILS_BUTTON_WIDTH.
@@ -168,43 +280,92 @@ func _play_label() -> String:
 
 ## WHAT THE THING IS, from the best source that has an answer.
 ##
-##   1. Steam's own words for a game. short_description is the sentence on the
-##      store page under the title -- written to say what a game is to somebody
-##      who has not played it, which is exactly this panel's question.
-##   2. The catalogue's tagline for a shipped flatpak. Hand-written, one line,
-##      and the only description this project has ever had for Kodi or a browser.
-##   3. The record's own subtitle, last. For an installed application that is the
-##      desktop entry's Comment field, which ranges from a useful sentence to the
-##      application's own name again -- true, occasionally useless, and better
-##      than an empty panel.
+## THE THREE-TIER CHAIN THIS FUNCTION USED TO BE IS NOW A ROW IN A TABLE, and
+## nothing about which source wins has changed -- Steam's short_description,
+## then the catalogue's hand-written tagline, then the record's own subtitle.
+## See GameMeta.FIELDS, where that order is now written down next to the order
+## for every other field, and GameMeta's header for why a per-field chain is the
+## thing worth copying from Playnite.
 ##
-## An entry with none of the three gets a stated sentence rather than a blank
+## An entry no source could answer gets a stated sentence rather than a blank
 ## space, because a panel that is a title and a button with a hole between them
-## reads as a screen that failed to load.
+## reads as a screen that failed to load. That sentence stays here rather than
+## moving with the chain: it is display copy for an empty screen, not a fact
+## about the game, and a resolver that invented one would be lying to every
+## other caller.
+##
 ## WHICH SOURCE ANSWERED IS SAID IN THE JOURNAL, because on this machine the
 ## difference between "Steam's metadata has not been fetched for this game" and
 ## "the panel is not reading it" is otherwise a thing you can only photograph --
-## and both of them look like a card's own subtitle on the TV.
+## and both of them look like a card's own subtitle on the TV. It is the
+## resolver's sources map that is being read out now, so the line names the
+## source that won by the same name the table uses.
 func _description() -> String:
 	var id := str(entry.get("id", ""))
 
-	var steam := Catalogue.steam_description(id)
-	if not steam.is_empty():
-		ShellLog.info("details: description for %s from steam metadata" % id)
-		return steam
-
-	var tagline := Catalogue.tagline_for(id)
-	if not tagline.is_empty():
-		ShellLog.info("details: description for %s from the catalogue tagline" % id)
-		return tagline
-
-	var subtitle := str(entry.get("subtitle", ""))
-	if not subtitle.is_empty():
-		ShellLog.info("details: description for %s from the record's own comment" % id)
-		return subtitle
+	if _meta.has("description"):
+		var sources: Dictionary = _meta.get("sources", {})
+		ShellLog.info("details: description for %s from %s"
+			% [id, str(sources.get("description", "?"))])
+		return str(_meta["description"])
 
 	ShellLog.info("details: nothing describes %s" % id)
 	return "No description for this one yet."
+
+
+## The fact row's contents, in order, already trimmed to what fits.
+##
+## ORDER IS PRIORITY, because the row squeezes rather than wraps: an
+## HBoxContainer whose children do not fit shrinks them all, and each label
+## ellipsises what it cannot show. So the fields go in descending order of how
+## much they say about a game somebody is deciding whether to start, and the
+## ones that lose characters first are the ones at the end.
+##
+## EVERY ENTRY IS CONDITIONAL, and a game with no cached metadata produces an
+## empty array -- which is what makes the row disappear in _build rather than
+## drawing a band of nothing.
+func _fact_texts() -> Array:
+	var texts: Array = []
+
+	var genres: Array = _meta.get("genres", [])
+	if not genres.is_empty():
+		texts.append(", ".join(genres.slice(0, MAX_GENRES)))
+
+	var released := str(_meta.get("release_date", ""))
+	if not released.is_empty():
+		texts.append(released)
+
+	var developers: Array = _meta.get("developers", [])
+	if not developers.is_empty():
+		texts.append(", ".join(developers.slice(0, MAX_DEVELOPERS)))
+
+	# PUBLISHERS ONLY WHEN THEY ARE SOMEBODY ELSE. Self-published games are most
+	# of an indie library and Valve lists the same studio in both arrays, so an
+	# unconditional publisher field would print "Team Cherry" twice in one row
+	# and look like a rendering fault rather than a fact.
+	var publishers: Array = _meta.get("publishers", [])
+	if not publishers.is_empty() and publishers != developers:
+		texts.append(", ".join(publishers.slice(0, MAX_DEVELOPERS)))
+
+	# Named rather than bare, because a lone "90" in a row of prose is not
+	# self-describing at three metres.
+	var score := int(_meta.get("critic_score", 0))
+	if score > 0:
+		texts.append("Metacritic %d" % score)
+
+	for feature in _meta.get("features", []):
+		if SHOWN_FEATURES.has(str(feature)):
+			texts.append(str(feature))
+
+	return texts
+
+
+## ELLIPSISED RATHER THAN WRAPPED, unlike the description above it and for the
+## opposite reason: the facts are one line, and a row that wrapped would be two
+## lines tall and push the Play button off the bottom of a sheet whose height is
+## fixed (TvTheme.DETAILS_PANEL_HEIGHT). That is why the row is built with the
+## Label defaults for autowrap and an explicit overrun behaviour, and it is the
+## one line of that block worth finding again.
 
 
 ## ONE FOCUSABLE, FOUR HARD STOPS. Every direction points the button at itself,

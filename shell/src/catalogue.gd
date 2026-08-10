@@ -347,11 +347,13 @@ static func steam_meta(entry_id: String) -> Dictionary:
 	return parsed
 
 
-## The one-paragraph description Steam shows under a game's title, or empty.
-static func steam_description(entry_id: String) -> String:
-	return str(steam_meta(entry_id).get("short_description", ""))
-
-
+## `steam_description` USED TO SIT HERE and is gone rather than kept for
+## politeness. It read short_description out of the document steam_meta returns,
+## and its one caller was the details panel -- which now asks GameMeta for a
+## description instead, because Steam is one source for that field and the panel
+## has no business knowing it is the first one. Every other field GameMeta reads
+## out of the same document is read the same way, so a wrapper for exactly one
+## of them would have been the odd path.
 ## The cached icon for an application id, or empty if none has landed yet.
 static func store_icon_path(app_id: String) -> String:
 	if app_id.is_empty():

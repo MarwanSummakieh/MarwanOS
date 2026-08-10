@@ -56,10 +56,28 @@ var entry: Dictionary = {}
 ## a card (the press semantics especially) must stay identical.
 var focused_size: int = TvTheme.CARD_FOCUSED_SIZE
 
-var _idle_box: StyleBoxFlat
-var _focus_box: StyleBoxFlat
+## Typed StyleBox rather than StyleBoxFlat: a chromeless card's boxes are
+## StyleBoxEmpty, which is a sibling of StyleBoxFlat and not a subclass of it.
+var _idle_box: StyleBox
+var _focus_box: StyleBox
 var _ring: Panel
 var _size_tween: Tween
+
+## The picture this card draws, decoded once in _ready before anything is built.
+##
+## RESOLVED BEFORE THE CHROME RATHER THAN DURING IT, which is the whole reason
+## the load moved out of _build_icon. Whether this card has a plate behind it
+## depends on whether it has art to put there instead -- so the answer has to
+## exist before the first stylebox is chosen, and "the file is named in the
+## record" is not that answer. A path can name a file that was deleted between
+## appscan's poll and this frame, or a PNG that does not decode; deciding on the
+## path and then failing to load would leave a card with no plate AND no
+## picture, which is a hole in the rail.
+var _art: Image = null
+
+## Whether this card is its own artwork, edge to edge, with no plate under it
+## and no inset around it. See _wants_full_bleed.
+var _full_bleed := false
 
 
 func setup(new_entry: Dictionary) -> void:
@@ -80,8 +98,25 @@ func _ready() -> void:
 	# card is art only, and the title lives in the hero block above the rail.
 	text = ""
 
-	_idle_box = TvTheme.card_idle_box()
-	_focus_box = TvTheme.card_focus_box()
+	# Both of these come before the styleboxes because the styleboxes depend on
+	# them: a card that is its own artwork has no surface to tint.
+	_art = _load_art()
+	_full_bleed = _wants_full_bleed()
+
+	if _full_bleed:
+		# NO SURFACE AT ALL, in any state. The idle box is the plate this card
+		# is doing without, and the focus box is that plate lit up -- neither
+		# has anything to say about a tile that is entirely covered by its own
+		# picture, and a lit surface behind an opaque image is a colour nobody
+		# can see being tweened for nothing. Selection is still carried by size
+		# and by the ring, which is two of the three channels the theme's
+		# FOCUS_RING_WIDTH note names; the third was the surface, and a game's
+		# key art is a better answer than a shade of grey.
+		_idle_box = StyleBoxEmpty.new()
+		_focus_box = StyleBoxEmpty.new()
+	else:
+		_idle_box = TvTheme.card_idle_box()
+		_focus_box = TvTheme.card_focus_box()
 
 	# Hover is bound to the same box as normal because there is no pointer on this
 	# machine and a mouse that wandered in should not light a card up as if it
@@ -105,8 +140,12 @@ func _ready() -> void:
 
 
 func _build_contents() -> void:
-	# The wash. Full-bleed inside the card's rounded box rather than inset: it
-	# is the card's surface, and a card that frames itself in another colour
+	# The wash, and a chromeless card does not get one. It is the card's
+	# surface, and this card's surface is the game's own picture -- a wash
+	# behind an image that covers every pixel of it is a colour nobody can see.
+	#
+	# Where it IS built it is unchanged: full-bleed inside the card's rounded
+	# box rather than inset, because a card that frames itself in another colour
 	# reads as unfinished. An installed app derives its wash from its id (see
 	# TvTheme.accent_for_id); a hand-written entry carries one.
 	#
@@ -114,11 +153,12 @@ func _build_contents() -> void:
 	# rectangle whatever is underneath it, so its corners sat outside the rounded
 	# ring and the rounded card box -- the art visibly leaking past its own
 	# border on the TV. See TvTheme.card_art_box.
-	var art := Panel.new()
-	art.add_theme_stylebox_override("panel", TvTheme.card_art_box(_wash()))
-	art.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	art.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	add_child(art)
+	if not _full_bleed:
+		var art := Panel.new()
+		art.add_theme_stylebox_override("panel", TvTheme.card_art_box(_wash()))
+		art.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+		art.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		add_child(art)
 
 	_build_icon()
 
@@ -127,12 +167,42 @@ func _build_contents() -> void:
 	# before it -- including the Button's own focus stylebox -- is entirely
 	# behind an opaque rectangle. Toggled by the focus handlers below, since a
 	# plain child knows nothing of the theme system's focus state.
+	#
+	# SQUARE ON A CHROMELESS CARD. There is no rounded plate under the picture
+	# to follow any more, so a rounded ring would cut the corners off a square
+	# image and let them poke out past it -- the same leak card_art_box's
+	# comment describes, arriving from the other side.
 	_ring = Panel.new()
-	_ring.add_theme_stylebox_override("panel", TvTheme.card_focus_ring())
+	_ring.add_theme_stylebox_override("panel",
+		TvTheme.card_focus_ring(0 if _full_bleed else TvTheme.CARD_CORNER_RADIUS))
 	_ring.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	_ring.visible = false
 	_ring.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(_ring)
+
+
+## Whether this card should be its own picture, edge to edge, with no plate.
+##
+## THE ASK WAS "NO CARDS AROUND THE GAME ICONS", and the word doing the work is
+## GAME. A game's tile is key art: a picture drawn to be looked at, already the
+## right shape, and the thing a console home screen is made of -- a plate around
+## it and a 34 px gutter inside that plate turns it into a stamp on a coloured
+## square, which is the PS5 look inverted. An application's icon is the opposite
+## kind of picture: a logo with transparency around it, drawn to sit ON
+## something, at whatever aspect its author chose. Blown up to the full tile it
+## is a cropped logo on the desktop background, which is worse than the plate it
+## replaced, so applications keep theirs.
+##
+## ART IS REQUIRED, not merely expected. A game whose picture has not been
+## fetched yet -- installed minutes ago, storeart's timer not yet around, Steam's
+## own cache still cold -- has nothing to fill a tile with, and a chromeless card
+## with no picture is not a card at all, it is a gap in the rail where a game
+## should be. Those keep the plate and the accent wash until the file lands, and
+## the next rebuild (shell_root._on_gameart_changed) promotes them silently.
+func _wants_full_bleed() -> bool:
+	if _art == null:
+		return false
+	return str(entry.get("id", "")).begins_with(STEAM_PREFIX)
 
 
 func _wash() -> Color:
@@ -144,20 +214,6 @@ func _wash() -> Color:
 	return TvTheme.accent_for_id(str(entry.get("id", "")))
 
 
-## The application's real icon, loaded from the absolute path marwanos-appscan
-## resolved out of the icon theme.
-##
-## LOADED HERE RATHER THAN PRELOADED, and that is forced rather than chosen:
-## these files live on the running system (/usr/share/icons, and the flatpak
-## exports that only exist after an install), not in the export pack, so
-## `preload` cannot see them and `load()` would look under res://. Image plus
-## ImageTexture is the runtime path for a file on disk.
-##
-## A missing, unreadable or corrupt icon is not an error worth a black card:
-## the wash underneath is exactly what a card with no icon has always drawn, so
-## every failure here falls back to it silently. appscan already guarantees the
-## path is a PNG that existed at scan time; this handles the file disappearing
-## between the scan and the frame.
 ## The pictures this card would like to draw, best first.
 ##
 ## A GAME PREFERS ITS SQUARE ICON TO ITS PORTRAIT, and that is the whole of this
@@ -174,7 +230,7 @@ func _wash() -> Color:
 ## install, and a card that waited for it would be a wash with nothing on it in
 ## the meantime. Ordered, not chosen, so a file that has gone missing between the
 ## scan and this frame falls through to the next candidate instead of leaving a
-## blank card -- see the loop in _build_icon.
+## blank card -- see the loop in _load_art.
 func _art_candidates() -> Array:
 	var candidates: Array = []
 
@@ -191,9 +247,44 @@ func _art_candidates() -> Array:
 	return candidates
 
 
+## The best candidate that actually decodes, or null.
+##
+## SPLIT OUT OF _build_icon SO THE ANSWER EXISTS BEFORE THE CHROME DOES -- see
+## the _art field. Nothing about which file wins changed: the candidates are
+## still in _art_candidates' order, still tried in order so a file that went
+## missing between the scan and this frame falls through to the next, and the
+## journal still says so only when the game's own icon is what won.
+##
+## LOADED AT RUNTIME RATHER THAN PRELOADED, and that is forced rather than
+## chosen: these files live on the running system (/usr/share/icons, and the
+## flatpak exports that only exist after an install), not in the export pack, so
+## `preload` cannot see them and `load()` would look under res://. Image plus
+## ImageTexture is the runtime path for a file on disk.
+##
+## A missing, unreadable or corrupt icon is not an error worth a black card: the
+## wash is exactly what a card with no icon has always drawn, so every failure
+## here falls back to it silently -- and now also decides the card keeps its
+## plate, which is the same fallback said twice. appscan already guarantees the
+## path existed at scan time; this handles the file disappearing between the
+## scan and the frame.
+func _load_art() -> Image:
+	for path in _art_candidates():
+		var image := load_icon_image(str(path))
+		if image != null:
+			# Said out loud only when the game's own icon won, because that is the
+			# line that distinguishes "the artwork cache has warmed" from "the
+			# portrait is still all there is" on a machine with no screen to look
+			# at. The ordinary case -- an application drawing the icon appscan
+			# found -- stays silent, as it always has.
+			if str(path) != str(entry.get("icon", "")):
+				ShellLog.info("card art: %s uses %s" % [str(entry.get("id", "")), path])
+			return image
+		ShellLog.warn("could not load icon %s for %s" % [path, str(entry.get("id", ""))])
+	return null
+
+
 func _build_icon() -> void:
-	var candidates := _art_candidates()
-	if candidates.is_empty():
+	if _art == null:
 		# No file on disk to draw, but the entry may name a Phosphor glyph. A
 		# card that is only its accent wash reads as a loading failure next to
 		# neighbours with real logos, and an application whose flatpak exports
@@ -218,35 +309,39 @@ func _build_icon() -> void:
 		add_child(glyph)
 		return
 
-	var image: Image = null
-	for path in candidates:
-		image = load_icon_image(str(path))
-		if image != null:
-			# Said out loud only when the game's own icon won, because that is the
-			# line that distinguishes "the artwork cache has warmed" from "the
-			# portrait is still all there is" on a machine with no screen to look
-			# at. The ordinary case -- an application drawing the icon appscan
-			# found -- stays silent, as it always has.
-			if path != str(entry.get("icon", "")):
-				ShellLog.info("card art: %s uses %s" % [str(entry.get("id", "")), path])
-			break
-		ShellLog.warn("could not load icon %s for %s" % [path, str(entry.get("id", ""))])
-	if image == null:
-		return
-
 	var icon := TextureRect.new()
-	icon.texture = ImageTexture.create_from_image(image)
-	# KEEP_ASPECT_CENTERED so a non-square icon is letterboxed inside the card
-	# rather than stretched -- a distorted logo is more obviously wrong than a
-	# small one. IGNORE_SIZE lets the rect shrink below the texture's own size,
-	# which it must: these are 256 px icons inside a 200 px card at rest.
+	icon.texture = ImageTexture.create_from_image(_art)
+	# IGNORE_SIZE lets the rect shrink below the texture's own size, which it
+	# must: these are 256 px icons and 600x900 portraits inside a 200 px card at
+	# rest.
 	icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-	icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 	icon.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	icon.offset_left = TvTheme.CARD_ICON_INSET
-	icon.offset_top = TvTheme.CARD_ICON_INSET
-	icon.offset_right = -TvTheme.CARD_ICON_INSET
-	icon.offset_bottom = -TvTheme.CARD_ICON_INSET
+
+	if _full_bleed:
+		# COVERED, NOT CENTERED, and it is the only stretch mode that can honour
+		# "no card". Centered fits the picture INSIDE the tile, so anything that
+		# is not square leaves bars down two sides -- and with the plate gone
+		# those bars are not a wash any more, they are whatever the home screen
+		# is drawing behind the rail. Covered fills the tile and crops the
+		# overflow instead.
+		#
+		# What gets cropped is nearly always nothing. _art_candidates prefers
+		# Steam's square library icon, which is already the tile's aspect, so
+		# this is a no-op in the warm case. The one shape it does cut is the
+		# 600x900 portrait standing in until that icon arrives, and taking the
+		# middle square of a portrait is what every console library does with
+		# one.
+		icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+	else:
+		# KEEP_ASPECT_CENTERED so a non-square icon is letterboxed inside the card
+		# rather than stretched -- a distorted logo is more obviously wrong than a
+		# small one.
+		icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+		icon.offset_left = TvTheme.CARD_ICON_INSET
+		icon.offset_top = TvTheme.CARD_ICON_INSET
+		icon.offset_right = -TvTheme.CARD_ICON_INSET
+		icon.offset_bottom = -TvTheme.CARD_ICON_INSET
+
 	icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(icon)
 

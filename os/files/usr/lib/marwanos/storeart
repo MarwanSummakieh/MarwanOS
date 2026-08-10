@@ -148,20 +148,56 @@ STEAM_HERO_NAME=library_hero.jpg
 ## Valve's public store API, and the one thing in this script that fetches text
 ## instead of pixels.
 ##
-## `filters=basic` trims the response to the description block -- type, name,
-## short_description, the capsule urls and the requirements -- instead of the
-## full page payload with its price, packages, categories, screenshots and
-## movies. Measured on appid 367520 (Hollow Knight): 19 KB with the filter, and
-## the `data` object this keeps is 18.7 KB of it.
+## THE RAW `data` OBJECT IS WHAT LANDS ON DISK, not the fields the shell draws
+## today. Extracting short_description and name here would mean a second fetch
+## of everything already downloaded the first time somebody wanted the header
+## image url or the controller_support flag -- and this is a cache with no
+## invalidation story, so "refetch to get one more field" means "delete the
+## whole directory on the bench". Storing what Valve sent makes every later
+## field free. The shell picks what it draws.
 ##
-## THE RAW `data` OBJECT IS WHAT LANDS ON DISK, not the two fields the shell
-## needs today. Extracting short_description and name here would mean a second
-## fetch of everything already downloaded the first time somebody wanted the
-## header image url or the controller_support flag -- and this is a cache with
-## no invalidation story, so "refetch to get one more field" means "delete the
-## whole directory on the bench". Storing what Valve sent costs 19 KB per game
-## and makes every later field free. The shell picks what it draws.
+## `filters=basic` USED TO TRIM THIS, AND IT IS GONE, which is the one
+## behaviour change here worth stating plainly. The filter returns the
+## description block -- type, name, short_description, the capsule urls, the
+## requirements -- and nothing else. That was the right trade when the only
+## consumer was a one-paragraph subtitle on the details panel. It is the wrong
+## one now: the panel resolves a game's metadata the way Playnite does, over an
+## ordered chain of sources per field (see shell/src/gamemeta.gd), and EVERY
+## field in that chain beyond the description is in the part `basic` removes --
+## developers, publishers, genres, categories, release_date, metacritic,
+## required_age, support_info. A filtered payload does not make those fields
+## empty, it makes them absent, which the resolver cannot tell apart from a
+## game Valve knows nothing about.
+##
+## The cost is real and it is small. Measured on appid 367520 (Hollow Knight):
+## 19 KB filtered, 121 KB unfiltered, and the difference is mostly the
+## `screenshots` and `movies` arrays. At 121 KB per game a hundred-game library
+## is 12 MB in /var, fetched once, on a machine whose smallest concern in this
+## file is the 2.6 GB of flatpak repo next to it.
 STEAM_META_URL=https://store.steampowered.com/api/appdetails
+
+## The cache format version, stamped into every document this writes and
+## checked before one is trusted.
+##
+## WITHOUT THIS THE FILTER CHANGE ABOVE WOULD NEVER REACH AN INSTALLED MACHINE.
+## `steam_fetch_meta` skips an appid whose file is already present, and it is
+## right to: descriptions change on the timescale of a store page rewrite. But
+## every machine that has ever run the old version has a directory full of
+## `filters=basic` documents that are present, valid JSON, and missing eight of
+## the eleven fields the resolver asks for -- so "present" stopped being the
+## same question as "usable" the moment the payload's shape changed. A file
+## whose stamp is older than this constant is refetched exactly once and then
+## behaves like every other cached file forever after.
+##
+## Bump this when a future change makes an older document unusable, and NOT
+## when one merely gains a field the shell can do without: the point of the
+## number is to force network traffic on every installed machine, which is not
+## a thing to spend on a subtitle.
+##
+##   1  filters=basic. Never written -- rev 2 is the first stamped document,
+##      and an unstamped file reads as 0, which is what makes the upgrade work.
+##   2  the full appdetails payload.
+META_REV=2
 
 ## Root writes, player reads, 0755 -- the same one-way flow as the icons
 ## directory next door, and created by tmpfiles.d as well as here so its
@@ -334,6 +370,49 @@ steam_fetch_hero() {
 }
 
 
+## True when a cached metadata document exists AND was written by a version of
+## this script whose payload shape the shell can still use. See META_REV.
+##
+## PARSED RATHER THAN GREPPED, and not for the reason you would expect. A grep
+## for the stamp's key is safe from false positives: JSON escapes a quote
+## inside a string as \", so `"_marwanos_meta_rev"` cannot appear in any value
+## Valve sends, only as the real key. It was checked rather than assumed.
+##
+## What a grep cannot do is COMPARE. The question is not "is there a stamp", it
+## is "is the stamp at least this rev" -- a grep for the key would call a rev-2
+## document current under a future rev 3 and never refetch the one library that
+## most needs it, and a grep for the key AND the literal 2 would call a rev-3
+## document stale and refetch a whole library after a rollback. Both failures
+## are silent and both are permanent. `>=` on a parsed number is the predicate
+## this actually wants, and jq is already a hard build-time dependency of the
+## fetch it guards.
+##
+## Every non-zero exit means refetch, deliberately folding three different
+## answers into one: no file, a file with no stamp (every document written
+## before rev 2), and a file that does not parse at all. jq -e exits 1 on false
+## and 5 on a parse error; there is nothing this caller could usefully do
+## differently about either, and a document it cannot read is a document it
+## must replace.
+##
+## NO jq MEANS "CURRENT", which looks like the wrong default until you follow
+## it through. Without a parser this script cannot write a metadata document at
+## all -- the guard before the fetch loop says so and skips the whole half -- so
+## a "stale" answer here could not lead to a refetch, only to a survey that
+## never comes up empty, a run that therefore never takes its early exit, and a
+## fully cached machine going to the network every fifteen minutes forever to
+## fetch nothing. Answering "current" costs a machine with no jq the one thing
+## it could not have had anyway, and keeps the rest of this script's no-op path
+## intact.
+meta_current() {
+    local file="$1"
+
+    [ -f "$file" ] || return 1
+    command -v jq >/dev/null 2>&1 || return 0
+    jq -e --argjson rev "$META_REV" \
+        '(._marwanos_meta_rev // 0) >= $rev' "$file" >/dev/null 2>&1
+}
+
+
 ## Fetch one game's store metadata. 0 if a file landed, 1 if the network or the
 ## parse failed, 2 if Steam has no store page for this appid.
 ##
@@ -357,23 +436,24 @@ steam_fetch_hero() {
 ## failure would put a permanently red unit on a machine where nothing is
 ## wrong, so it is outcome 2, like a game Valve has no art for.
 ##
-## A file that exists is never refetched. Descriptions change on the timescale
-## of a store page rewrite, this cache has no invalidation story, and "refresh
-## on missing only" is what lets this run every fifteen minutes forever without
-## being able to break metadata that already works. Same escape hatch as the
-## icons: delete the file on the bench.
+## A CURRENT file is never refetched, and "current" is a stamp rather than a
+## stat -- see META_REV and meta_current below. Descriptions change on the
+## timescale of a store page rewrite, this cache has no invalidation story, and
+## "refresh on missing or stale only" is what lets this run every fifteen
+## minutes forever without being able to break metadata that already works.
+## Same escape hatch as the icons: delete the file on the bench.
 steam_fetch_meta() {
     local appid="$1" dest raw tmp rc name
 
     dest="$META_DIR/steam.$appid.json"
-    [ -f "$dest" ] && return 0
+    meta_current "$dest" && return 0
     raw="$dest.raw"
     tmp="$dest.tmp"
 
     # The appid is digits-only by the time it reaches here (steam_appids), so
     # it cannot smuggle a second query parameter into this URL.
     curl -fsSL --max-time 30 --retry 2 -o "$raw" \
-        "$STEAM_META_URL?appids=$appid&filters=basic" 2>/dev/null
+        "$STEAM_META_URL?appids=$appid" 2>/dev/null
     rc=$?
     if [ "$rc" -ne 0 ]; then
         rm -f "$raw"
@@ -396,7 +476,15 @@ steam_fetch_meta() {
     # The `data` object, unwrapped from the appid key it arrived under, so the
     # shell reads `.name` and `.short_description` rather than having to know
     # the appid twice -- once in the filename and once inside it.
-    if ! jq --arg id "$appid" '.[$id].data' "$raw" > "$tmp" 2>/dev/null; then
+    #
+    # Plus the format stamp, merged in rather than wrapped around: a wrapper
+    # object would move every field the shell reads down a level and break the
+    # panel on a machine that upgraded the image without this script having run
+    # yet, which is precisely the window this stamp exists to survive. `+` on
+    # two objects is jq's right-hand-wins merge, and the key is underscored so
+    # it cannot collide with a field Valve adds later.
+    if ! jq --arg id "$appid" --argjson rev "$META_REV" \
+        '.[$id].data + {_marwanos_meta_rev: $rev}' "$raw" > "$tmp" 2>/dev/null; then
         err "the store metadata for appid $appid did not parse -- discarding it"
         rm -f "$raw" "$tmp"
         return 1
@@ -562,7 +650,13 @@ heroes=()
 metas=()
 for appid in "${appids[@]}"; do
     [ -f "$ICON_DIR/steam.$appid.hero.jpg" ] || heroes+=("$appid")
-    [ -f "$META_DIR/steam.$appid.json" ] || metas+=("$appid")
+    # The metadata half asks meta_current rather than -f, so a library cached
+    # by an older version of this script is surveyed as stale and refetched
+    # once. That makes the steady state one jq parse per game per run instead
+    # of one stat -- a hundred-KB document read fifty times a day, which is
+    # noise next to the fetch it is deciding against, and the only way the
+    # question "is this document usable" can be asked honestly at all.
+    meta_current "$META_DIR/steam.$appid.json" || metas+=("$appid")
 done
 
 if [ "${#missing[@]}" -eq 0 ] && [ "${#games[@]}" -eq 0 ] \
