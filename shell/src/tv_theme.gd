@@ -259,8 +259,75 @@ const STORE_PAGE_GAP := 40
 const STORE_PAGE_PAD := 48
 
 ## Height of the accent wash band at the top of a store page -- stands in for
-## key art the same way the rail's hero wash does.
+## key art the same way the rail's hero wash does. Drawn on a page that is
+## DESCRIBING a store; the storefront grid below replaces it with real capsules
+## the moment there is a storefront to draw.
 const STORE_PAGE_HERO_HEIGHT := 220
+
+# ---------------------------------------------------------------------------
+# The storefront grid -- Steam's own front page, drawn by this shell
+#
+# The numbers here are worked back from the pane the grid has to live in, which
+# is the one place in this file where that is true of a whole block rather than
+# of one constant. At 1080p the safe area is 1728 wide; the tab column takes
+# STORE_TAB_SIZE and STORE_PAGE_GAP, and the pane's own STORE_PAGE_PAD takes 48
+# from each side, which leaves about 1460 px of shelf. Four columns of
+# STORE_ITEM_WIDTH with STORE_GRID_GAP between them is 1420 -- a column short
+# of the edge, deliberately, so the focus ring never grazes the pane's rounded
+# corner.
+#
+# On the ultrawide the design surface is ~2580 wide and the pane simply gets
+# roomier; the grid stays four columns rather than growing, because a fifth
+# column at this tile size would put the last capsule further from the eye than
+# a thumb wants to travel and because the shelf is browsed by moving, not by
+# seeing everything at once.
+
+## A shelf tile. The art is Valve's 616x353 capsule, so the tile's picture is
+## that aspect exactly -- STORE_ITEM_ART_HEIGHT is STORE_ITEM_WIDTH divided by
+## 1.745 and rounded. Getting this wrong is not a layout nit: a capsule
+## letterboxed into the wrong box is a black band across every tile on the
+## screen.
+const STORE_ITEM_WIDTH := 340
+## THE HEIGHT IS A SUM, NOT A GUESS, and it has to be: a tile's contents are
+## anchored children of a Button, and a Button's minimum size ignores its
+## children entirely -- so a tile too short does not grow, it spills, and the
+## first render of this grid had every discount line hanging below its own
+## focus ring and into the shelf underneath. The sum is the picture (190), three
+## text lines at their line heights (~35 + ~35 + ~33), the separations between
+## them (3 x 6) and STORE_ITEM_PAD top and bottom: 335, rounded up to 340.
+## Anything added to a tile has to be added here too.
+const STORE_ITEM_HEIGHT := 340
+const STORE_ITEM_ART_HEIGHT := 190
+
+## The struck-price line's type size. Smaller than the name and the price
+## because it is the least important of the three, and NOT smaller than 24 --
+## which is this file's supplemental floor from the header (Microsoft's 12 epx
+## against a surface Xbox scales 200% for TV), and the reason this is a named
+## constant rather than an arithmetic expression on SIZE_SUPPLEMENTAL that
+## could quietly slide under it.
+const STORE_ITEM_WAS_SIZE := 24
+
+## Inside a tile: between its rounded edge and the picture, and between the
+## picture and the name below it.
+const STORE_ITEM_PAD := 12
+
+const STORE_GRID_COLUMNS := 4
+const STORE_GRID_GAP := 20
+
+## Between one shelf's heading and the grid under it, and between shelves.
+const STORE_SHELF_GAP := 18
+
+## The detail sub-view's picture. Most of the pane's width at a screenshot's
+## 16:9, which is why it is nearly twice the tile's -- the whole reason the
+## service fetches a full screenshot rather than reusing the capsule.
+const STORE_DETAIL_ART_HEIGHT := 360
+
+## A discount, and the one place in this file where a hue carries meaning. It
+## is deliberately NOT the only channel: the tile says "was $59.99 (-70%)" in
+## words underneath, so the colour is emphasis on a fact already stated rather
+## than the fact itself -- which is the same rule the focus indicator follows
+## three constants down. Inside RGB 16-235 and ~7:1 against SURFACE.
+const TEXT_DISCOUNT := Color(0.529412, 0.780392, 0.423529, 1.0)
 
 # The focus indicator runs on three channels at once, because colour alone is
 # unreliable on a TV and because WCAG 2.2 SC 2.4.13 asks for a >= 3:1 contrast
