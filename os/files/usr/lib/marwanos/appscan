@@ -38,6 +38,16 @@
 # apps off the rail using the catalogue's own store list -- the system
 # answers, the shell decides placement. Phase 1 keeps the same split.
 #
+# STEAM GAMES ARE IN THE LISTING TOO, because the rail's brief is the whole
+# library and a game installed INSIDE Steam is invisible to every desktop-entry
+# walk above: Steam on Linux does not drop a .desktop file per game (that is a
+# per-title "create shortcut" action someone takes with a mouse, not an install
+# side effect). So the scanner also reads Steam's own installation records --
+# one appmanifest_<appid>.acf per installed app under steamapps/ -- and emits a
+# card per fully-installed game that launches back through Steam. A machine
+# without Steam, or with Steam and no games, simply contributes zero rows: no
+# steamapps directory is the normal state of a fresh stick, not a warning.
+#
 set -uo pipefail
 
 TAG=marwanos-appscan
@@ -45,10 +55,10 @@ STATE_DIR=/run/marwanos
 APPS="$STATE_DIR/apps.tsv"
 
 # How often to look for a CHANGE. The scan itself only re-runs when one of the
-# watched directories has a newer mtime, so this is a stat of a handful of
-# directories, not a re-parse -- cheap enough at this interval on a USB stick,
-# and fast enough that an app installed while the rail is on screen shows up
-# without anyone rebooting.
+# watched paths has a newer mtime, so this is a stat of a handful of
+# directories and manifest files, not a re-parse -- cheap enough at this
+# interval on a USB stick, and fast enough that an app installed while the
+# rail is on screen shows up without anyone rebooting.
 INTERVAL=10
 
 # Where applications come from, in the freedesktop order. The flatpak export
@@ -76,6 +86,17 @@ ICON_ROOTS=(
 # surface, so a 256 px icon is the smallest that is not visibly soft.
 ICON_SIZES_LARGE=(512x512 256x256)
 ICON_SIZES_SMALL=(128x128 96x96 64x64 48x48)
+
+# Steam's library state, which no desktop-entry walk can see. The root is the
+# flatpak app's private home under the player user -- the same fixed
+# /var/home/player the APP_DIRS above use, because the appliance has exactly
+# one user, created by sysusers at uid 1000, and resolving it dynamically
+# would be ceremony around a constant. Extra Steam library folders
+# (libraryfolders.vdf can name several) are deliberately not followed: this
+# machine has one disk and the default library is on it.
+STEAM_DATA=/var/home/player/.var/app/com.valvesoftware.Steam/.local/share/Steam
+STEAM_APPS_DIR="$STEAM_DATA/steamapps"
+STEAM_LIBCACHE="$STEAM_DATA/appcache/librarycache"
 
 info() { printf '<6>%s: %s\n' "$TAG" "$*"; }
 err()  { printf '<3>%s: %s\n' "$TAG" "$*" >&2; }
@@ -278,6 +299,126 @@ scan() {
 }
 
 
+## Reads one top-level value out of a Valve KeyValues (.acf) file.
+##
+## The format is line-oriented in practice -- `"key"		"value"`, one pair per
+## line, nested in braces -- and the three keys this scanner asks for (appid,
+## name, StateFlags) each occur exactly once at the AppState level of every
+## manifest Steam writes, before any nested block repeats a word. So the same
+## pure-bash line walk as desktop_get is enough, and a real KeyValues parser
+## would be more code to be wrong in. First match wins; the value is what sits
+## between the next pair of quotes, which survives apostrophes and ampersands
+## in game names (a title containing a literal double quote would lose its
+## tail, which trims a hypothetical name rather than breaking the record).
+acf_get() {
+    local file="$1" key="$2" line
+    while IFS= read -r line || [ -n "$line" ]; do
+        case "$line" in
+            *"\"$key\""*)
+                line="${line#*\""$key"\"}"
+                case "$line" in
+                    *\"*\"*)
+                        line="${line#*\"}"
+                        printf '%s' "${line%%\"*}"
+                        return 0
+                        ;;
+                esac
+                ;;
+        esac
+    done < "$file"
+    return 0
+}
+
+
+## Absolute path to Steam's own art for one appid, or nothing.
+##
+## The portrait grid image (library_600x900) is preferred because it is what
+## Steam's own library draws as a tile -- exactly this card's job -- and the
+## small square icon is a fallback, not a choice. Each name is looked up in
+## both layouts the client has used for this cache: flat `<appid>_*.jpg`
+## files, and the per-app subdirectory newer clients write instead. Which one
+## exists depends on the Steam version that populated the cache, and checking
+## four paths costs four stats. Nothing found is nothing emitted -- the shell
+## already draws its accent wash for a card with no icon.
+steam_art() {
+    local appid="$1" candidate
+    for candidate in \
+        "$STEAM_LIBCACHE/${appid}_library_600x900.jpg" \
+        "$STEAM_LIBCACHE/$appid/library_600x900.jpg" \
+        "$STEAM_LIBCACHE/${appid}_icon.jpg" \
+        "$STEAM_LIBCACHE/$appid/icon.jpg"; do
+        [ -f "$candidate" ] && { printf '%s' "$candidate"; return 0; }
+    done
+    return 0
+}
+
+
+## One TSV record per fully-installed Steam game, or nothing at all.
+##
+## No steamapps directory means Steam is absent or has never downloaded
+## anything, and both are ordinary states of this appliance rather than
+## faults: the function returns before its loop and logs nothing.
+scan_steam() {
+    local file appid flags name icon
+
+    [ -d "$STEAM_APPS_DIR" ] || return 0
+    for file in "$STEAM_APPS_DIR"/appmanifest_*.acf; do
+        [ -f "$file" ] || continue
+
+        # The filename carries the appid too, but the manifest is the record
+        # being trusted here, so the manifest answers.
+        appid="$(acf_get "$file" appid)"
+        case "$appid" in ''|*[!0-9]*) continue ;; esac
+
+        # Bit 4 of StateFlags is StateFullyInstalled. A manifest exists from
+        # the moment a download STARTS, so without this check a half-arrived
+        # game would be a card that launches into Steam's error dialog.
+        flags="$(acf_get "$file" StateFlags)"
+        case "$flags" in ''|*[!0-9]*) continue ;; esac
+        [ $(( flags & 4 )) -ne 0 ] || continue
+
+        name="$(acf_get "$file" name)"
+        [ -n "$name" ] || continue
+
+        # Runtime plumbing lives in steamapps AS apps: Proton builds, the
+        # Steam Linux Runtime containers, the redistributables bundle. The
+        # manifest has no field that says "this is tooling, not a game" --
+        # that type lives in appinfo.vdf, a binary cache that would need a
+        # real parser -- so matching the names Valve gives its own tooling is
+        # the honest filter actually available in these files. A third-party
+        # game that names itself "Proton..." would be hidden by this; that
+        # trade is smaller than a rail listing four Proton versions as games.
+        case "$name" in
+            'Proton'*) continue ;;
+            'Steam Linux Runtime'*) continue ;;
+            'Steamworks Common Redistributables'*) continue ;;
+        esac
+
+        # A tab in a title would shear this record into extra columns and a
+        # newline would shear it into two records, so both become spaces.
+        # acf_get's line-read cannot actually deliver a newline, but the
+        # sanitising is cheap and the TSV's integrity is the one thing this
+        # file must never gamble on.
+        name="${name//$'\t'/ }"
+        name="${name//$'\n'/ }"
+        name="${name//$'\r'/}"
+
+        icon="$(steam_art "$appid")"
+
+        # Launched back through Steam rather than directly: Steam owns the
+        # game's runtime container, Proton prefix and cloud saves, and
+        # -gamepadui keeps the surrounding UI ten-foot. Every word in this
+        # exec is spaceless (the appid is numeric), which the space-joined,
+        # space-split exec field requires -- the title, which may contain
+        # anything, never rides in it.
+        printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
+            "steam.$appid" "$name" "" "$icon" \
+            "flatpak run com.valvesoftware.Steam -gamepadui steam://rungameid/$appid" \
+            "installed"
+    done
+}
+
+
 ## Applications that are on their way but not here yet.
 ##
 ## marwanos-flatpak-install writes `<state>TAB<name>` per app it is working on,
@@ -345,6 +486,24 @@ dirs_signature() {
 }
 
 
+## The Steam library's signature, and it watches FILE mtimes, not just the
+## directory's. The change that matters most -- a download finishing -- flips
+## StateFlags by rewriting an appmanifest that already exists, which moves
+## that file's mtime and leaves the directory's alone; a directory-only watch
+## would show every game exactly one install late. Uninstalls delete the
+## manifest, so the file simply falls out of this listing and the value
+## changes that way. A library holds tens of manifests at most, so this is
+## tens of stats per cycle -- the same order of cheap as dirs_signature.
+steam_signature() {
+    local file
+    [ -d "$STEAM_APPS_DIR" ] || return 0
+    printf '%s:%s ' "$STEAM_APPS_DIR" "$(stat -c %Y "$STEAM_APPS_DIR" 2>/dev/null || echo 0)"
+    for file in "$STEAM_APPS_DIR"/appmanifest_*.acf; do
+        [ -f "$file" ] && printf '%s:%s ' "$file" "$(stat -c %Y "$file" 2>/dev/null || echo 0)"
+    done
+}
+
+
 ## By CONTENT, not mtime -- the progress line inside these files is the thing
 ## that has to reach the rail, and it changes without the set of files
 ## changing. They are two short files on a tmpfs, so reading them every cycle
@@ -357,25 +516,37 @@ pending_signature() {
 }
 
 
-# THE TWO HALVES ARE WATCHED SEPARATELY, and that split is a performance fix
+# EACH SOURCE IS WATCHED SEPARATELY, and that split is a performance fix
 # rather than tidiness. Pending state now carries a progress line that is
 # rewritten every ten seconds during a download, so a single combined signature
 # would re-walk every desktop file in every XDG directory on that same cadence
 # -- reading hundreds of small files off a USB stick that is simultaneously
 # absorbing a multi-gigabyte download. The installed set only changes when a
 # directory's mtime moves, so its expensive scan is cached and only the cheap
-# read of two small state files repeats.
+# read of two small state files repeats. The Steam library gets the same
+# treatment for the same reason: its manifests are stat'ed every cycle, and
+# the acf re-parse only runs when one of them actually moved -- which is also
+# what makes a game land on the rail within one poll of Steam finishing its
+# download, with no new unit and no new trigger.
 last_dirs=""
 last_pending=""
+last_steam=""
 installed_listing=""
+steam_listing=""
 while :; do
     dirs_now="$(dirs_signature)"
     pending_now="$(pending_signature)"
+    steam_now="$(steam_signature)"
 
-    if [ "$dirs_now" != "$last_dirs" ] || [ "$pending_now" != "$last_pending" ]; then
+    if [ "$dirs_now" != "$last_dirs" ] || [ "$pending_now" != "$last_pending" ] \
+        || [ "$steam_now" != "$last_steam" ]; then
         if [ "$dirs_now" != "$last_dirs" ]; then
             last_dirs="$dirs_now"
             installed_listing="$(scan)"
+        fi
+        if [ "$steam_now" != "$last_steam" ]; then
+            last_steam="$steam_now"
+            steam_listing="$(scan_steam)"
         fi
         last_pending="$pending_now"
 
@@ -385,12 +556,14 @@ while :; do
         # entries sort in among the installed ones rather than clustering at
         # one end, so an app does not jump across the rail at the moment its
         # install finishes.
-        listing="$( { printf '%s' "${installed_listing:+$installed_listing$'\n'}"; pending; } \
+        listing="$( { printf '%s' "${installed_listing:+$installed_listing$'\n'}"; \
+                      printf '%s' "${steam_listing:+$steam_listing$'\n'}"; \
+                      pending; } \
             | grep -v '^$' | sort -t"$(printf '\t')" -k2,2f)"
         count=0
         [ -n "$listing" ] && count="$(printf '%s\n' "$listing" | wc -l)"
 
-        info "scan found $count application(s), including pending installs"
+        info "scan found $count application(s), including Steam games and pending installs"
 
         # Atomic via rename: the shell polls this file and must never read a
         # half-written listing. Logged rather than fatal, same as netcheck --

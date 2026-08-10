@@ -382,7 +382,8 @@ RUN --mount=type=cache,dst=/var/cache/libdnf5,sharing=locked \
 # than a pipe for the same SIGPIPE reason the initramfs greps below spell out.
 # xdotool is the pad-keys bridge's injector (shell/src/pad_keys.gd): the shell
 # translates gamepad presses into XTEST key events for desktop applications
-# that have no controller support of their own -- Dolphin is the first. It is
+# that have no controller support of their own -- Dolphin was the first, and
+# the bridge outlives Dolphin's 2026-08-10 exit from the shipped set. It is
 # a tool, not a library, so the dlopen loop below rightly does not know it;
 # the verify block asserts it next to xprop, its sibling in "small X clients
 # the shell shells out to".
@@ -759,13 +760,14 @@ RUN set -euxo pipefail; \
     test -x /usr/lib/marwanos/storeart; \
     : "The shared allow-list, asserted from both ends. Missing or empty,"; \
     : "appctl refuses every store request and storeart fetches nothing --"; \
-    : "both failing silently on a machine with no console. The Steam grep is"; \
-    : "the exact-id check: matching everywhere is string equality, so this"; \
-    : "also catches the stray whitespace or BOM that would make an id"; \
-    : "silently stop existing."; \
+    : "both failing silently on a machine with no console. The greps are the"; \
+    : "exact-id check on the first and last ids the file ships (Steam and"; \
+    : "Kodi): matching everywhere is string equality, so this catches the"; \
+    : "stray whitespace or BOM that would make an id silently stop existing,"; \
+    : "and the last-id grep catches a truncated file."; \
     test -s /usr/lib/marwanos/shipped-apps; \
     grep -q '^com\.valvesoftware\.Steam$' /usr/lib/marwanos/shipped-apps; \
-    grep -q '^org\.libretro\.RetroArch$' /usr/lib/marwanos/shipped-apps; \
+    grep -q '^tv\.kodi\.Kodi$' /usr/lib/marwanos/shipped-apps; \
     test -L /usr/lib/systemd/system/timers.target.wants/marwanos-storeart.timer; \
     test -L /usr/lib/systemd/system/multi-user.target.wants/marwanos-panel.service; \
     test -L "/usr/lib/systemd/system/multi-user.target.wants/marwanos-flatpak-install@com.valvesoftware.Steam.service"; \
@@ -796,8 +798,8 @@ RUN set -euxo pipefail; \
     : "and a base bump that dropped it would silently break overlay stacking."; \
     command -v xprop; \
     : "xdotool is how pad presses reach applications with no gamepad support"; \
-    : "of their own (the pad-keys bridge); without it Dolphin installs fine"; \
-    : "and then ignores every button on the controller."; \
+    : "of their own (the pad-keys bridge); without it any app the bridge"; \
+    : "drives would launch fine and then ignore every button on the pad."; \
     command -v xdotool; \
     test -L /etc/systemd/system/ModemManager.service; \
     test -f /usr/lib/systemd/logind.conf.d/50-marwanos-lid.conf; \

@@ -17,9 +17,19 @@
 #     screen renders from disk instead of from the network.
 #
 # The shell's catalogue (shell/src/catalogue.gd, AVAILABLE_APPS) mirrors these
-# ids by hand. A name there that is missing here produces a card whose press
-# root refuses -- the safe direction for the two to disagree in. Phase 1
-# deletes all of it: marwand owns the app set and serves it over RPC.
+# ids by hand -- trimmed to the same three in the same change, so the two
+# agree today. A name there that is missing here produces a card whose press
+# root refuses, which is the safe direction for the two to disagree in if
+# they ever drift again. Phase 1 deletes all of it: marwand owns the app set
+# and serves it over RPC.
+#
+# THE SET IS THREE, DOWN FROM EIGHT. Steam is the games library, Kodi is the
+# player, Zen is the browser -- one app per job, no job twice, and browsing
+# files is the shell's own Files screen rather than an app at all. The five
+# that left (Dolphin, RetroArch, VLC, Moonlight, Spotify) each duplicated a
+# job something here already does, or served a use this appliance has not
+# grown yet; an id can come back with one line here and one in the
+# display_name table when the use arrives.
 #
 # Lines starting with # and blank lines are ignored. Ids only -- no globs, no
 # comments on the same line as an id. Matching everywhere is exact string
@@ -27,8 +37,3 @@
 com.valvesoftware.Steam
 app.zen_browser.zen
 tv.kodi.Kodi
-org.kde.dolphin
-org.libretro.RetroArch
-org.videolan.VLC
-com.moonlight_stream.Moonlight
-com.spotify.Client
