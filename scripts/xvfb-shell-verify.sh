@@ -28,7 +28,20 @@
 #   STATUS_DIR   directory of status-file fixtures, mounted read-only and
 #                pointed at by MARWANOS_SHELL_STATUS_DIR -- same seam and same
 #                file formats as run-shell-wsl.sh. Without it the shell makes
-#                no claims about network or apps.
+#                no claims about network or apps. Everything the shell reads out
+#                of /run/marwanos lives here: netcheck's answer, apps.tsv, and
+#                gameart.tsv (the Steam artwork table -- one env lever for one
+#                directory, which is why the artwork seam deliberately did not
+#                get an override of its own).
+#   STORE_DIR    the artwork and metadata cache, mounted read-only and pointed
+#                at by MARWANOS_SHELL_STORE_DIR -- the /var/marwanos/store tree
+#                WHOLE: icons/<app-id>.png, meta/steam.<appid>.json, AND the
+#                storefront's front/featured.json + front/app.<appid>.json +
+#                front/art/<appid>[.shot].jpg. A fixture built without front/
+#                renders a storefront grid that says "Fetching the storefront"
+#                forever, which reads as a bug and is a missing directory.
+#                Without the whole tree a store page draws its fallback glyph
+#                and the details panel has no description from Steam to show.
 #   FILES_DIR    directory of file-manager fixtures, mounted at /files and
 #                pointed at by MARWANOS_SHELL_FILES_HOME, so the files
 #                screen's Home place browses it. Read-write, unlike
@@ -100,6 +113,9 @@ fi
 if [[ -n "${FILES_DIR:-}" && ! -d "$FILES_DIR" ]]; then
     die "FILES_DIR=$FILES_DIR is not a directory"
 fi
+if [[ -n "${STORE_DIR:-}" && ! -d "$STORE_DIR" ]]; then
+    die "STORE_DIR=$STORE_DIR is not a directory"
+fi
 
 say "Exporting the shell (only the shell-export stage rebuilds)"
 podman build \
@@ -129,6 +145,14 @@ if [[ -n "${STATUS_DIR:-}" ]]; then
     STATUS_ARGS=(-e MARWANOS_SHELL_STATUS_DIR=/status -v "${STATUS_DIR}:/status:ro")
 fi
 
+STORE_ARGS=()
+if [[ -n "${STORE_DIR:-}" ]]; then
+    # Read-only for STATUS_DIR's reason: this tree is root-written truth on the
+    # appliance (marwanos-storeart owns it) and the shell only ever reads it, so
+    # a fixture the shell could write to would be a fixture that proves less.
+    STORE_ARGS=(-e MARWANOS_SHELL_STORE_DIR=/store -v "${STORE_DIR}:/store:ro")
+fi
+
 FILES_ARGS=()
 if [[ -n "${FILES_DIR:-}" ]]; then
     FILES_ARGS=(-e MARWANOS_SHELL_FILES_HOME=/files -v "${FILES_DIR}:/files:rw")
@@ -154,6 +178,7 @@ podman run -d --name "$CTR" \
     -e XDG_RUNTIME_DIR=/godothome \
     -e MARWANOS_SHELL_WINDOWED=1 \
     "${STATUS_ARGS[@]}" \
+    "${STORE_ARGS[@]}" \
     "${FILES_ARGS[@]}" \
     "${MEDIA_ARGS[@]}" \
     --tmpfs /godothome:rw,mode=1777 \

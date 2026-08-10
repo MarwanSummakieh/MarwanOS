@@ -35,8 +35,14 @@ const Tile = preload("res://src/tile.gd")
 const IconButton = preload("res://src/icon_button.gd")
 const AppOverlay = preload("res://src/app_overlay.gd")
 const CardMenu = preload("res://src/card_menu.gd")
+const DetailsPanel = preload("res://src/details_panel.gd")
 const Glyphs = preload("res://src/glyphs.gd")
 const ErrorScreen = preload("res://src/error_screen.gd")
+
+## Same prefix, same meaning as tile.gd's: an entry whose id starts with it is a
+## Steam library game rather than an application, which is what makes it the one
+## kind of entry with a background of its own.
+const STEAM_PREFIX := "steam."
 
 var _hero: ColorRect = null
 ## The key-art layer and its two stacked pictures. See _build_art_layer.
@@ -55,6 +61,14 @@ var _open_hint: Control = null
 var _options_hint: Control = null
 var _overlay: AppOverlay = null
 var _card_menu: CardMenu = null
+## The details panel, and the card it was opened from. The card is kept because
+## the panel's Play button asks that card to act (see Tile.activate) rather than
+## reaching into the launch seam on its own.
+var _details: DetailsPanel = null
+var _details_tile: Control = null
+## A gameart change that arrived while the details panel was open, replayed
+## when it closes -- see _on_gameart_changed for why the panel outranks art.
+var _gameart_pending := false
 ## The rail entry the cursor is on, kept because the card menu is opened from
 ## input handling rather than from the card itself.
 var _selected_entry: Dictionary = {}
@@ -78,6 +92,9 @@ var _art_tween: Tween = null
 ## path it is waiting to load. See TvTheme.HERO_ART_DEBOUNCE_SECONDS.
 var _art_timer: Timer = null
 var _art_pending_path := ""
+## Whether the pending picture is to be softened. A portrait or a logo is, a
+## game's hero background is not -- see _on_card_selected.
+var _art_pending_soften := true
 ## What is actually on the screen, so re-selecting the same card is a no-op
 ## rather than a crossfade from a picture to itself.
 var _art_shown_path := ""
@@ -122,6 +139,13 @@ func _ready() -> void:
 	PlayerOne.player_one_absent.connect(_on_player_one_absent)
 	SystemStatus.network_changed.connect(_on_network_changed)
 	Installed.apps_changed.connect(_on_apps_changed)
+	# ARTWORK ARRIVING IS A RAIL REBUILD, through the same door an install is.
+	# A card's picture is chosen when the card is built (tile._art_candidates),
+	# so a cache that warms after boot only reaches the screen if the cards are
+	# built again -- and doing that through _on_apps_changed rather than through
+	# a second, artwork-shaped path is what stops the two rebuilds racing each
+	# other for the focused card. See _on_gameart_changed.
+	GameArt.changed.connect(_on_gameart_changed)
 	Apps.state_changed.connect(_on_apps_state_changed)
 	_refresh_status()
 	# SystemStatus polled once in its own _ready, which ran before this one, so
@@ -587,6 +611,10 @@ func _populate() -> void:
 		# next scan replaced underneath it.
 		tile.setup(entry.duplicate())
 		tile.selected.connect(_on_card_selected)
+		# Bound rather than looked up from the focus owner when it fires: the
+		# panel's Play button asks THIS card to act, and "whatever has focus" is
+		# a different thing the moment anything else grabs it.
+		tile.details_requested.connect(_on_details_requested.bind(tile))
 		_rail.add_child(tile)
 		_tiles.append(tile)
 
@@ -664,7 +692,25 @@ func _on_card_selected(entry: Dictionary) -> void:
 	# colour already in hand, and the picture is a file on disk. Splitting them
 	# is what makes a fast scroll cost one decode instead of ten -- see
 	# _request_hero_art.
-	_request_hero_art(str(entry.get("icon", "")))
+	#
+	# A GAME'S HERO ART IS SHOWN SHARP, and it is the only picture on this screen
+	# that is. Everything else the rail can hand the background is a logo or a box
+	# shot -- a picture of a THING, at the wrong shape for a wall, which is why it
+	# is resized down to a smear (see TvTheme.HERO_ART_BLUR_DIVISOR). A Steam hero
+	# is not that: it is a wide, deliberately empty-in-the-middle image that Steam
+	# itself draws edge to edge behind its own library, drawn by the people who
+	# made the game to be a background. Softening one would be throwing away the
+	# only artwork the machine ever gets that was designed for this exact job.
+	#
+	# The scrim and both gradients stay exactly as they are over it -- see
+	# TvTheme.HERO_ART_SCRIM, which is derived from the worst-case LUMINANCE the
+	# background can have and therefore says nothing about sharpness.
+	var id := str(entry.get("id", ""))
+	var hero := GameArt.hero_for(id) if id.begins_with(STEAM_PREFIX) else ""
+	if hero.is_empty():
+		_request_hero_art(str(entry.get("icon", "")), true)
+	else:
+		_request_hero_art(hero, false)
 	_scroll_to_selected()
 
 
@@ -703,8 +749,14 @@ func _fade_hero_to(accent: Color) -> void:
 ##
 ## An empty path is a real request, not a skipped one: it is how a card with no
 ## picture takes the screen BACK from the last card that had one.
-func _request_hero_art(path: String) -> void:
+##
+## `soften` rides along with the path rather than being decided at load time,
+## because it is a property of what the picture IS FOR -- a background versus a
+## logo standing in for one -- and only the selection handler knows that. See
+## _on_card_selected and _backdrop_texture.
+func _request_hero_art(path: String, soften: bool) -> void:
 	_art_pending_path = path
+	_art_pending_soften = soften
 
 	if _art_timer == null:
 		_art_timer = Timer.new()
@@ -732,7 +784,7 @@ func _on_art_settled() -> void:
 		ShellLog.info("hero art: %s (already up)" % path)
 		return
 
-	var texture := _backdrop_texture(path)
+	var texture := _backdrop_texture(path, _art_pending_soften)
 	if texture == null:
 		# Same policy as the card's own icon: a picture that will not decode is
 		# not worth a black screen, and the wash underneath is a complete answer.
@@ -837,10 +889,21 @@ func _kill_art_tween() -> void:
 ## THE SOFTENING IS A RESIZE, and that is the entire trick -- see
 ## TvTheme.HERO_ART_BLUR_DIVISOR for why a blur is not affordable here and why
 ## an icon is taken further down than a portrait.
-func _backdrop_texture(path: String) -> ImageTexture:
-	if _art_cache.has(path):
+##
+## `soften` false is the game-hero case and skips all of that: the file is
+## decoded and uploaded as it is. It costs more texture memory than a 50 px
+## smear and nothing per frame, which is the budget that matters here -- the
+## cache is capped either way.
+func _backdrop_texture(path: String, soften: bool) -> ImageTexture:
+	# KEYED ON THE TREATMENT AS WELL AS THE PATH. Nothing today can ask for one
+	# file both ways -- heroes and portraits are different files -- but a cache
+	# that answered a sharp request with a softened texture would be a bug whose
+	# only symptom is a blurry background, which is precisely the thing this
+	# change exists to remove and would be read as "the feature did not land".
+	var key := "%s|%s" % [path, "soft" if soften else "sharp"]
+	if _art_cache.has(key):
 		ShellLog.info("hero art: %s (cached)" % path)
-		return _art_cache[path]
+		return _art_cache[key]
 
 	var image := Tile.load_icon_image(path)
 	if image == null:
@@ -850,6 +913,12 @@ func _backdrop_texture(path: String) -> ImageTexture:
 	var height := image.get_height()
 	if width <= 0 or height <= 0:
 		return null
+
+	if not soften:
+		var sharp := ImageTexture.create_from_image(image)
+		_remember_backdrop(key, sharp)
+		ShellLog.info("hero art: %s (%dx%d, unblurred background)" % [path, width, height])
+		return sharp
 
 	# A logo is square-ish; key art is not. The test is on the pixels rather than
 	# on the entry's id, because "steam.<appid>" is only today's source of
@@ -864,14 +933,21 @@ func _backdrop_texture(path: String) -> ImageTexture:
 	image.resize(small_w, small_h, Image.INTERPOLATE_BILINEAR)
 
 	var texture := ImageTexture.create_from_image(image)
-	_art_cache[path] = texture
-	_art_cache_order.append(path)
-	while _art_cache_order.size() > TvTheme.HERO_ART_CACHE_MAX:
-		_art_cache.erase(_art_cache_order.pop_front())
+	_remember_backdrop(key, texture)
 
 	ShellLog.info("hero art: %s (%dx%d softened to %dx%d)"
 		% [path, width, height, small_w, small_h])
 	return texture
+
+
+## The cache insert and the eviction that goes with it, in one place because the
+## two must not drift: an insert that forgot the order list would be a dictionary
+## that grows forever on a machine that never reboots.
+func _remember_backdrop(key: String, texture: ImageTexture) -> void:
+	_art_cache[key] = texture
+	_art_cache_order.append(key)
+	while _art_cache_order.size() > TvTheme.HERO_ART_CACHE_MAX:
+		_art_cache.erase(_art_cache_order.pop_front())
 
 
 ## Slides the strip so the selected card's left edge rests on the TV-safe margin.
@@ -956,7 +1032,7 @@ func _refresh_empty_state() -> void:
 		# Nothing selected means nothing to show a picture OF, and the last card
 		# to be removed must not leave its backdrop behind on a screen that now
 		# says the machine is empty.
-		_request_hero_art("")
+		_request_hero_art("", true)
 
 	if _open_hint != null:
 		_open_hint.visible = not empty
@@ -1149,6 +1225,13 @@ func _refresh_status() -> void:
 ## start of the rail. Keeping the index instead would silently move the
 ## selection to a different app whenever one was installed ahead of it.
 func _on_apps_changed(_apps: Array) -> void:
+	# The panel is ABOUT one of the cards that is about to be freed, and after a
+	# rescan the entry behind it may not exist any more. Closing it is the honest
+	# response and the cheap one -- the list changing is rare (an install, a
+	# removal, a picture arriving), and a panel that survived would be describing
+	# a dictionary nothing on screen refers to.
+	_close_details()
+
 	var focused_id := ""
 	var owner := get_viewport().gui_get_focus_owner()
 	if owner != null and _tiles.has(owner):
@@ -1197,6 +1280,31 @@ func _on_apps_changed(_apps: Array) -> void:
 		# removed. _ensure_focus sends focus up to the store icon, which is
 		# where someone with nothing installed needs to be anyway.
 		_ensure_focus()
+
+
+## A game's artwork landed (or changed, or went away).
+##
+## THE SAME REBUILD, ON PURPOSE. A card chooses its picture when it is built, so
+## the only way new art reaches the screen is to build the cards again -- and
+## _on_apps_changed is already the function that does that correctly: it frees
+## the strip, repopulates it, rewires the neighbour table and puts focus back on
+## the app the person was on BY ID. A second rebuild path would be a second copy
+## of that focus restoration, and the two would drift the first time one of them
+## learned something. The list it is handed is the current installed list rather
+## than a new one, because nothing about what is installed has changed -- only
+## what it looks like.
+##
+## DEFERRED WHILE THE DETAILS PANEL IS UP, and review is why: the designed
+## traffic here is one tsv change per game as Steam's cache warms, minutes
+## apart, and _on_apps_changed's first act is closing the panel -- so a
+## warming cache was yanking the sheet out from under the person reading it,
+## to redraw a card they were not looking at. Better art can wait the length
+## of a description; the flag replays the rebuild the moment the panel goes.
+func _on_gameart_changed() -> void:
+	if _details != null:
+		_gameart_pending = true
+		return
+	_on_apps_changed(Installed.apps)
 
 
 func _on_network_changed(state: String) -> void:
@@ -1293,9 +1401,93 @@ func _close_overlay() -> void:
 	Launcher.set_splash_paused(false)
 
 
+## ---------------------------------------------------------------------------
+## The details panel
+## ---------------------------------------------------------------------------
+
+## DOWN on a focused card, which was a dead axis until now -- see Tile._gui_input
+## for why the press is caught on the card and not here.
+##
+## THE PANEL IS ADDITIVE, NOT A GATE. A on a card still launches it directly and
+## nothing about that press changed; the panel is the second, slower route for
+## the person who wants to know what a thing is before starting it, and it is
+## where a game's description finally has somewhere to be. Anyone who never
+## presses down sees exactly the shell they saw before.
+##
+## Guarded the way the card menu is, and for the same reason: each of these is a
+## state in which the panel would be about something that is not on the screen.
+func _on_details_requested(tile: Control) -> void:
+	if _details != null:
+		# A second press is the hold-repeat (FocusRepeat sends eight a second) or
+		# a bounced button, not a request for two panels.
+		return
+	if Settings.is_open() or Stores.is_open() or Power.is_open() or Files.is_open() \
+			or Launcher.is_busy():
+		return
+	if not is_instance_valid(tile) or not _tiles.has(tile):
+		return
+
+	_details_tile = tile
+	_details = DetailsPanel.new()
+	_details.entry = tile.entry
+	_details.play_requested.connect(_on_details_play)
+	_details.closed.connect(_on_details_closed)
+	# A CHILD OF THE RAIL, unlike the card menu and the app overlay, which are
+	# children of the tree root. Those two cover the shell; this one is part of
+	# it -- the top half of the screen stays the selected game's background, and
+	# the panel slides over the bottom half where the rail is. Last child, so it
+	# paints over the rail it is covering.
+	add_child(_details)
+
+
+## Play: exactly the press the card already answers, asked of the card itself.
+##
+## The panel closes FIRST. The launch seam hides this whole surface a moment
+## later (_hand_screen_over), and a panel still in the tree at that point would
+## be what focus was remembered on -- so the rail would come back with the
+## cursor on a button belonging to a screen the person had left.
+func _on_details_play() -> void:
+	var tile := _details_tile
+	_close_details()
+	if is_instance_valid(tile):
+		tile.activate()
+
+
+func _on_details_closed() -> void:
+	_close_details.call_deferred()
+
+
+## The panel's single teardown. Focus goes back to the card it was opened from,
+## by identity: the rail never lost its shape while the panel was up, so the card
+## is still there and is where the person was.
+func _close_details() -> void:
+	if _details == null:
+		return
+	var panel := _details
+	var tile := _details_tile
+	_details = null
+	_details_tile = null
+	panel.get_parent().remove_child(panel)
+	panel.queue_free()
+	# The artwork rebuild the open panel deferred -- see _on_gameart_changed.
+	# After the teardown so the rebuild's focus restore is the last word.
+	if _gameart_pending:
+		_gameart_pending = false
+		_on_apps_changed.call_deferred(Installed.apps)
+	# Only when the rail is what is on screen. A launch started from the panel
+	# hides this surface between the two, and grabbing focus into a hidden
+	# control would strand it there.
+	if visible and is_instance_valid(tile) and _tiles.has(tile):
+		tile.grab_focus()
+
+
 ## The options menu for the selected card. Guarded rather than always available,
 ## and every guard is a state in which the menu would be about the wrong thing.
 func _open_card_menu() -> void:
+	if _details != null:
+		# The panel owns the screen and the pad while it is up. OPTIONS is about
+		# the SELECTED CARD, and the selected card is behind a panel.
+		return
 	if _card_menu != null:
 		# A second press while it is up is a bounced button, not a request for
 		# two -- the same rule the other surfaces enforce.
@@ -1349,6 +1541,14 @@ func _close_card_menu() -> void:
 
 
 func _unhandled_input(event: InputEvent) -> void:
+	# WHILE THE PANEL IS UP, THE RAIL IS NOT LISTENING. The panel is a later
+	# child and so is offered unhandled input first, and it consumes B -- but
+	# relying on dispatch order for "B does not do two things at once" is the
+	# assumption _hand_screen_over already refuses to make, and OPTIONS is not
+	# consumed by anything.
+	if _details != null:
+		return
+
 	# OPTIONS OPENS THE CARD'S OPTIONS. It is checked before B because it is the
 	# only way to remove an application on a machine with no terminal, and it is
 	# on the pad's own OPTIONS button rather than on a long-press of A because a

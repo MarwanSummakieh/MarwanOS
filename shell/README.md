@@ -41,8 +41,13 @@ shell/
     wifi_screen.gd       networks in range, and joining one
     keyboard.gd          on-screen keyboard, pad-driven
     stores.gd            THE STORES SEAM                 (autoload Stores)
-    stores_screen.gd     side tabs + the store page they render
+    steamfront.gd        THE STOREFRONT SEAM: Valve's own front page, fetched
+                         by marwanos-steamfront and read off disk
+                                                        (autoload Steamfront)
+    stores_screen.gd     side tabs + the store page they render, which for an
+                         installed Steam is a browsable grid of real games
     store_tab.gd         one tab in that column
+    store_front_tile.gd  one game on that grid
     files.gd             THE FILES SEAM                  (autoload Files)
     files_screen.gd      the file manager -- Dolphin's shape, on a pad:
                          composition, focus between regions, the clipboard,

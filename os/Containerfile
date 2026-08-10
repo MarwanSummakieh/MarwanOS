@@ -670,6 +670,7 @@ RUN set -euxo pipefail; \
     chmod 0644 /usr/lib/udev/rules.d/99-marwanos-usb.rules; \
     chmod 0644 /usr/lib/systemd/system/marwanos-storeart.service; \
     chmod 0644 /usr/lib/systemd/system/marwanos-storeart.timer; \
+    chmod 0644 /usr/lib/systemd/system/marwanos-steamfront.service; \
     chmod 0644 /usr/lib/systemd/system/sshd.service.d/50-marwanos-persist.conf; \
     chmod 0644 /usr/lib/systemd/system/marwanos-flightrec.service; \
     chmod 0755 /usr/lib/marwanos/flightrec; \
@@ -684,6 +685,7 @@ RUN set -euxo pipefail; \
     chmod 0755 /usr/lib/marwanos/appctl; \
     chmod 0755 /usr/lib/marwanos/usbmount; \
     chmod 0755 /usr/lib/marwanos/storeart; \
+    chmod 0755 /usr/lib/marwanos/steamfront; \
     : "shipped-apps is deliberately NOT in the 0755 list: it is data both"; \
     : "appctl and storeart read, not a program, and the find above has"; \
     : "already normalised it to 0644."; \
@@ -730,6 +732,12 @@ RUN set -euxo pipefail; \
         /usr/lib/systemd/system/multi-user.target.wants/marwanos-update.service; \
     ln -sf ../marwanos-appctl.service \
         /usr/lib/systemd/system/multi-user.target.wants/marwanos-appctl.service; \
+    : "The storefront fetcher. A request-driven service like appctl and wifi"; \
+    : "rather than a timer like storeart: nothing should be downloading"; \
+    : "Valve's front page on a machine whose owner has not opened the store"; \
+    : "tab, so the shell asking is the only thing that makes this work."; \
+    ln -sf ../marwanos-steamfront.service \
+        /usr/lib/systemd/system/multi-user.target.wants/marwanos-steamfront.service; \
     : "The EJECT half of removable media. The MOUNT half needs no link:"; \
     : "99-marwanos-usb.rules pulls in marwanos-usbmount@<device> by name"; \
     : "when a stick appears, and a wants link on a template with no"; \
@@ -783,6 +791,7 @@ RUN set -euxo pipefail; \
     test -x /usr/lib/marwanos/update; \
     test -x /usr/lib/marwanos/appctl; \
     test -x /usr/lib/marwanos/storeart; \
+    test -x /usr/lib/marwanos/steamfront; \
     : "The shared allow-list, asserted from both ends. Missing or empty,"; \
     : "appctl refuses every store request and storeart fetches nothing --"; \
     : "both failing silently on a machine with no console. The greps are the"; \
@@ -804,6 +813,7 @@ RUN set -euxo pipefail; \
     test -L /usr/lib/systemd/system/multi-user.target.wants/marwanos-update.service; \
     test -L /usr/lib/systemd/system/multi-user.target.wants/marwanos-appctl.service; \
     test -L /usr/lib/systemd/system/multi-user.target.wants/marwanos-media.service; \
+    test -L /usr/lib/systemd/system/multi-user.target.wants/marwanos-steamfront.service; \
     : "THE AUTOMOUNTER, asserted as the three pieces it actually is, because"; \
     : "any one of them missing produces the same symptom -- a stick that"; \
     : "attaches, enumerates and never appears in the Files screen -- on a"; \
@@ -860,11 +870,16 @@ RUN set -euxo pipefail; \
     : "answers; a base image without it would make the network indicator"; \
     : "permanently say offline while the machine sat happily connected."; \
     command -v curl; \
-    : "jq is how marwanos-storeart parses Valve's appdetails JSON into the"; \
-    : "per-game metadata files the shell draws descriptions from. It comes"; \
-    : "from the base image rather than a dnf line here, which is exactly why"; \
-    : "it is asserted: a base bump that dropped it would leave every game"; \
-    : "card with a title and no sentence under it, silently, at runtime."; \
+    : "jq parses every piece of Valve's JSON this image consumes, for TWO"; \
+    : "services: marwanos-storeart turns appdetails into the per-game"; \
+    : "description files the details panel draws, and marwanos-steamfront"; \
+    : "reshapes the storefront feed into the structure the store tab renders."; \
+    : "It arrives from the BASE IMAGE (jq-1.8.1 as of the pinned digest)"; \
+    : "rather than from any dnf line here, which is exactly why it is"; \
+    : "asserted: a base bump that dropped it would leave every game card"; \
+    : "without its sentence AND the Steam tab permanently claiming the store"; \
+    : "did not answer -- both silently, at runtime, on a machine with no"; \
+    : "console to ask why."; \
     command -v jq; \
     : "xprop is how the shell marks its window GAMESCOPE_EXTERNAL_OVERLAY so"; \
     : "gamescope layers it over games; the base image happens to ship it today,"; \
@@ -885,6 +900,12 @@ RUN set -euxo pipefail; \
     : "of their own (the pad-keys bridge); without it any app the bridge"; \
     : "drives would launch fine and then ignore every button on the pad."; \
     command -v xdotool; \
+    : "jq is how marwanos-storeart parses Valve's appdetails JSON into the"; \
+    : "per-game metadata files the shell draws descriptions from. It comes"; \
+    : "from the base image rather than a dnf line here, which is exactly why"; \
+    : "it is asserted: a base bump that dropped it would leave every game"; \
+    : "card with a title and no sentence under it, silently, at runtime."; \
+    command -v jq; \
     test -L /etc/systemd/system/ModemManager.service; \
     test -f /usr/lib/systemd/logind.conf.d/50-marwanos-lid.conf; \
     test -L /etc/systemd/system/getty@tty1.service; \
