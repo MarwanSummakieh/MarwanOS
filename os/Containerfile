@@ -723,6 +723,13 @@ RUN set -euxo pipefail; \
         /usr/lib/systemd/system/multi-user.target.wants/marwanos-update.service; \
     ln -sf ../marwanos-appctl.service \
         /usr/lib/systemd/system/multi-user.target.wants/marwanos-appctl.service; \
+    : "sshd, enabled in the IMAGE rather than left to installer kickstarts:"; \
+    : "the bench proved that a per-machine enablement can silently not take,"; \
+    : "and a fleet of one unreachable machine is still a fleet outage. The"; \
+    : "keys it accepts are baked under /usr/lib/marwanos/keys (see the"; \
+    : "sshd_config.d drop-in), so image + network is sufficient for access."; \
+    ln -sf /usr/lib/systemd/system/sshd.service \
+        /usr/lib/systemd/system/multi-user.target.wants/sshd.service; \
     : "storeart is enabled through its TIMER, and only the timer: the timer"; \
     : "starts the service half a minute after boot and again every fifteen"; \
     : "minutes, which is what gives an offline boot a second chance at its"; \
@@ -797,6 +804,14 @@ RUN set -euxo pipefail; \
     : "gamescope layers it over games; the base image happens to ship it today,"; \
     : "and a base bump that dropped it would silently break overlay stacking."; \
     command -v xprop; \
+    : "The baked ssh door: the drop-in that names the /usr key path, the two"; \
+    : "key files themselves (non-empty -- an empty .keys file is a locked"; \
+    : "door that looks installed), sshd present and enabled."; \
+    test -s /etc/ssh/sshd_config.d/50-marwanos-keys.conf; \
+    test -s /usr/lib/marwanos/keys/marwan.keys; \
+    test -s /usr/lib/marwanos/keys/root.keys; \
+    test -f /usr/lib/systemd/system/sshd.service; \
+    test -L /usr/lib/systemd/system/multi-user.target.wants/sshd.service; \
     : "xdotool is how pad presses reach applications with no gamepad support"; \
     : "of their own (the pad-keys bridge); without it any app the bridge"; \
     : "drives would launch fine and then ignore every button on the pad."; \

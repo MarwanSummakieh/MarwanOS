@@ -407,13 +407,17 @@ scan_steam() {
 
         # Launched back through Steam rather than directly: Steam owns the
         # game's runtime container, Proton prefix and cloud saves, and
-        # -gamepadui keeps the surrounding UI ten-foot. Every word in this
-        # exec is spaceless (the appid is numeric), which the space-joined,
-        # space-split exec field requires -- the title, which may contain
-        # anything, never rides in it.
+        # -gamepadui keeps the surrounding UI ten-foot. Wrapped in a NESTED
+        # gamescope for the same reason the store's own Steam exec is
+        # (catalogue.gd tells the flicker story): the inner compositor is the
+        # environment Valve builds against, and it hands the outer one a
+        # single stable buffer. {W}/{H} are the shell's launch-time screen
+        # size (Launcher._spawn) -- tokens, not words with meaning here, and
+        # spaceless like every other word in the exec field. The title, which
+        # may contain anything, never rides in the exec.
         printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
             "steam.$appid" "$name" "" "$icon" \
-            "flatpak run com.valvesoftware.Steam -gamepadui steam://rungameid/$appid" \
+            "gamescope -W {W} -H {H} -e -f --force-windows-fullscreen -- flatpak run com.valvesoftware.Steam -gamepadui steam://rungameid/$appid" \
             "installed"
     done
 }

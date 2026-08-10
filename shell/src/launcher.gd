@@ -149,10 +149,18 @@ var _terminating := false
 
 
 func _spawn(exec: Array) -> void:
+	# {W}/{H} become the primary screen's real pixels, at launch time rather
+	# than at catalogue-write time, because the catalogue is a constant and
+	# the screen is whatever panel this stick was plugged into. Today's one
+	# consumer is Steam's nested gamescope; the tokens are generic because a
+	# second nested client will want exactly the same two numbers.
+	var screen := DisplayServer.screen_get_size(DisplayServer.get_primary_screen())
 	var program := str(exec[0])
 	var args := PackedStringArray()
 	for i in range(1, exec.size()):
-		args.append(str(exec[i]))
+		var word := str(exec[i])
+		word = word.replace("{W}", str(screen.x)).replace("{H}", str(screen.y))
+		args.append(word)
 
 	ShellLog.info("spawning %s %s" % [program, " ".join(args)])
 	_close_escalate_ticks = 0
@@ -412,22 +420,24 @@ func _kill_pid() -> void:
 		ShellLog.error("could not terminate pid %d (error %d)" % [_pid, error])
 
 
-## `["flatpak", "run", "com.foo.Bar", ...]` -> `"com.foo.Bar"`, else empty.
-## Read from the entry rather than remembered separately so it cannot drift
-## from what was actually launched.
+## The flatpak application id anywhere in an exec, else empty. Read from the
+## entry rather than remembered separately so it cannot drift from what was
+## actually launched. Scans for the `flatpak run` pair rather than requiring
+## it at position zero, because Steam's exec now wraps it in a nested
+## gamescope -- and `flatpak kill` remains the only close that reaches inside
+## the sandbox no matter how many wrappers stand in front of it.
 func _flatpak_app_id(exec: Array) -> String:
-	if exec.size() < 3:
-		return ""
-	if not str(exec[0]).ends_with("flatpak"):
-		return ""
-	if str(exec[1]) != "run":
-		return ""
-	for i in range(2, exec.size()):
-		var word := str(exec[i])
-		# Skip flatpak's own options; the first bare word is the application id.
-		if word.begins_with("-"):
+	for i in exec.size() - 1:
+		if not str(exec[i]).ends_with("flatpak"):
 			continue
-		return word
+		if str(exec[i + 1]) != "run":
+			continue
+		for j in range(i + 2, exec.size()):
+			var word := str(exec[j])
+			# Skip flatpak's own options; the first bare word is the id.
+			if word.begins_with("-"):
+				continue
+			return word
 	return ""
 
 
