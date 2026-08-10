@@ -1,0 +1,24 @@
+[Unit]
+# The display profile's privileged half. See the script header for why the shell
+# is not allowed to write /var/marwanos/display.profile itself, and for why the
+# profile switch exists at all.
+Description=Apply the couch-settable display profile (/var/marwanos/display.profile)
+Documentation=file:///usr/lib/marwanos/display/profile
+
+[Service]
+Type=exec
+ExecStart=/usr/lib/marwanos/display/profile
+
+# A consumer that died silently would leave the settings row showing a stale
+# profile and every press doing nothing -- which on the screen someone opened
+# BECAUSE the display is misbehaving is the worst possible failure.
+Restart=always
+RestartSec=5
+
+StandardOutput=journal
+StandardError=journal
+SyslogLevelPrefix=true
+SyslogIdentifier=marwanos-display-profile
+
+[Install]
+WantedBy=multi-user.target

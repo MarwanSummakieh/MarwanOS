@@ -38,6 +38,7 @@ var _address_row: SettingsRow = null
 ## Typed as the SUBCLASS, not as SettingsRow: `activated` is declared on
 ## ActionRow, and GDScript resolves signal access against the static type --
 ## a SettingsRow-typed variable would fail to parse on `.activated.connect`.
+var _display_row: ActionRow = null
 var _wifi_row: ActionRow = null
 var _wifi_screen: WifiScreen = null
 var _updates_row: ActionRow = null
@@ -105,7 +106,14 @@ func _ready() -> void:
 
 	_add_row(list, "System", _system_value())
 	_add_row(list, "Engine", _engine_value())
-	_add_row(list, "Display", _display_value())
+	# "Display server", not "Display", and the rename is the price of the row
+	# below. This one reports DisplayServer.get_name() and a window size -- it is
+	# about which display SERVER drew the shell, which is a different question
+	# from the one an owner with a flickering panel is asking. Two rows both
+	# called Display, one answering "X11, 3440 x 1440" and one taking the button
+	# press that changes the picture, is the kind of screen somebody presses the
+	# wrong thing on. The neighbouring Surface row already carries the geometry.
+	_add_row(list, "Display server", _display_value())
 	_add_row(list, "Surface", _surface_value())
 	_add_row(list, "Renderer", RenderingServer.get_video_adapter_name())
 	_controller_row = _add_row(list, "Controller", _controller_value())
@@ -127,6 +135,24 @@ func _ready() -> void:
 	# cannot join a network cannot be fixed from the couch at all. See ADR
 	# 0006's fifth amendment for why that exception was made and where the
 	# line now sits.
+	# THE ROW THAT EXISTS BECAUSE OF A HEADACHE. On 2026-08-10 the owner said
+	# the screen was "so flickery it's giving me a headache", and the bench was
+	# unreachable over SSH -- so the one person who could see the problem was
+	# also the one person with no way to try anything. This row is that way.
+	#
+	# A CYCLES IN PLACE rather than opening a screen, unlike the two rows below
+	# it. Cycling is the whole interaction: there are five configurations, the
+	# useful thing is to step to the next one and look at the panel, and a
+	# sub-screen would put a menu between somebody with a headache and the only
+	# control that matters. It also keeps the ring closed -- press A enough times
+	# and you are back where you started, which is the property that makes this
+	# safe to hand to somebody with no manual.
+	_display_row = ActionRow.new()
+	_display_row.setup("Display", _display_profile_value())
+	_display_row.activated.connect(_on_display_row_pressed)
+	list.add_child(_display_row)
+	_rows.append(_display_row)
+
 	_wifi_row = ActionRow.new()
 	_wifi_row.setup("Wi-Fi", _wifi_value())
 	_wifi_row.activated.connect(_on_wifi_row_pressed)
@@ -162,6 +188,10 @@ func _ready() -> void:
 	# The Wi-Fi row's value tracks the seam too, so joining a network updates
 	# the row behind the screen that joined it.
 	Wifi.state_changed.connect(_on_wifi_state_changed)
+	# The Display row tracks its seam for the same reason the network rows track
+	# theirs: the answer is root's to give, and a row that only updated on its
+	# own press would keep showing an optimistic guess after a refusal.
+	DisplayProfile.state_changed.connect(_on_display_state_changed)
 
 	ShellLog.info("settings screen up with %d rows" % _rows.size())
 
@@ -207,10 +237,12 @@ func _build_hints() -> Control:
 	var hints := HBoxContainer.new()
 	hints.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	hints.add_theme_constant_override("separation", TvTheme.HINT_GAP)
-	# A is here now that one row does something. It is still true of only the
-	# Wi-Fi row -- every other row logs "read-only in Phase 0" -- but a hint row
-	# that omitted A would be telling someone the screen takes no input at all.
-	hints.add_child(TvTheme.hint("A", "Open"))
+	# A is here now that some rows do something. "Select" rather than "Open",
+	# because A no longer means one thing on this screen: Wi-Fi and Updates open
+	# a page, Display steps to the next value in place, and the rest still log
+	# "read-only in Phase 0". A hint that promised "Open" would be wrong on the
+	# one row somebody presses hardest.
+	hints.add_child(TvTheme.hint("A", "Select"))
 	hints.add_child(TvTheme.hint("B", "Back"))
 	return hints
 
@@ -339,6 +371,51 @@ func _wifi_value() -> String:
 			if info.get_slice(" ", 0) == "wifi":
 				return info.substr("wifi".length()).strip_edges()
 			return "Set up a network -- press A"
+
+
+## What display configuration is on screen, and what pressing A will do about it.
+##
+## THE VALUE ALWAYS CARRIES THE RESTART, in both states, and that is deliberate
+## rather than repetitive. A profile changes nothing until gamescope is started
+## again, so somebody who presses A, looks at the panel, sees the same flicker
+## and concludes the setting does not work would be exactly wrong -- and would
+## stop, on the one screen that could have fixed their headache. The word
+## "restart" is on the row before they press anything and after.
+func _display_profile_value() -> String:
+	# Not `name`: this script extends Control, and a local called `name` shadows
+	# Node.name. Same rule the row builders follow with name_text.
+	#
+	# chosen_profile(), not current_profile(): the row must name what the person
+	# picked from the moment they picked it. Drawing what is on disk instead would
+	# have the row jump backwards through profiles while a fast sequence of
+	# presses works its way through root, one poll at a time.
+	var profile_name := DisplayProfile.label_for(DisplayProfile.chosen_profile())
+	if DisplayProfile.state == "refused":
+		# The service did not recognise what it was sent, so the machine is still
+		# running whatever it was running. Said plainly: the row must never name a
+		# profile the session is not using.
+		return "%s -- not changed, press A to try again" % profile_name
+	if DisplayProfile.is_pending():
+		return "%s -- restart to apply" % profile_name
+	return "%s -- A changes it, restart applies" % profile_name
+
+
+## Step to the next profile and say so on the row immediately.
+##
+## Optimistic, and see Display.request_next for why: the consumer polls twice a
+## second, and a button that looks dead for two seconds on the screen somebody
+## opened because their display is misbehaving reads as a second fault. The next
+## poll overwrites this with whatever actually happened.
+func _on_display_row_pressed() -> void:
+	var want := DisplayProfile.request_next()
+	if _display_row != null:
+		_display_row.set_value(_display_profile_value())
+	ShellLog.info("display row: cycled to \"%s\"" % want)
+
+
+func _on_display_state_changed(_state: String, _profile: String) -> void:
+	if _display_row != null:
+		_display_row.set_value(_display_profile_value())
 
 
 ## Opens the Wi-Fi screen as a child of this one. A child rather than a third

@@ -177,6 +177,102 @@ readonly READY_TIMEOUT=20
 # shows a pointer.
 : "${MARWANOS_CURSOR_HIDE_MS:=3000}"
 
+# ---------------------------------------------------------------------------
+# THE DISPLAY PROFILE
+#
+# "the screen is so flickery it's giving me a headache" -- the owner, 2026-08-10,
+# about the only display on a machine whose only user cannot open a terminal, on
+# a bench that was unreachable over SSH so not one theory could be tested live.
+#
+# There were four candidate causes and no way to tell them apart from here:
+#
+#   (a) VRR/adaptive-sync brightness pulsing. A UI that idles and then animates
+#       delivers frames at a wildly variable rate, and on a VRR-capable gaming
+#       ultrawide that walks the panel's refresh up and down -- which many
+#       panels answer with a visible brightness pulse. Classic, and exactly the
+#       kind that gives somebody a headache rather than looking obviously broken.
+#   (b) The panel's preferred mode. Nothing here has ever specified a refresh, so
+#       gamescope takes what the EDID prefers, which on a gaming ultrawide is
+#       likely 100/144/165 Hz -- and high-refresh page flips under composition on
+#       the NVIDIA DRM path is not a well-trodden road.
+#   (c) --force-composition, added the same day to fix a separate ghosting
+#       defect. The flicker predates it and survived it, so it is unlikely -- but
+#       "unlikely" is a thing to test, not a thing to assume.
+#   (d) The shell. Ruled out by reading it: Kiosk.set_overlay is called exactly
+#       twice per app-overlay open/close and is guarded against repeats, and
+#       nothing else writes GAMESCOPE_EXTERNAL_OVERLAY except one proof-of-
+#       plumbing write on the first frame.
+#
+# So the image ships the EXPERIMENT rather than a guess. One word in
+# /var/marwanos/display.profile picks a named gamescope configuration; the
+# settings screen cycles it from the couch; whoever has the headache runs the
+# bisect in minutes instead of waiting for the bench to come back.
+#
+# UNDER /var, NOT /usr, and no default file is baked. In bootc /var is populated
+# once at install and never touched by an upgrade, so a file the build left there
+# would be a first-boot-only default that drifts from the image forever -- the
+# trap 50-marwanos.conf's header spells out. So: the DIRECTORY comes from
+# tmpfiles.d, the file only exists once somebody has chosen something, and
+# "absent" is a first-class answer meaning "use the default".
+#
+# WHAT THE FLAGS ACTUALLY ARE, verified on 2026-08-10 against the gamescope in
+# ghcr.io/marwansummakieh/marwanos:latest rather than against its man page --
+# `podman run --rm --cap-add SYS_NICE <image> gamescope --help`, and each
+# candidate flag additionally fed to the real getopt table to see whether it was
+# rejected. (--cap-add SYS_NICE is needed because gamescope carries
+# cap_sys_nice+ep and otherwise refuses to exec in a container at all, which is
+# the same trap gamescope_has_option's header describes.) Two findings decided
+# the design and neither was what the plan assumed:
+#
+#   * THERE IS NO --output-refresh. The parser rejects it and the string is not
+#     in the binary. The only refresh input this gamescope has is
+#     `-r/--nested-refresh`, documented as "game refresh rate (frames per
+#     second)". It is listed in the general options, NOT under "Nested mode
+#     options" -- and "Embedded mode options" carries --generate-drm-mode, whose
+#     only purpose is synthesising a mode for a requested resolution and refresh
+#     that the connector does not list. So -r is the refresh figure the DRM path
+#     has to be using; there is no other. That is inference from the binary's own
+#     help, not a bench measurement, so it is stated here rather than assumed:
+#     what -r certainly does is pace frame delivery at a constant 60, which is
+#     what kills (a) whether or not it also programs the mode.
+#
+#     A HARD MODE PIN IS A KARG, not a flag, and cannot be a profile: it would be
+#     `video=HDMI-A-1:3440x1440@60` in kargs.d/00-marwanos.toml, the same
+#     mechanism as the `video=eDP-1:d` already there. That is an image rebuild
+#     plus `bootc upgrade` plus a reboot, which is exactly the loop this switch
+#     exists to avoid, so it is documented and not shipped. If -r turns out not
+#     to move the mode, that karg is the next move and the profiles say which.
+#
+#   * ADAPTIVE SYNC CANNOT BE TURNED OFF, because it is never on. `--adaptive-
+#     sync` is an ENABLE flag ("Enable adaptive sync if available"); the parser
+#     rejects --no-adaptive-sync and --disable-adaptive-sync. This session has
+#     never passed it, so gamescope has never set the KMS VRR property. "Disable
+#     adaptive sync" is therefore implemented by continuing not to ask for it,
+#     which is honest, and the profiles say so rather than shipping a flag that
+#     does nothing.
+readonly PROFILE_FILE="/var/marwanos/display.profile"
+
+# steady, and it is a change of default rather than a new option. It is the
+# combination that kills (a) and (b) at once while keeping (c)'s ghosting fix,
+# so it is what the machine should be doing while somebody works out whether it
+# was enough.
+readonly PROFILE_DEFAULT="steady"
+
+# Where a rejected profile lands. native is today's exact behaviour -- the
+# configuration this machine has actually booted, repeatedly -- so it is the one
+# thing here with evidence behind it.
+readonly PROFILE_FALLBACK="native"
+
+# In the order the settings screen cycles them, which walks from the most likely
+# fix through the two discriminators and ends at today's behaviour and the bare
+# baseline. Kept identical to the PROFILES list in /usr/lib/marwanos/display/
+# profile so "the next one" means the same thing on both sides of the seam.
+readonly PROFILE_LIST="steady sixty-raw flat native raw"
+
+# 60 because it is the one refresh every panel ever made supports and the one no
+# NVIDIA flip path can find exotic. This is a headache, not a frame-rate budget.
+readonly PROFILE_REFRESH=60
+
 log()  { printf '<6>%s: %s\n' "$TAG" "$*" >&2; }
 warn() { printf '<4>%s: %s\n' "$TAG" "$*" >&2; }
 err()  { printf '<3>%s: %s\n' "$TAG" "$*" >&2; }
@@ -293,6 +389,48 @@ gamescope_has_option() {
     fi
     printf '%s' "$_help" | grep -q -- "$1"
 }
+
+# Which display profile this session runs, as one word from PROFILE_LIST.
+#
+# EVERY UNUSABLE ANSWER IS THE DEFAULT, and says so. Absent, unreadable, empty,
+# a word this image does not ship, a file somebody edited by hand and left a
+# stray character in -- all of them land on PROFILE_DEFAULT with a line naming
+# what was found. The alternative, refusing to start on a bad profile, would let
+# one mistyped word in a file under /var brick the appliance into a black screen
+# with no console to fix it from, which is the exact failure this whole mechanism
+# is supposed to make impossible.
+#
+# Written to stderr like every other message here, which is also why logging
+# inside this function is safe: the caller reads stdout through a command
+# substitution and the journal gets the rest.
+read_display_profile() {
+    _want=""
+    if [ -r "$PROFILE_FILE" ]; then
+        IFS= read -r _want < "$PROFILE_FILE" 2>/dev/null || _want=""
+    fi
+
+    # Whitespace and carriage returns only. Anything left is matched against the
+    # list below, so this is normalising a trailing newline rather than trying to
+    # make untrusted text safe.
+    _want="$(printf '%s' "$_want" | tr -d '[:space:]')"
+
+    case " $PROFILE_LIST " in
+        *" $_want "*)
+            log "display profile '$_want' (from $PROFILE_FILE)"
+            printf '%s' "$_want"
+            return 0
+            ;;
+    esac
+
+    if [ -z "$_want" ]; then
+        log "no display profile set; using the default '$PROFILE_DEFAULT'"
+    else
+        warn "$PROFILE_FILE names a profile this image does not ship; using '$PROFILE_DEFAULT'"
+        warn "the profiles this image knows are: $PROFILE_LIST"
+    fi
+    printf '%s' "$PROFILE_DEFAULT"
+}
+
 
 # Re-resolved on every restart, not once at startup: D5's ten-second loop is
 # scp the new build, kill the old process, and have the new one come back.
@@ -665,6 +803,65 @@ start_gamescope() {
         warn "applications will open at their own size and nothing will resize them"
     fi
 
+    # THE PROFILE'S OWN FLAGS. Everything above this line is the same under
+    # every profile: the profile is a display configuration, not a different
+    # session, and a switch that also moved the connector list or the resolution
+    # would stop being an answer to "which of these four things is flickering".
+    #
+    # Each profile is chosen to kill a DIFFERENT theory, so that whichever one
+    # the owner stops on names the cause:
+    #
+    #   steady     60 Hz + composited.  Kills (a) and (b) while keeping the
+    #              ghosting fix. THE DEFAULT: the most likely fix, shipped.
+    #   sixty-raw  60 Hz, NOT composited. Differs from steady by exactly one
+    #              flag, so if this one is calm and steady is not, the cause is
+    #              (c) -- --force-composition itself.
+    #   flat       60 Hz + composited + no hardware planes. One step beyond
+    #              steady for the case where the flicker is libliftoff handing
+    #              the display hardware overlay planes it mishandles on this
+    #              driver -- the one lever in the display pipeline none of the
+    #              other four touch. Last resort, and the only reason it exists
+    #              is that the bench is unreachable: without it, an owner for
+    #              whom steady does not work has nothing else to try.
+    #   native     Today's exact behaviour. The escape hatch back, and the
+    #              fallback a rejected profile lands on.
+    #   raw        Preferred refresh, nothing forced. The baseline every other
+    #              profile is a delta from.
+    #
+    # Adaptive sync appears in none of them because it cannot: --adaptive-sync is
+    # an enable-only flag and this session has never passed it, so VRR has been
+    # off at the compositor the whole time. See the PROFILE_FILE block.
+    case "$DISPLAY_PROFILE" in
+        steady|sixty-raw|flat) _profile_refresh=1 ;;
+        *)                     _profile_refresh=0 ;;
+    esac
+    case "$DISPLAY_PROFILE" in
+        steady|flat|native) _profile_composite=1 ;;
+        *)                  _profile_composite=0 ;;
+    esac
+    case "$DISPLAY_PROFILE" in
+        flat) _profile_planes=1 ;;
+        *)    _profile_planes=0 ;;
+    esac
+
+    # -r, and the honest name for it is "the only refresh figure this gamescope
+    # takes". 3.16.23 has no --output-refresh at all -- the parser rejects it --
+    # so this is both the frame-pacing rate and whatever the DRM path uses to
+    # pick a mode. What it certainly does is deliver frames at a constant 60
+    # instead of at whatever rate a UI that idles and then animates happens to
+    # produce, and a constant delivery rate is what theory (a) needs removed.
+    if [ "$_profile_refresh" = 1 ]; then
+        if gamescope_has_option "--nested-refresh"; then
+            set -- "$@" -r "$PROFILE_REFRESH"
+            log "refresh: -r ${PROFILE_REFRESH} (fixed; no adaptive sync is asked for, so VRR stays off)"
+        else
+            warn "gamescope --help ran and does NOT list --nested-refresh;"
+            warn "the '$DISPLAY_PROFILE' profile cannot pin a refresh rate and the panel keeps its preferred mode"
+        fi
+    else
+        log "refresh: not specified -- the panel's preferred mode, whatever that is"
+    fi
+
     # ALWAYS COMPOSITE; NEVER SCAN A CLIENT OUT DIRECTLY. Without this,
     # gamescope hands a fullscreen client's buffer straight to the display when
     # it thinks it can, and on this NVIDIA driver that path is where the
@@ -676,16 +873,42 @@ start_gamescope() {
     # documented way out. The cost is one blit per frame the GPU does not
     # notice; the benefit is that what is on the TV is what some client drew,
     # every frame, always.
-    if gamescope_has_option "--force-composition"; then
-        set -- "$@" --force-composition
-        log "composition: --force-composition is ON"
+    #
+    # Profile-gated now rather than unconditional, because "the ghosting fix is
+    # also the flicker cause" is a live theory and there was no way to test it
+    # without a profile that drops it. sixty-raw and raw are that test.
+    if [ "$_profile_composite" = 1 ]; then
+        if gamescope_has_option "--force-composition"; then
+            set -- "$@" --force-composition
+            log "composition: --force-composition is ON"
+        else
+            warn "gamescope --help ran and does NOT list --force-composition;"
+            warn "direct scanout stays possible, and with it the NVIDIA ghosting the"
+            warn "2026-08-10 videos showed"
+        fi
     else
-        warn "gamescope --help ran and does NOT list --force-composition;"
-        warn "direct scanout stays possible, and with it the NVIDIA ghosting the"
-        warn "2026-08-10 videos showed"
+        log "composition: --force-composition is OFF for the '$DISPLAY_PROFILE' profile"
+        log "if the ghosting from the 2026-08-10 videos comes back, that flag was the fix"
     fi
 
-    log "starting gamescope: $*"
+    # libliftoff, off. Hardware overlay planes are the layer BELOW composition:
+    # --force-composition stops a client's buffer being scanned out directly,
+    # and this stops gamescope's own output being assembled by the display
+    # controller's planes instead of by the GPU. On NVIDIA that assembly is the
+    # least exercised path in the stack, and a plane that is programmed a frame
+    # late is seen as a flash. Only `flat` asks for it: it costs GPU work every
+    # frame and it is worth spending only once the cheaper theories are out.
+    if [ "$_profile_planes" = 1 ]; then
+        if gamescope_has_option "--disable-layers"; then
+            set -- "$@" --disable-layers
+            log "planes: --disable-layers is ON (the GPU assembles every frame, not the display hardware)"
+        else
+            warn "gamescope --help ran and does NOT list --disable-layers;"
+            warn "the '$DISPLAY_PROFILE' profile is then the same as 'steady'"
+        fi
+    fi
+
+    log "starting gamescope with the '$DISPLAY_PROFILE' display profile: $*"
     gamescope "$@" &
     GAMESCOPE_PID=$!
 
@@ -808,6 +1031,25 @@ export ENABLE_GAMESCOPE_WSI=1
 # which is why it is set unconditionally rather than per compositor.
 export GODOT_WAYLAND_DISABLE_LIBDECOR=1
 
+# THE NVIDIA GL KNOBS, AND EXACTLY WHAT THEY DO NOT COVER.
+#
+# Both are in the `__GL_` namespace, which is the proprietary driver's OpenGL
+# configuration and nothing else. They bind GL clients -- Xwayland applications
+# drawing with OpenGL, which on this machine is most games, Kodi, and the shell
+# whenever it is run with --rendering-method gl_compatibility. They do NOT reach
+# gamescope: gamescope composites with Vulkan and owns the KMS flip itself, so
+# neither of these is the thing that decides whether the panel runs at a variable
+# refresh. That decision is gamescope's --adaptive-sync, which is never passed.
+#
+# Set anyway, because on the theory that the flicker is variable presentation
+# they remove one more source of it for free, they are inherited by every client
+# without any of them being asked, and neither can misbehave: VRR_ALLOWED=0 is
+# the conservative direction and SYNC_TO_VBLANK=1 is already the driver default,
+# stated here so it cannot be changed underneath by a driver update or a stray
+# profile in the NVIDIA application registry.
+export __GL_VRR_ALLOWED=0
+export __GL_SYNC_TO_VBLANK=1
+
 # gamescope defaults these under $HOME. Naming them keeps the negotiated mode
 # and the patched EDID somewhere stable across reboots, which matters most for
 # the one display whose handshake is least predictable -- the TV.
@@ -866,7 +1108,45 @@ STEAM_STARTED=""
 STEAM_SUPERVISOR_PID=""
 trap 'stop_gamescope; stop_background_steam' EXIT INT TERM
 
-if start_gamescope; then
+DISPLAY_PROFILE="$(read_display_profile)"
+
+# A PROFILE CAN NEVER BRICK THIS MACHINE, and this is the whole of that promise.
+#
+# The flags a profile adds are the flags most likely to be refused: a gamescope
+# that does not know -r, or a --disable-layers that turns out to be fatal on this
+# driver, exits during startup or comes up wedged, and start_gamescope's ready
+# handshake catches both. Without a retry that would be a black TV, permanently,
+# chosen by a button somebody pressed on the couch to stop their headache -- the
+# single worst outcome this feature could produce.
+#
+# So: one retry, with `native`, which is the configuration this machine has
+# actually booted repeatedly. ONE, not a walk down the list -- a session that
+# tried five configurations would take minutes of black screen to arrive
+# somewhere unpredictable, and the point of ADR 0005 is that this appliance
+# fails legibly rather than survives mutely.
+#
+# THE PROFILE FILE IS NOT REWRITTEN, deliberately, and it could not be: this
+# session runs as `player` and /var/marwanos is root's. So the rejected choice
+# survives the reboot and the settings screen still names it, which is what lets
+# somebody see what they picked and pick again. A session that silently repaired
+# the file would be the compositor lever ADR 0005 removed, wearing a new hat.
+start_gamescope_or_fall_back() {
+    start_gamescope && return 0
+
+    if [ "$DISPLAY_PROFILE" = "$PROFILE_FALLBACK" ]; then
+        err "the '$PROFILE_FALLBACK' display profile could not start gamescope either"
+        err "this is not a profile problem: there is nothing safer left to try"
+        return 1
+    fi
+
+    err "gamescope REJECTED the '$DISPLAY_PROFILE' display profile"
+    err "retrying ONCE with '$PROFILE_FALLBACK', which is this machine's known-good configuration"
+    err "$PROFILE_FILE still says '$DISPLAY_PROFILE' -- change it from Settings > Display"
+    DISPLAY_PROFILE="$PROFILE_FALLBACK"
+    start_gamescope
+}
+
+if start_gamescope_or_fall_back; then
     supervise_client
 else
     compositor_dead_end

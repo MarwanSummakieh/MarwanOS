@@ -36,6 +36,18 @@ report="$(
     echo "MarwanOS flight record  $(date -u +%Y-%m-%dT%H:%M:%SZ)"
     grep MARWANOS_VERSION /usr/share/marwanos/build-info 2>/dev/null
     echo
+    # THE DISPLAY PROFILE, because "what was it set to" is the first question
+    # anyone will ask about a machine whose owner has been cycling profiles to
+    # chase a flicker -- and the file lives under /var on a box with no
+    # terminal, so a diagnostics file carried out on a USB stick is the only
+    # way to read it. Both halves are printed: what was REQUESTED (the file)
+    # and what the session actually STARTED with, which differ exactly when a
+    # profile was rejected and the session fell back to native.
+    echo "--- display profile ---"
+    echo "requested: $(cat /var/marwanos/display.profile 2>/dev/null || echo '(unset -- the image default)')"
+    journalctl -b -t marwanos-session --no-pager 2>/dev/null \
+        | grep -iE 'display profile|starting gamescope with' | tail -4
+    echo
     echo "--- sshd unit, this boot ---"
     systemctl status sshd --no-pager 2>&1 | head -12
     systemctl is-enabled sshd 2>&1 | head -1

@@ -1,0 +1,208 @@
+#!/usr/bin/env bash
+#
+# The display profile's privileged half: the one process allowed to write
+# /var/marwanos/display.profile.
+#
+# WHY THIS EXISTS AT ALL. On 2026-08-10 the owner said the screen was "so
+# flickery it's giving me a headache" -- a health complaint, on the only display
+# of an appliance whose owner cannot open a terminal, on a bench that was
+# unreachable over SSH so no hypothesis could be tested live. There were four
+# plausible causes (VRR brightness pulsing, a high-refresh NVIDIA page-flip
+# problem, --force-composition itself misbehaving, and the shell) and no way to
+# tell them apart from here. So the machine ships the experiment instead of the
+# answer: a handful of named display configurations, one file naming which is
+# active, and a button on the couch that cycles them. Whoever has the headache
+# runs the bisect, in minutes, without a keyboard.
+#
+# THE SHELL DOES NOT WRITE /var. Same seam as wifi, update and appctl: the shell
+# (running as `player`) drops a one-line request into a player-owned directory
+# under /run, and this service -- root -- is what actually touches machine state.
+# The shell has no business under /var and no permission there, and that is the
+# point rather than an inconvenience: /var/marwanos/display.profile decides
+# whether the machine can put a picture on the screen at all, so the process
+# that writes it is the one with a hand-written list of what it is allowed to
+# say.
+#
+#   the shell writes  /run/marwanos/display/request   (0700 player-owned dir)
+#   this writes       /var/marwanos/display.profile   (one word, root-owned)
+#   this writes       /run/marwanos/display.state     <state>TAB<profile>
+#
+# WHY A SERVICE OF ITS OWN rather than a fifth verb on marwanos-update, which is
+# already the machine-lifecycle seam and already owns `restart`. Because that
+# seam's requests carry NO ARGUMENTS -- its own header calls that "the narrowest
+# a reverse channel gets" -- and a profile name is an argument. Bolting one onto
+# it would trade a documented property of the update seam for saving a unit
+# file. marwanos-appctl is the seam whose requests DO carry an argument, but it
+# is the flatpak install/remove seam and a display mode is not an application.
+# So: a fourth consumer, the same shape as the other three, with the same
+# rename-then-read discipline and its own allow-list.
+#
+# NOTHING HERE RESTARTS THE SESSION. A profile change only takes effect when
+# gamescope is started again, and doing that on the person's behalf would take
+# the screen away from somebody who is probably mid-something. The shell's row
+# says "restart to apply" and Power -> Restart is two rows away. The person
+# decides when.
+set -uo pipefail
+
+TAG=marwanos-display-profile
+RUN_DIR=/run/marwanos
+REQ_DIR="$RUN_DIR/display"
+REQ="$REQ_DIR/request"
+CONSUMED="$RUN_DIR/display-request.consumed"
+STATE="$RUN_DIR/display.state"
+
+VAR_DIR=/var/marwanos
+PROFILE="$VAR_DIR/display.profile"
+
+# THE ALLOW-LIST, and it is the whole of what this service trusts. The shell is
+# not an authority on what gamescope can be asked to do; this list is, and it is
+# the same list marwanos-session switches on. A request for anything else is
+# refused and said out loud rather than written and discovered at the next boot
+# as a black screen.
+#
+# Kept in the session's cycle order so "the next one" means the same thing on
+# both sides of the seam. See marwanos-session's own profile block for what each
+# one actually passes to gamescope and which theory of the flicker it kills.
+PROFILES=(steady sixty-raw flat native raw)
+
+# Matches marwanos-session's PROFILE_DEFAULT. Duplicated rather than shared
+# because the two halves must survive each other: a session that cannot read
+# this file still has to start, and this service still has to answer "what is it
+# set to" on a machine where the session has never run.
+DEFAULT=steady
+
+POLL=0.5
+
+info() { printf '<6>%s: %s\n' "$TAG" "$*" >&2; }
+warn() { printf '<4>%s: %s\n' "$TAG" "$*" >&2; }
+err()  { printf '<3>%s: %s\n' "$TAG" "$*" >&2; }
+
+install -d -m 0755 "$RUN_DIR" || { err "cannot create $RUN_DIR"; exit 1; }
+install -d -m 0700 -o player -g player "$REQ_DIR" \
+    || { err "cannot create $REQ_DIR -- the shell could never ask for anything"; exit 1; }
+# /var/marwanos is a tmpfiles.d line and exists by the time anything reaches
+# here; asserted anyway so a machine whose tmpfiles run was skipped still gets a
+# writable profile rather than a service that fails on its first request.
+install -d -m 0755 "$VAR_DIR" || { err "cannot create $VAR_DIR"; exit 1; }
+
+
+## Is this one of the words this machine knows?
+known_profile() {
+    local candidate="$1" name
+    for name in "${PROFILES[@]}"; do
+        [ "$name" = "$candidate" ] && return 0
+    done
+    return 1
+}
+
+
+## What is on disk right now, or the empty string if the file is absent,
+## unreadable or says something this image does not recognise.
+##
+## An unrecognised word reads as absent DELIBERATELY. marwanos-session falls
+## back to the default when it cannot make sense of the file, so reporting the
+## garbage verbatim here would have the settings row name a profile the session
+## is not using -- the one lie this screen must not tell, because the whole
+## point of it is telling somebody which configuration they are looking at.
+current_profile() {
+    local line=""
+    [ -r "$PROFILE" ] || { printf ''; return; }
+    IFS= read -r line < "$PROFILE" 2>/dev/null || true
+    line="${line//[[:space:]]/}"
+    known_profile "$line" && printf '%s' "$line"
+}
+
+
+## `<state>TAB<profile>`. States: current (this is what is on disk and what the
+## running session started with), pending (written, and it does not mean
+## anything until gamescope is started again), refused (the request named
+## something this image does not ship).
+state() {
+    { printf '%s\t%s\n' "$1" "${2:-}" > "$STATE.tmp" && mv -f "$STATE.tmp" "$STATE"; } \
+        || err "cannot write $STATE"
+}
+
+
+## Write the word, atomically, and only after it has been checked.
+##
+## Temp-then-rename because /var/marwanos/display.profile is read by
+## marwanos-session at the one moment nothing may go wrong -- the start of a
+## session on a machine with no console. A half-written file there is a session
+## that logs an unusable profile and falls back, which is survivable, but a
+## rename is free and makes it impossible.
+apply_profile() {
+    local want="$1"
+
+    if ! known_profile "$want"; then
+        warn "refusing a request for an unknown display profile"
+        # The word itself is deliberately not echoed into the journal or the
+        # state file. It came from a request file in a player-owned directory,
+        # and this is the one place on the boundary where unvalidated text could
+        # be handed onwards; the shell only ever sends words it got from the
+        # same list, so anything else is a bug or a probe and neither needs
+        # quoting back.
+        state refused "$(current_profile)"
+        return
+    fi
+
+    if [ "$want" = "$(current_profile)" ]; then
+        info "display profile is already '$want'; nothing to write"
+        state current "$want"
+        return
+    fi
+
+    if ! printf '%s\n' "$want" > "$PROFILE.tmp"; then
+        err "cannot write $PROFILE.tmp"
+        state current "$(current_profile)"
+        return
+    fi
+    chmod 0644 "$PROFILE.tmp" 2>/dev/null || true
+    if ! mv -f "$PROFILE.tmp" "$PROFILE"; then
+        err "cannot place $PROFILE"
+        rm -f "$PROFILE.tmp"
+        state current "$(current_profile)"
+        return
+    fi
+
+    info "display profile set to '$want' -- it takes effect on the next restart"
+    state pending "$want"
+}
+
+
+# The state the shell reads before anybody has pressed anything. An absent or
+# unreadable file is reported as the DEFAULT rather than as "unknown", because
+# that is what marwanos-session will actually use -- the settings row's job is
+# to name the configuration on screen, and on a fresh machine that is the
+# default even though nothing has been written yet.
+boot_profile="$(current_profile)"
+if [ -n "$boot_profile" ]; then
+    info "display profile on disk: $boot_profile"
+    state current "$boot_profile"
+else
+    info "no usable $PROFILE; the session uses the default profile '$DEFAULT'"
+    state current "$DEFAULT"
+fi
+
+while :; do
+    # Same rename-then-read as the other three seams: REQ_DIR is player-owned,
+    # so the file could be swapped for a symlink or a FIFO between any test and
+    # any read. rename(2) follows neither and opens nothing.
+    if mv -f "$REQ" "$CONSUMED" 2>/dev/null; then
+        want=""
+        if [ -L "$CONSUMED" ] || [ ! -f "$CONSUMED" ]; then
+            warn "discarding a request that was not a regular file"
+        else
+            IFS= read -r want < "$CONSUMED" 2>/dev/null || true
+        fi
+        rm -f "$CONSUMED"
+
+        # Whitespace only, and only whitespace: a profile name is one word from
+        # a fixed list, so anything the trim does not remove is checked against
+        # that list a line later and refused. This is not sanitising untrusted
+        # input into something usable, it is normalising a trailing newline.
+        want="${want//[[:space:]]/}"
+        [ -n "$want" ] && apply_profile "$want"
+    fi
+
+    sleep "$POLL"
+done
