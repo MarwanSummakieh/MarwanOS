@@ -6,7 +6,8 @@
 #   wsl -d FedoraLinux-43 -u root -e bash scripts/xvfb-shell-verify.sh Up Return Return
 #
 # Arguments are xdotool key names sent to the shell window in order (arrows for
-# focus, Return for A / ui_accept, Escape for B / ui_cancel). A purely numeric
+# focus, Return for A / ui_accept, Escape for B / ui_cancel, Menu for the pad's
+# OPTIONS button / ui_shell_options). A purely numeric
 # argument is not a key but an extra sleep of that many seconds, for screens
 # that need time to settle:
 #
@@ -36,6 +37,16 @@
 #                is that copy, rename and delete can be exercised against it.
 #                Without it the Home place is the container's HOME -- an
 #                empty tmpfs, which only ever proves the empty state.
+#   MEDIA_DIR    fake drives, bind-mounted straight over /run/media (which is
+#                a tmpfs in the container, so the real path is writable and
+#                needs no override in the shell). Same two-level shape as the
+#                real thing -- <user>/<drive>, e.g. player/USB_DRIVE --
+#                because that is what the Places view enumerates. Nothing can
+#                be plugged into a container, so without this the drive rows
+#                have never rendered at all.
+#                Read-write, so a directory created or deleted DURING a run
+#                exercises the live mount poll: mkdir one between two numeric
+#                sleep arguments and assert on "files: drive appeared at".
 #   KEY_DELAY    seconds slept after every key (default 1).
 #   SETTLE       seconds slept once the window exists, before driving (default 3).
 #   SHOTS_DIR    if set, an ImageMagick `import` of the Xvfb root is written
@@ -123,6 +134,17 @@ if [[ -n "${FILES_DIR:-}" ]]; then
     FILES_ARGS=(-e MARWANOS_SHELL_FILES_HOME=/files -v "${FILES_DIR}:/files:rw")
 fi
 
+MEDIA_ARGS=()
+if [[ -n "${MEDIA_DIR:-}" ]]; then
+    # Bind-mounted at the REAL path rather than at a fixture path behind an
+    # environment override, because /run is a tmpfs in this container and the
+    # real path is therefore writable -- so the drive rows are exercised
+    # through exactly the constant the appliance uses. NOT /media: in an ostree
+    # image that is a symlink to run/media, and crun refuses to resolve a bind
+    # mount destination through one.
+    MEDIA_ARGS=(-v "${MEDIA_DIR}:/run/media:rw")
+fi
+
 say "Starting the shell container"
 podman rm -f "$CTR" >/dev/null 2>&1 || true
 podman run -d --name "$CTR" \
@@ -133,6 +155,7 @@ podman run -d --name "$CTR" \
     -e MARWANOS_SHELL_WINDOWED=1 \
     "${STATUS_ARGS[@]}" \
     "${FILES_ARGS[@]}" \
+    "${MEDIA_ARGS[@]}" \
     --tmpfs /godothome:rw,mode=1777 \
     -v "${BIN_OUT}:/usr/lib/marwanos/shell/marwanos-shell:ro" \
     --entrypoint /usr/lib/marwanos/shell/marwanos-shell \

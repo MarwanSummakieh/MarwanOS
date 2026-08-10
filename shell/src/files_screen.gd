@@ -30,6 +30,18 @@ extends Control
 ## EVERY OPERATION'S OUTCOME LANDS ON THE STATUS LINE AND IN ShellLog. This
 ## machine's user cannot see stderr, and a copy that silently did nothing is
 ## indistinguishable from a copy that worked until the file is needed.
+##
+## THE PLACES LIST IS LIVE, and that is the fix for the one report this screen
+## has had from the couch: a stick was plugged in and "the files app did not
+## recognize it at all". Two things were wrong and both are addressed here and
+## in the OS. The OS half is that nothing mounted the stick -- an appliance with
+## no desktop session has no automounter, so /run/media never gained a directory
+## for this screen to find (see /usr/lib/marwanos/usbmount). The SHELL half is
+## this: the places list was built once, in _ready, so even a mount that did
+## appear was invisible until the screen was closed and reopened. A stick is
+## plugged in WHILE someone is looking at the screen -- that is the whole
+## gesture -- so the mount set is polled, and a drive arriving or leaving
+## redraws Places under the cursor. See _start_mount_watch.
 
 signal closed()
 
@@ -45,11 +57,25 @@ const Keyboard = preload("res://src/keyboard.gd")
 ## manager whose listing code has never run.
 const FILES_HOME_ENV := "MARWANOS_SHELL_FILES_HOME"
 
-## Where removable media lands on the appliance. udisks2 mounts under
-## /run/media/<user>/<label>; the user directory is enumerated rather than
-## guessed from $USER because the shell does not get to assume whose session
-## mounted the stick.
+## Where removable media lands on the appliance. marwanos-usbmount mounts under
+## /run/media/<user>/<label>, which is udisks2's own convention and therefore
+## the one a desktop would use on the same stick; the user directory is
+## enumerated rather than guessed from $USER because the shell does not get to
+## assume whose session mounted the stick.
+##
+## NO ENVIRONMENT OVERRIDE, unlike FILES_HOME above, and that is deliberate
+## rather than an omission: /run is a tmpfs in the Xvfb harness's container, so
+## a directory of fake drives can simply be bind-mounted at the REAL path (see
+## MEDIA_DIR in scripts/xvfb-shell-verify.sh). An override would be a second
+## code path that only the harness ever took, to reach a place the harness can
+## already reach.
 const MEDIA_ROOT := "/run/media"
+
+## How often the mount set is re-read while this screen is up. A directory
+## listing of /run/media/<user> is two getdents on a tmpfs -- cheap enough that
+## the interval is chosen by how long a person will hold a stick in a port
+## wondering whether it worked, not by cost. Two seconds is under that.
+const MOUNT_POLL_SECONDS := 2.0
 
 ## Empty string means the Places view; anything else is the directory on
 ## screen. The pair below is what B consults: at _place_root, back means
@@ -75,8 +101,8 @@ var _hints: HBoxContainer = null
 var _menu: FileMenu = null
 var _keyboard: Keyboard = null
 ## What the open menu (and then the keyboard, for Rename) is about:
-## {"path", "name", "is_dir"}. Captured when Y is pressed, because by the time
-## a choice arrives the menu's row owns focus and the list cannot be asked.
+## {"path", "name", "is_dir"}. Captured when OPTIONS is pressed, because by the
+## time a choice arrives the menu's row owns focus and the list cannot be asked.
 var _menu_target: Dictionary = {}
 ## Where focus goes back to when the menu or keyboard closes, by entry name --
 ## by name rather than by node, because operations rebuild the list.
@@ -86,6 +112,16 @@ var _return_focus_name: String = ""
 ## rather than a return value because the copy is recursive and threading a
 ## count through every level buys nothing over resetting it at the top.
 var _skipped_links: int = 0
+
+## The mount set as of the last poll, so the redraw happens on CHANGE rather
+## than every two seconds -- a Places view that rebuilt itself on a timer would
+## drop the focus ring under the person's thumb for no reason at all.
+var _known_mounts: Array = []
+
+## What the keyboard is currently being used for: "rename" or "newfolder".
+## Both open the same Keyboard on the same slot, and the submit handler has to
+## know which question was asked.
+var _keyboard_purpose: String = ""
 
 
 func _ready() -> void:
@@ -175,8 +211,92 @@ func _ready() -> void:
 	column.add_child(_hints)
 
 	_show_places()
+	_start_mount_watch()
+	Media.state_changed.connect(_on_media_state_changed)
 
 	ShellLog.info("files screen up at places with %d place(s)" % _rows.size())
+
+
+# ---------------------------------------------------------------------------
+# Drives coming and going
+# ---------------------------------------------------------------------------
+
+## Watch /run/media for a stick arriving or leaving, for as long as this screen
+## is up. See the class header for why a screen that only listed drives once
+## was the shell's half of "it did not recognize it at all".
+func _start_mount_watch() -> void:
+	_known_mounts = _mounts()
+	var timer := Timer.new()
+	timer.wait_time = MOUNT_POLL_SECONDS
+	timer.autostart = true
+	timer.timeout.connect(_poll_mounts)
+	add_child(timer)
+
+
+func _poll_mounts() -> void:
+	# Not while a menu or the keyboard is up. Both are about a named row, and
+	# rebuilding the list underneath them would leave the choice that comes back
+	# pointing at a node that no longer exists.
+	if _menu != null or _keyboard != null:
+		return
+
+	var now := _mounts()
+	if now == _known_mounts:
+		return
+
+	var arrived: Array = []
+	for path in now:
+		if not _known_mounts.has(path):
+			arrived.append(path)
+	var left: Array = []
+	for path in _known_mounts:
+		if not now.has(path):
+			left.append(path)
+	_known_mounts = now
+
+	for path in arrived:
+		ShellLog.info("files: drive appeared at %s" % path)
+	for path in left:
+		ShellLog.info("files: drive went away from %s" % path)
+
+	# THE DRIVE UNDER THE CURSOR WAS PULLED. Everything below _place_root is now
+	# a path to nowhere, and _enter_directory's failure branch would leave the
+	# screen showing a listing of a filesystem that is gone. Places is the only
+	# view that is still true.
+	if not _place_root.is_empty() and left.has(_place_root):
+		_say("%s was removed" % _place_root.get_file(), true)
+		_show_places()
+		return
+
+	# Only Places renders the drive list, so only Places has to be redrawn. A
+	# stick arriving while someone is three folders deep in their home directory
+	# is news that can wait until they walk back out.
+	if not _current_path.is_empty():
+		return
+
+	# Keep the cursor where it was by path -- _show_places' own focus_path
+	# argument -- so a drive appearing does not move the selection off Home.
+	var focused := _focused_entry()
+	_show_places(str(focused.get("path", "")))
+	if not arrived.is_empty():
+		var names := PackedStringArray()
+		for path in arrived:
+			names.append(path.get_file())
+		_say("%s is ready" % ", ".join(names))
+
+
+## The privileged half finished (or refused) an eject. The drive is already
+## gone from the poll by then in the happy case -- this is what puts the REASON
+## on screen when it did not go.
+func _on_media_state_changed(state: String, mount_path: String, said: String) -> void:
+	match state:
+		"done":
+			_say("%s can be unplugged" % mount_path.get_file())
+		"failed":
+			_say("Could not eject %s%s"
+				% [mount_path.get_file(), (" -- %s" % said) if not said.is_empty() else ""], true)
+		"refused":
+			_say("This machine will not eject that", true)
 
 
 # ---------------------------------------------------------------------------
@@ -196,14 +316,20 @@ func _show_places(focus_path: String = "") -> void:
 	# The folder glyph rather than the house: this row IS a folder -- the one
 	# the person owns -- and the icon language should say what a thing is, not
 	# where the metaphor came from.
+	var home := _home_path()
 	entries.append({
-		"name": "Home", "value": "", "icon": "folder",
-		"meta": {"kind": "place", "path": _home_path(), "name": "Home"},
+		"name": "Home", "value": _free_space_text(home), "icon": "folder",
+		"meta": {"kind": "place", "path": home, "name": "Home", "removable": false},
 	})
 	for mount_path in _mounts():
+		# FREE SPACE ON THE ROW, because "will this fit" is the question a
+		# person asks of a stick before they copy anything to it, and the only
+		# alternative on this machine is copying and finding out. It is the one
+		# number a place row can carry that a directory listing cannot.
 		entries.append({
-			"name": mount_path.get_file(), "value": "", "icon": "usb",
-			"meta": {"kind": "place", "path": mount_path, "name": mount_path.get_file()},
+			"name": mount_path.get_file(), "value": _free_space_text(mount_path), "icon": "usb",
+			"meta": {"kind": "place", "path": mount_path, "name": mount_path.get_file(),
+				"removable": true},
 		})
 
 	_rebuild_rows(entries)
@@ -326,6 +452,12 @@ func _on_row_focused(row: Control) -> void:
 	if _scroll == null:
 		return
 	_scroll.ensure_control_visible.call_deferred(row)
+	# At Places the OPTIONS hint belongs to the ROW -- a drive has an eject and
+	# Home has nothing -- so moving the cursor has to redraw the legend. Inside
+	# a place every row has the same menu and the hints are already right, which
+	# is why this is not simply called on every focus change.
+	if _current_path.is_empty():
+		_refresh_hints()
 
 
 func _refresh_hints() -> void:
@@ -336,12 +468,23 @@ func _refresh_hints() -> void:
 		child.queue_free()
 
 	_hints.add_child(TvTheme.hint("A", "Open"))
-	# Y only where it does something: places have no options -- you cannot cut
-	# Home -- and advertising a button whose press is correctly ignored is the
-	# exact shape of "broken input" on a machine with no other feedback.
-	if not _current_path.is_empty():
-		_hints.add_child(TvTheme.hint("Y", "Options"))
+	# OPTIONS only where it does something, and advertising a button whose press
+	# is correctly ignored is the exact shape of "broken input" on a machine
+	# with no other feedback. Inside a place that is always: there is a file or
+	# a folder to act on, or at minimum a folder to make a new one in. At PLACES
+	# it depends on the row -- a drive can be ejected, Home cannot be anything.
+	if not _current_path.is_empty() or _places_row_has_options():
+		_hints.add_child(TvTheme.hint("OPTIONS", "Options"))
 	_hints.add_child(TvTheme.hint("B", "Back"))
+
+
+## Does the focused Places row have a menu behind it? Only a removable drive
+## does -- Eject is the whole of it. Asked of the focus owner rather than of
+## the list, so the hint tracks the cursor moving between Home and a stick.
+func _places_row_has_options() -> bool:
+	if not _current_path.is_empty():
+		return false
+	return bool(_focused_entry().get("removable", false))
 
 
 # ---------------------------------------------------------------------------
@@ -420,6 +563,26 @@ func _file_size_text(path: String) -> String:
 	return _human_size(file.get_length())
 
 
+## "12.4 GB free", or empty when the volume will not answer.
+##
+## DirAccess.get_space_left reports the free space of the filesystem the open
+## directory lives on -- a statvfs, not a walk -- so it costs the same on a
+## 2 GB stick and a 4 TB disk. A directory that will not open (a mount that
+## vanished between the listing and this call, which the poll makes a real
+## race) renders no number rather than a zero, because "0 B free" is a claim
+## and "nothing" is an absence.
+func _free_space_text(path: String) -> String:
+	var dir := DirAccess.open(path)
+	if dir == null:
+		return ""
+	var free := dir.get_space_left()
+	# Godot returns 0 for a filesystem it cannot stat as well as for a genuinely
+	# full one. Full is real and worth saying; the ambiguity is accepted here
+	# because the honest failure -- a drive that is actually out of room --
+	# is the one a person needs to be told about.
+	return "%s free" % _human_size(free)
+
+
 func _human_size(bytes: int) -> String:
 	if bytes < 1024:
 		return "%d B" % bytes
@@ -483,9 +646,9 @@ func _on_row_pressed(row: Control) -> void:
 
 
 func _unhandled_input(event: InputEvent) -> void:
-	# Y opens the focused row's options -- checked before B for shell_root's
-	# reason: it is the door to the verbs, and B is the door out.
-	if InputMap.has_action("ui_shell_y") and event.is_action_pressed("ui_shell_y"):
+	# OPTIONS opens the focused row's options -- checked before B for
+	# shell_root's reason: it is the door to the verbs, and B is the door out.
+	if InputMap.has_action("ui_shell_options") and event.is_action_pressed("ui_shell_options"):
 		get_viewport().set_input_as_handled()
 		_open_menu()
 		return
@@ -518,7 +681,7 @@ func _open_menu() -> void:
 	if _menu != null or _keyboard != null:
 		return
 	if _current_path.is_empty():
-		ShellLog.info("files: Y at places; places have no options")
+		_open_place_menu()
 		return
 
 	var target := _focused_entry()
@@ -538,12 +701,13 @@ func _open_menu() -> void:
 	if not target.is_empty():
 		items.append({"id": "rename", "label": "Rename", "icon": "rename"})
 		items.append({"id": "delete", "label": "Delete", "icon": "trash"})
-
-	if items.is_empty():
-		# Empty folder, empty clipboard: nothing to offer, said in the journal
-		# rather than with a menu of zero rows.
-		ShellLog.info("files: Y in an empty folder with nothing on the clipboard")
-		return
+	# ALWAYS OFFERED, and it is the one item that is about the FOLDER rather
+	# than about a row in it -- which is also why it is last, under the verbs
+	# that act on the thing the cursor is on. It is what makes an empty folder
+	# have a menu at all: before it, OPTIONS in a folder with nothing in it and
+	# nothing on the clipboard opened nothing, and "a file manager you cannot
+	# make a folder with" is most of the distance between this screen and one.
+	items.append({"id": "newfolder", "label": "New folder", "icon": "folder"})
 
 	_menu_target = target
 	_return_focus_name = str(target.get("name", ""))
@@ -560,6 +724,34 @@ func _open_menu() -> void:
 	_menu.chosen.connect(_on_menu_chosen)
 	_menu.closed.connect(_on_menu_closed, CONNECT_ONE_SHOT)
 	# Deaf while the menu is up, so one B press cannot close both surfaces.
+	set_process_unhandled_input(false)
+	add_child(_menu)
+
+
+## OPTIONS at Places, which used to be a no-op with a journal line. A drive has
+## exactly one verb and it is the one that matters most: taking it out without
+## losing what was just written to it. Home has none -- you cannot eject the
+## disk the shell is running from -- so the menu simply does not open there,
+## and the hint row already said it would not (see _places_row_has_options).
+func _open_place_menu() -> void:
+	var target := _focused_entry()
+	if not bool(target.get("removable", false)):
+		ShellLog.info("files: OPTIONS on a place with nothing to offer")
+		return
+	if Media.is_busy():
+		ShellLog.info("files: OPTIONS while an eject is already in flight; ignoring")
+		return
+
+	_menu_target = target
+	_return_focus_name = str(target.get("name", ""))
+	_menu = FileMenu.new()
+	_menu.title_text = str(target.get("name", ""))
+	_menu.items = [{"id": "eject", "label": "Safely remove", "icon": "eject"}]
+	# The cost, named the way card_menu names a re-download: what the person
+	# gets for the extra press is the promise that the write finished.
+	_menu.note_text = "Everything is written to the drive first. Wait for the message before unplugging it."
+	_menu.chosen.connect(_on_menu_chosen)
+	_menu.closed.connect(_on_menu_closed, CONNECT_ONE_SHOT)
 	set_process_unhandled_input(false)
 	add_child(_menu)
 
@@ -584,6 +776,10 @@ func _on_menu_chosen(id: String) -> void:
 			_open_rename()
 		"delete":
 			_delete_target()
+		"newfolder":
+			_open_new_folder()
+		"eject":
+			_eject_target()
 		_:
 			ShellLog.error("file menu item \"%s\" has no action" % id)
 
@@ -838,26 +1034,43 @@ func _remove_recursive(path: String) -> int:
 
 
 # ---------------------------------------------------------------------------
-# Rename
+# Naming things: rename, and new folder
 # ---------------------------------------------------------------------------
 
 ## The wifi screen's keyboard pattern, with the entry prefilled: renaming is
 ## an edit, and starting from an empty field would make every rename a full
 ## retype of the part being kept.
 func _open_rename() -> void:
-	if _keyboard != null:
-		return
 	var target_name := str(_menu_target.get("name", ""))
 	if target_name.is_empty():
 		return
+	_open_keyboard("rename", "Rename %s" % target_name, target_name)
+
+
+## The same keyboard, asked a different question. EMPTY rather than prefilled
+## with "New folder": a suggested name is only a saving if it is the one you
+## wanted, and clearing a 5x10 grid one backspace at a time from a sofa costs
+## more than typing the name did.
+func _open_new_folder() -> void:
+	_open_keyboard("newfolder", "New folder in %s" % _current_path.get_file(), "")
+
+
+## One keyboard, one slot, one purpose at a time. `_keyboard_purpose` is what
+## the submit handler branches on; without it the two questions would need two
+## signal connections onto the same node and the second would have to remember
+## to disconnect the first.
+func _open_keyboard(purpose: String, title: String, initial: String) -> void:
+	if _keyboard != null:
+		return
+	_keyboard_purpose = purpose
 	_keyboard = Keyboard.new()
-	_keyboard.title_text = "Rename %s" % target_name
+	_keyboard.title_text = title
 	# A file name is not a secret; masking it would hide the one thing the
 	# screen exists to show.
 	_keyboard.masked = false
-	_keyboard.initial_text = target_name
-	_keyboard.submitted.connect(_on_rename_submitted)
-	_keyboard.cancelled.connect(_on_rename_cancelled)
+	_keyboard.initial_text = initial
+	_keyboard.submitted.connect(_on_name_submitted)
+	_keyboard.cancelled.connect(_on_name_cancelled)
 	# A child of this screen, wifi_screen's reason: closing the files screen
 	# can then never leave a keyboard orphaned over the rail.
 	add_child(_keyboard)
@@ -869,25 +1082,85 @@ func _close_keyboard() -> void:
 		return
 	var keyboard := _keyboard
 	_keyboard = null
+	_keyboard_purpose = ""
 	remove_child(keyboard)
 	keyboard.queue_free()
 	set_process_unhandled_input(true)
 	_focus_row_named(_return_focus_name)
 
 
-func _on_rename_submitted(text: String) -> void:
+func _on_name_submitted(text: String) -> void:
+	var purpose := _keyboard_purpose
+	# Read BEFORE the close, which clears it.
 	_close_keyboard()
+	match purpose:
+		"rename":
+			_rename_to(text)
+		"newfolder":
+			_make_folder(text)
+		_:
+			ShellLog.error("files: a name arrived with no question attached")
+
+
+func _on_name_cancelled() -> void:
+	_close_keyboard()
+
+
+## The rules every new name goes through, both questions sharing one gate:
+## empty is not a name, and a slash is a path. Returns the cleaned name, or
+## empty when it said why on the status line and there is nothing to do.
+func _clean_name(text: String) -> String:
+	var name := text.strip_edges()
+	if name.is_empty():
+		_say("A name cannot be empty", true)
+		return ""
+	if name.contains("/"):
+		# A slash is a move wearing a costume, and the costume ends in a file
+		# created somewhere the screen is not showing.
+		_say("A name cannot contain /", true)
+		return ""
+	if name == "." or name == "..":
+		# Not a name at all: mkdir refuses both, and rename would either refuse
+		# or do something nobody meant.
+		_say("That is not a name", true)
+		return ""
+	return name
+
+
+## mkdir, one level, in the folder on screen. Never recursive: a name with a
+## slash in it is already refused above, so there is no second component to
+## create, and make_dir_recursive_absolute would silently succeed on a path
+## that already existed -- which is the one answer this must not give.
+func _make_folder(text: String) -> void:
+	var name := _clean_name(text)
+	if name.is_empty():
+		return
+	if _current_path.is_empty():
+		return
+
+	var path := _current_path.path_join(name)
+	if _exists(path):
+		_say("Something called %s is already here" % name, true)
+		return
+
+	var err := DirAccess.make_dir_absolute(path)
+	if err != OK:
+		_say("Could not make %s (%s)" % [name, error_string(err)], true)
+		ShellLog.error("files: mkdir of %s failed (%s)" % [path, error_string(err)])
+		return
+
+	_say("Made %s" % name)
+	ShellLog.info("files: created folder %s" % path)
+	_return_focus_name = name
+	_refresh_listing(name)
+
+
+func _rename_to(text: String) -> void:
 	var old_path := str(_menu_target.get("path", ""))
 	var old_name := str(_menu_target.get("name", ""))
-	var new_name := text.strip_edges()
+	var new_name := _clean_name(text)
 
 	if new_name.is_empty():
-		_say("A name cannot be empty", true)
-		return
-	if new_name.contains("/"):
-		# A slash in a rename is a move wearing a costume, and the costume
-		# ends in a file created somewhere the screen is not showing.
-		_say("A name cannot contain /", true)
 		return
 	if new_name == old_name:
 		return
@@ -914,10 +1187,6 @@ func _on_rename_submitted(text: String) -> void:
 	ShellLog.info("files: renamed %s to %s" % [old_path, new_path])
 	_return_focus_name = new_name
 	_refresh_listing(new_name)
-
-
-func _on_rename_cancelled() -> void:
-	_close_keyboard()
 
 
 # ---------------------------------------------------------------------------
@@ -950,6 +1219,36 @@ func _delete_target() -> void:
 	_say("Moved %s to the wastebasket" % target_name)
 	ShellLog.info("files: trashed %s" % path)
 	_refresh_listing()
+
+
+# ---------------------------------------------------------------------------
+# Eject
+# ---------------------------------------------------------------------------
+
+## Ask for the drive to be unmounted. THE SHELL DOES NOT UNMOUNT: umount(2)
+## needs root, the shell runs as player, and every other privileged thing this
+## appliance does goes through a request file that a root service consumes --
+## see media.gd and /usr/lib/marwanos/usbmount. So this writes and waits.
+##
+## The clipboard is disarmed first if it named anything on the drive. A paste
+## after the drive is gone would fail with a message about a missing file,
+## which describes the symptom rather than the thing the person just did.
+func _eject_target() -> void:
+	var path := str(_menu_target.get("path", ""))
+	var target_name := str(_menu_target.get("name", ""))
+	if path.is_empty():
+		return
+
+	var armed := str(_clipboard.get("path", ""))
+	if armed == path or armed.begins_with(path + "/"):
+		_clipboard = {}
+
+	Media.request_eject(path)
+	# Said now rather than when the state file changes, for the store page's
+	# reason: the request is consumed within half a second, and a screen that
+	# does not change for two seconds is a screen that did not hear the press.
+	# The outcome arrives on _on_media_state_changed and overwrites this.
+	_say("Finishing writes to %s" % target_name)
 
 
 # ---------------------------------------------------------------------------

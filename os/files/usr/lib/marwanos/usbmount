@@ -1,0 +1,410 @@
+#!/usr/bin/env bash
+#
+# Removable media: mounting a stick when it is plugged in, and unmounting it
+# when the shell asks or when it is pulled out.
+#
+# WHY THIS EXISTS. The Files screen looks for drives under /run/media/<user>/,
+# which is udisks2's convention -- and nothing on this machine was ever going to
+# put one there. udisks2 does not automount; it mounts when a CLIENT asks it to,
+# and the client is normally a desktop's file manager or a session agent
+# (udiskie, gvfs-udisks2-volume-monitor). This appliance has neither: it has
+# greetd starting one Godot binary under gamescope, no session bus worth the
+# name, and no polkit agent to authorise the request even if something asked.
+# So a stick plugged into MarwanOS attached, enumerated, and sat there -- the
+# kernel knew about it, the shell could not see it, and from the couch that is
+# "the files app did not recognize it at all".
+#
+# WHY NOT INSTALL udisks2 AND AN AGENT. It is two daemons, a D-Bus policy, a
+# polkit rule granting the session user org.freedesktop.UDisks2.filesystem-mount
+# and a session agent to hold the reference -- to end up at the same mount, at
+# the same path, with a larger attack surface on a machine whose whole thesis is
+# that nothing general-purpose is reachable (D6). The rules an automounter needs
+# are the twenty lines below, and every one of them is a decision this appliance
+# has an opinion about.
+#
+# THREE ENTRY POINTS, ONE SCRIPT:
+#
+#   attach <kernel-name>   udev saw a filesystem on removable media; mount it.
+#   detach <kernel-name>   the device is gone; unmount whatever it had.
+#   daemon                 consume the shell's eject requests, forever.
+#
+# The first two are systemd's ExecStart/ExecStop for marwanos-usbmount@<name>,
+# which udev pulls in and which systemd stops when the device disappears (see
+# the unit's BindsTo). The third is marwanos-media.service.
+#
+# THE SEAM IS THE WIFI, UPDATE AND APPCTL SEAM, DELIBERATELY:
+#
+#   the shell writes  /run/marwanos/media/request   (0700 player-owned dir)
+#   this writes       /run/marwanos/media.state     <state>TAB<mount>TAB<detail>
+#
+# WHAT CROSSES THE BOUNDARY IS A MOUNT POINT, and it is narrowed the way
+# appctl narrows an application id -- not by trusting the sender, but by
+# checking the value against something only root controls. The path must be a
+# real mount point exactly one level under /run/media/<user>/, and /run/media is
+# root-owned 0755, so nothing but this script has ever been able to create a
+# directory there to name. An unmount of anything else is refused.
+#
+# WHAT IS DELIBERATELY NOT MOUNTED, and this is the sharp edge: MarwanOS boots
+# FROM a USB stick. Its ESP and its root are removable partitions on a removable
+# bus, indistinguishable from a data stick by any udev property. Mounting them
+# under /run/media would put the machine's own guts in the file manager next to
+# somebody's holiday photos, with a Delete on every row. Two guards below --
+# already-mounted, and same-disk-as-root -- keep the boot medium out.
+#
+set -uo pipefail
+
+TAG=marwanos-usbmount
+RUN_DIR=/run/marwanos
+REQ_DIR="$RUN_DIR/media"
+REQ="$REQ_DIR/request"
+CONSUMED="$RUN_DIR/media-request.consumed"
+STATE="$RUN_DIR/media.state"
+
+## Where mounts land. udisks2's own layout, so a stick this machine mounted
+## looks the same to anything that later reads the tree, and so the shell's
+## MEDIA_ROOT needs no MarwanOS-specific knowledge.
+MEDIA_ROOT=/run/media
+
+## The session user, matching sysusers.d/50-marwanos.conf. Pinned as numbers
+## rather than looked up: this runs from udev, early, and a getpwnam that
+## failed would silently mount a stick nobody can read.
+PLAYER_UID=1000
+PLAYER_GID=1000
+
+POLL=0.5
+
+info() { printf '<6>%s: %s\n' "$TAG" "$*" >&2; }
+warn() { printf '<4>%s: %s\n' "$TAG" "$*" >&2; }
+err()  { printf '<3>%s: %s\n' "$TAG" "$*" >&2; }
+
+
+## `<state>TAB<mount>TAB<detail>`. States: idle, ejecting, done, failed,
+## refused. Atomic via rename: the shell polls this and must never read half a
+## line.
+state() {
+    { printf '%s\t%s\t%s\n' "$1" "${2:-}" "${3:-}" > "$STATE.tmp" \
+        && mv -f "$STATE.tmp" "$STATE"; } \
+        || err "cannot write $STATE"
+}
+
+
+## The whole-disk device a partition belongs to, e.g. sda for sda1. lsblk's
+## PKNAME rather than string-chopping the name, because nvme0n1p1 -> nvme0n1
+## and mmcblk0p1 -> mmcblk0 are not the same chop as sda1 -> sda. A whole disk
+## with a filesystem directly on it (which plenty of sticks are) has no parent
+## and answers itself.
+parent_disk() {
+    local name="$1" parent
+    parent="$(lsblk -ndo PKNAME "/dev/$name" 2>/dev/null)"
+    printf '%s\n' "${parent:-$name}"
+}
+
+
+## Is any part of this disk carrying a filesystem the SYSTEM has mounted? That
+## is the boot-medium test, and it is deliberately about the DISK rather than
+## the partition: the installer stick's ESP is mounted at /boot/efi while its
+## other partitions are not, and offering those in a file manager is the same
+## mistake one directory along.
+##
+## Asked of findmnt rather than of /proc/cmdline or the bootc deployment,
+## because what matters is not which disk we booted from in theory but which
+## one the running system has open right now.
+##
+## MOUNTS WE MADE DO NOT COUNT, and skipping them is not a loophole -- it is
+## what makes a stick with two partitions on it work. Without the skip the
+## first partition mounts, that mount makes the disk "in use", and the second
+## partition is then refused as though it were part of the operating system.
+## Caught by the two-partition loop-device test, which is the shape this whole
+## function exists for.
+disk_is_in_use() {
+    local disk="$1" source target
+    while read -r source target; do
+        [ -n "$source" ] || continue
+        case "$target" in
+            "$MEDIA_ROOT"/*) continue ;;
+        esac
+        # btrfs reports a subvolume as "/dev/sda3[/root]", and lsblk cannot
+        # open that. The bracket is not part of the device.
+        #
+        # findmnt also reports sources that are not block devices at all --
+        # tmpfs, overlay, a bare label -- and those are simply skipped: a
+        # filesystem with no device behind it is on nobody's disk.
+        source="${source%%\[*}"
+        case "$source" in
+            /dev/*) ;;
+            *) continue ;;
+        esac
+        local name
+        name="$(lsblk -ndo KNAME "$source" 2>/dev/null)" || continue
+        [ -n "$name" ] || continue
+        [ "$(parent_disk "$name")" = "$disk" ] && return 0
+    done < <(findmnt -rno SOURCE,TARGET 2>/dev/null)
+    return 1
+}
+
+
+## A directory name for a stick: its label if it has one, its UUID if not, the
+## kernel name as the last resort.
+##
+## SANITISED HARD, and not for tidiness. A filesystem label is attacker-supplied
+## text off a stick somebody handed you: it can contain a slash, a newline, a
+## leading dash, or "..". Every one of those turns a path join into something
+## else. Everything outside [A-Za-z0-9._-] becomes an underscore, leading dots
+## and dashes are dropped, and the result is capped -- so the worst a hostile
+## label can do is collide with another name, which the loop in mount_point
+## already handles.
+safe_name() {
+    local raw="$1" clean
+    clean="$(printf '%s' "$raw" | tr -c 'A-Za-z0-9._-' '_')"
+    clean="${clean#"${clean%%[!.-]*}"}"
+    clean="${clean:0:64}"
+    printf '%s\n' "${clean:-drive}"
+}
+
+
+## An unused directory under /run/media/player. Two sticks labelled UNTITLED is
+## an ordinary Tuesday, so the second gets "UNTITLED_2" rather than landing on
+## top of the first -- mounting over a live mount would hide the first stick's
+## files behind the second's while both are plugged in.
+mount_point() {
+    local base="$1" dir="$MEDIA_ROOT/player/$1" n=1
+    while mountpoint -q "$dir" || [ -n "$(ls -A "$dir" 2>/dev/null)" ]; do
+        n=$((n + 1))
+        dir="$MEDIA_ROOT/player/${base}_$n"
+        [ "$n" -gt 32 ] && { err "too many drives called $base"; return 1; }
+    done
+    printf '%s\n' "$dir"
+}
+
+
+## Mount options by filesystem, and the split is about who owns the files.
+##
+## vfat, exfat and ntfs have no POSIX ownership on the medium, so the kernel
+## invents it from the mount and it must be the session user or the shell can
+## read a stick and not write to it. ext4, btrfs and xfs carry real uids, and
+## passing uid= to them is an error that fails the mount outright -- so they
+## get the common flags only, and a stick formatted ext4 by another machine may
+## genuinely be read-only here. That is true rather than fixable: chowning
+## somebody else's filesystem because it was plugged in would be worse.
+##
+## nosuid,nodev,noexec on everything. A file manager needs to copy files off a
+## stick, not to run them, and a setuid binary arriving on removable media is
+## not a feature this appliance has any use for.
+mount_options() {
+    local fstype="$1" common="nosuid,nodev,noexec"
+    case "$fstype" in
+        vfat|exfat|ntfs|ntfs3|msdos)
+            printf '%s,uid=%s,gid=%s,umask=0022\n' "$common" "$PLAYER_UID" "$PLAYER_GID"
+            ;;
+        *)
+            printf '%s\n' "$common"
+            ;;
+    esac
+}
+
+
+do_attach() {
+    local name="$1" dev="/dev/$1"
+
+    [ -b "$dev" ] || { warn "$dev is not a block device"; return 0; }
+
+    # ALREADY MOUNTED IS THE FIRST GUARD, and it is the one that keeps the
+    # running system's own partitions out: /, /boot, /boot/efi and the ostree
+    # deployment are all mounted before udev ever gets here.
+    if findmnt -rno TARGET --source "$dev" >/dev/null 2>&1; then
+        info "$name is already mounted; leaving it alone"
+        return 0
+    fi
+
+    local disk
+    disk="$(parent_disk "$name")"
+    if disk_is_in_use "$disk"; then
+        # The other half of the boot-medium guard -- see disk_is_in_use.
+        info "$name is on $disk, which the system is running from; not mounting it"
+        return 0
+    fi
+
+    # blkid -p RATHER THAN lsblk, and it is not a preference. lsblk reports
+    # FSTYPE, LABEL and UUID out of the udev database, so it answers "nothing"
+    # for a perfectly good filesystem whenever that database has not been
+    # populated -- which is exactly the state a container has, and a state a
+    # boot can briefly be in. `blkid -p` is a direct libblkid probe of the
+    # device: slower by a few milliseconds, and it cannot be wrong about a
+    # filesystem that is really there. Caught by the loop-device test, where
+    # every attach reported "carries no filesystem" over a mkfs.vfat image.
+    local fstype label uuid
+    fstype="$(blkid -p -s TYPE -o value "$dev" 2>/dev/null)"
+    if [ -z "$fstype" ]; then
+        info "$name carries no filesystem; nothing to mount"
+        return 0
+    fi
+    label="$(blkid -p -s LABEL -o value "$dev" 2>/dev/null)"
+    uuid="$(blkid -p -s UUID -o value "$dev" 2>/dev/null)"
+
+    local dir
+    dir="$(mount_point "$(safe_name "${label:-${uuid:-$name}}")")" || return 1
+
+    install -d -m 0755 "$MEDIA_ROOT/player" || { err "cannot create $MEDIA_ROOT/player"; return 1; }
+    mkdir -p "$dir" || { err "cannot create $dir"; return 1; }
+
+    # -t "$fstype" rather than auto, so the type the probe reported is the type
+    # that gets mounted -- `mount -t auto` re-probes and can pick a different
+    # driver (ntfs vs ntfs3) than the options were built for.
+    if ! mount -t "$fstype" -o "$(mount_options "$fstype")" "$dev" "$dir"; then
+        err "could not mount $dev ($fstype) at $dir"
+        rmdir "$dir" 2>/dev/null
+        return 1
+    fi
+
+    info "mounted $dev ($fstype) at $dir"
+}
+
+
+## Unmount whatever this device had, and take the directory with it. Lazy on
+## purpose and ONLY here: this path is "the stick is already physically gone",
+## where a plain umount fails on any open file and leaves a dead mount point in
+## the file manager's list forever. The eject path below is the opposite -- it
+## refuses rather than forcing, because there the drive is still in the port
+## and the honest answer is "wait".
+## READ FROM /proc/self/mounts, NOT findmnt --source. By the time systemd stops
+## this unit the device node is already gone, and findmnt resolves --source to a
+## device number before it compares -- so it can answer "nothing" for a mount
+## that is very much still in the table. The kernel's own list still carries the
+## dead device's name as a string, which is all this needs to match on.
+##
+## The escaping /proc/self/mounts does to targets (a space becomes \040) is not
+## decoded here and does not have to be: every path this loop can act on is one
+## THIS SCRIPT created, and safe_name has already replaced anything that would
+## need escaping. A target that does not match a real directory simply fails the
+## umount, which is the same as not matching at all.
+do_detach() {
+    local name="$1" source target rest
+
+    while read -r source target rest; do
+        [ "$source" = "/dev/$name" ] || continue
+        case "$target" in
+            "$MEDIA_ROOT"/*) ;;
+            *) continue ;;
+        esac
+        umount -l "$target" 2>/dev/null
+        rmdir "$target" 2>/dev/null
+        info "released $target ($name is gone)"
+    done < /proc/self/mounts
+}
+
+
+## Is this a path we are allowed to unmount on request? See the header: the
+## check is against the filesystem, not against the sender.
+is_ejectable() {
+    local path="$1"
+
+    # No traversal, no relative components, no surprises. Compared against the
+    # ORIGINAL string as well as the resolved one, so a symlink cannot point a
+    # legal-looking name at /.
+    case "$path" in
+        "$MEDIA_ROOT"/*/*/*) return 1 ;;   # too deep: a subdirectory, not a mount
+        "$MEDIA_ROOT"/*/*) ;;              # /run/media/<user>/<name>
+        *) return 1 ;;
+    esac
+    case "$path" in
+        *..*|*$'\n'*) return 1 ;;
+    esac
+    [ "$path" = "$(readlink -f "$path" 2>/dev/null)" ] || return 1
+
+    mountpoint -q "$path" || return 1
+    return 0
+}
+
+
+do_eject() {
+    local path="$1"
+
+    if ! is_ejectable "$path"; then
+        warn "refusing an eject of a path that is not a drive we mounted"
+        state refused "" "Not a drive"
+        return
+    fi
+
+    info "ejecting $path"
+    state ejecting "$path" "Finishing writes"
+
+    # sync FIRST and separately from the unmount, because it is the half the
+    # person is actually waiting for: a copy to a stick returns as soon as the
+    # page cache has it, and everything between then and this call is data that
+    # exists only in RAM. -f targets this filesystem rather than every mounted
+    # one, so ejecting a stick does not stall on an unrelated disk.
+    sync -f "$path" 2>/dev/null
+
+    # NOT lazy. A busy filesystem here means something still has a file open on
+    # it, and -l would return success, leave the writes half-done and tell the
+    # person to pull the stick. Failing is the honest answer.
+    if ! umount "$path" 2>/dev/null; then
+        err "could not unmount $path"
+        state failed "$path" "Something is still using it"
+        return
+    fi
+
+    # The filesystem is off; the empty directory is cosmetic. It is still
+    # reported, because the SHELL decides what is plugged in by listing this
+    # tree -- a directory left behind is a drive that stays on the Places
+    # screen forever and opens onto nothing.
+    if ! rmdir "$path" 2>/dev/null; then
+        warn "unmounted $path but could not remove the directory"
+        state done "$path" "Safe to remove, but the drive is still listed"
+        return
+    fi
+
+    info "ejected $path"
+    state done "$path" "Safe to remove"
+}
+
+
+do_daemon() {
+    install -d -m 0755 "$RUN_DIR" || { err "cannot create $RUN_DIR"; exit 1; }
+    install -d -m 0700 -o player -g player "$REQ_DIR" \
+        || { err "cannot create $REQ_DIR -- the shell could never ask for anything"; exit 1; }
+    install -d -m 0755 "$MEDIA_ROOT/player" || { err "cannot create $MEDIA_ROOT/player"; exit 1; }
+
+    state idle
+
+    while :; do
+        # Same rename-then-read as the wifi, update and appctl seams: REQ_DIR is
+        # player-owned, so the file could be swapped for a symlink or a FIFO
+        # between any test and any read. rename(2) follows neither and opens
+        # nothing.
+        if mv -f "$REQ" "$CONSUMED" 2>/dev/null; then
+            line=""
+            if [ -L "$CONSUMED" ] || [ ! -f "$CONSUMED" ]; then
+                warn "discarding a request that was not a regular file"
+            else
+                IFS= read -r line < "$CONSUMED" 2>/dev/null || true
+            fi
+            rm -f "$CONSUMED"
+
+            verb="${line%%	*}"
+            arg="${line#*	}"
+            # A line with no tab leaves verb and arg equal, which is a
+            # malformed request rather than a verb with an empty argument.
+            [ "$arg" = "$line" ] && arg=""
+
+            case "$verb" in
+                eject) do_eject "$arg" ;;
+                "") ;;
+                *) warn "ignoring a request with an unrecognised verb" ;;
+            esac
+        fi
+
+        sleep "$POLL"
+    done
+}
+
+
+case "${1:-}" in
+    attach) do_attach "${2:?attach needs a kernel device name}" ;;
+    detach) do_detach "${2:?detach needs a kernel device name}" ;;
+    daemon) do_daemon ;;
+    *)
+        err "usage: usbmount attach|detach <kernel-name> | usbmount daemon"
+        exit 2
+        ;;
+esac

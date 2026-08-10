@@ -23,7 +23,7 @@ shell/
     shell_log.gd         journal-shaped logging          (autoload ShellLog)
     kiosk.gd             fullscreen, borderless, no cursor; logs the display
                          geometry it was actually handed (autoload Kiosk)
-    shell_input.gd       the six actions, at device -1   (autoload ShellInput)
+    shell_input.gd       the nine actions, at device -1  (autoload ShellInput)
     player_one.gd        which pad is player one, hotplug (autoload PlayerOne)
     focus_repeat.gd      held-direction repeat for a pad (autoload FocusRepeat)
     system_status.gd     THE STATUS SEAM: renders state files the system
@@ -43,8 +43,13 @@ shell/
     stores.gd            THE STORES SEAM                 (autoload Stores)
     stores_screen.gd     side tabs + the store page they render
     store_tab.gd         one tab in that column
-    glyphs.gd            the bar's icons, drawn with primitives
-    icon_button.gd       a focusable icon (the store bag, the gear)
+    files.gd             THE FILES SEAM                  (autoload Files)
+    files_screen.gd      the file manager: places, listings, five verbs
+    file_menu.gd         its options menu
+    media.gd             THE MEDIA SEAM: eject, and only eject
+                                                        (autoload Media)
+    glyphs.gd            the bar's icons, drawn from the icon font
+    icon_button.gd       a focusable icon (store, files, gear, power)
     shell_root.gd        the grid screen
     tile.gd              one tile
     catalogue.gd         the store list; Phase 1 replaces this

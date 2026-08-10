@@ -1,0 +1,49 @@
+# Removable media gets mounted so the Files screen can see it.
+#
+# The whole automounter is this file plus marwanos-usbmount@.service plus
+# /usr/lib/marwanos/usbmount. The script's header says why an appliance with no
+# desktop session had nothing doing this job and why udisks2 is not the answer;
+# what is here is only the trigger.
+#
+# 99- so it runs after Fedora's own block rules have finished. Every ENV{} this
+# matches on -- ID_BUS, ID_FS_USAGE, ID_FS_TYPE -- is set by 60-persistent-
+# storage.rules via blkid, and a rule that fired before those would see none of
+# them and mount nothing, silently.
+#
+# WHY ENV{SYSTEMD_WANTS} AND NOT RUN+=. udev kills anything RUN+= starts once
+# the event is handled, and it holds a lock on the device while doing it -- a
+# mount from inside a udev worker is the documented way to deadlock the whole
+# block subsystem. SYSTEMD_WANTS hands the work to systemd, which runs it
+# outside the event, in its own cgroup, with logging and a stop action.
+#
+# THE STOP ACTION IS THE POINT OF THE UNIT BEING PER-DEVICE. The service
+# BindsTo= the .device unit, so when the stick is pulled systemd stops the
+# instance and its ExecStop unmounts what is left. Nothing here has to match on
+# ACTION=="remove": udev retires the .device unit and systemd does the rest.
+
+ACTION!="add|change", GOTO="marwanos_usb_end"
+SUBSYSTEM!="block", GOTO="marwanos_usb_end"
+
+# No filesystem, nothing to mount. This is also what excludes the whole-disk
+# device of a partitioned stick: the disk itself carries a partition table, not
+# a filesystem, so only its partitions reach the last line. A stick formatted
+# without a partition table has the filesystem on the disk and is mounted as
+# one, which is correct and common.
+ENV{ID_FS_USAGE}!="filesystem", GOTO="marwanos_usb_end"
+
+# Nothing MarwanOS is made of. A partition holding an ostree deployment, an ESP
+# or LUKS is not a data stick, and while the script's already-mounted and
+# same-disk-as-root guards catch the running system's own medium, refusing to
+# even queue a unit for these keeps the boot disk out of the journal as well as
+# out of /run/media.
+ENV{ID_FS_TYPE}=="crypto_LUKS|linux_raid_member|LVM2_member|swap", GOTO="marwanos_usb_end"
+ENV{ID_PART_ENTRY_TYPE}=="c12a7328-f81f-11d2-ba4b-00a0c93ec93b", GOTO="marwanos_usb_end"
+
+# Removable only, and expressed as the two buses a person can physically hand
+# this machine something on: a USB stick, and a card in a reader. An internal
+# SATA or NVMe disk is not media somebody plugged in, and putting one in the
+# file manager would be offering to delete the machine.
+ENV{ID_BUS}=="usb", ENV{SYSTEMD_WANTS}+="marwanos-usbmount@$kernel.service"
+ENV{ID_DRIVE_FLASH_SD}=="1", ENV{SYSTEMD_WANTS}+="marwanos-usbmount@$kernel.service"
+
+LABEL="marwanos_usb_end"

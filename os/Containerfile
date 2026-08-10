@@ -665,8 +665,12 @@ RUN set -euxo pipefail; \
     chmod 0644 /usr/lib/systemd/system/marwanos-wifi.service; \
     chmod 0644 /usr/lib/systemd/system/marwanos-update.service; \
     chmod 0644 /usr/lib/systemd/system/marwanos-appctl.service; \
+    chmod 0644 /usr/lib/systemd/system/marwanos-media.service; \
+    chmod 0644 "/usr/lib/systemd/system/marwanos-usbmount@.service"; \
+    chmod 0644 /usr/lib/udev/rules.d/99-marwanos-usb.rules; \
     chmod 0644 /usr/lib/systemd/system/marwanos-storeart.service; \
     chmod 0644 /usr/lib/systemd/system/marwanos-storeart.timer; \
+    chmod 0644 /usr/lib/systemd/system/sshd.service.d/50-marwanos-persist.conf; \
     chmod 0644 "/usr/lib/systemd/system/marwanos-flatpak-install@.service"; \
     chmod 0755 /usr/lib/marwanos/session/marwanos-session; \
     chmod 0755 /usr/lib/marwanos/display/panel-policy; \
@@ -676,6 +680,7 @@ RUN set -euxo pipefail; \
     chmod 0755 /usr/lib/marwanos/wifi; \
     chmod 0755 /usr/lib/marwanos/update; \
     chmod 0755 /usr/lib/marwanos/appctl; \
+    chmod 0755 /usr/lib/marwanos/usbmount; \
     chmod 0755 /usr/lib/marwanos/storeart; \
     : "shipped-apps is deliberately NOT in the 0755 list: it is data both"; \
     : "appctl and storeart read, not a program, and the find above has"; \
@@ -702,15 +707,15 @@ RUN set -euxo pipefail; \
         "/usr/lib/systemd/system/multi-user.target.wants/marwanos-flatpak-install@com.valvesoftware.Steam.service"; \
     ln -sf ../marwanos-flatpak-install@.service \
         "/usr/lib/systemd/system/multi-user.target.wants/marwanos-flatpak-install@app.zen_browser.zen.service"; \
-    : "KODI IS THE FILE MANAGER, and it is here rather than in a screen the"; \
-    : "shell would have had to grow. The icon table in icons.gd has carried a"; \
-    : "'file explorer' vocabulary -- folder, drive, usb, copy, cut, rename,"; \
-    : "eject -- since the icon font landed, for a screen that was never"; \
-    : "designed. Kodi is that screen, already built: a 10-foot UI that is"; \
-    : "driven by a controller natively, with a file manager that copies,"; \
-    : "moves, renames and deletes, and USB media playback on top. The"; \
-    : "alternative on the table was a desktop file manager plus a uinput"; \
-    : "pad-to-mouse emulator, which is a mouse UI at three metres."; \
+    : "KODI, FOR MEDIA -- and it is no longer here as the file manager."; \
+    : "This block used to say Kodi WAS the file manager, on the argument"; \
+    : "that its browser already copied, moved, renamed and deleted from a"; \
+    : "sofa and the shell would otherwise have to grow a screen. The shell"; \
+    : "grew the screen (shell/src/files_screen.gd), and it browses this"; \
+    : "machine and the sticks marwanos-usbmount puts under /run/media."; \
+    : "What Kodi is still shipped FOR is the half the Files screen"; \
+    : "deliberately does not do: playing what it finds. It is a 10-foot UI"; \
+    : "the pad drives natively, which is why it stays a shipped app."; \
     ln -sf ../marwanos-flatpak-install@.service \
         "/usr/lib/systemd/system/multi-user.target.wants/marwanos-flatpak-install@tv.kodi.Kodi.service"; \
     ln -sf ../marwanos-netcheck.service \
@@ -723,6 +728,12 @@ RUN set -euxo pipefail; \
         /usr/lib/systemd/system/multi-user.target.wants/marwanos-update.service; \
     ln -sf ../marwanos-appctl.service \
         /usr/lib/systemd/system/multi-user.target.wants/marwanos-appctl.service; \
+    : "The EJECT half of removable media. The MOUNT half needs no link:"; \
+    : "99-marwanos-usb.rules pulls in marwanos-usbmount@<device> by name"; \
+    : "when a stick appears, and a wants link on a template with no"; \
+    : "instance would try to start one called nothing at boot."; \
+    ln -sf ../marwanos-media.service \
+        /usr/lib/systemd/system/multi-user.target.wants/marwanos-media.service; \
     : "sshd, enabled in the IMAGE rather than left to installer kickstarts:"; \
     : "the bench proved that a per-machine enablement can silently not take,"; \
     : "and a fleet of one unreachable machine is still a fleet outage. The"; \
@@ -785,6 +796,48 @@ RUN set -euxo pipefail; \
     test -L /usr/lib/systemd/system/multi-user.target.wants/marwanos-wifi.service; \
     test -L /usr/lib/systemd/system/multi-user.target.wants/marwanos-update.service; \
     test -L /usr/lib/systemd/system/multi-user.target.wants/marwanos-appctl.service; \
+    test -L /usr/lib/systemd/system/multi-user.target.wants/marwanos-media.service; \
+    : "THE AUTOMOUNTER, asserted as the three pieces it actually is, because"; \
+    : "any one of them missing produces the same symptom -- a stick that"; \
+    : "attaches, enumerates and never appears in the Files screen -- on a"; \
+    : "machine with no terminal to ask why. The rule is the trigger, the"; \
+    : "template is what it triggers, and the script is what does the work;"; \
+    : "the grep is on the SYSTEMD_WANTS line specifically, since a rule file"; \
+    : "that exists but no longer names the unit is the silent version."; \
+    test -f /usr/lib/udev/rules.d/99-marwanos-usb.rules; \
+    grep -q 'marwanos-usbmount@' /usr/lib/udev/rules.d/99-marwanos-usb.rules; \
+    test -f "/usr/lib/systemd/system/marwanos-usbmount@.service"; \
+    test -x /usr/lib/marwanos/usbmount; \
+    : "blkid, lsblk, findmnt and mountpoint are what usbmount decides with --"; \
+    : "which filesystem, whose disk, and whether a path is a mount at all."; \
+    : "They are util-linux, so a base image without them is not a thing that"; \
+    : "happens quietly, but the guards that keep the BOOT MEDIUM out of the"; \
+    : "file manager are built on them, and that is not a check to leave"; \
+    : "implicit."; \
+    command -v blkid; \
+    command -v lsblk; \
+    command -v findmnt; \
+    command -v mountpoint; \
+    : "THE FILESYSTEMS A STICK ACTUALLY ARRIVES AS. vfat is every small stick"; \
+    : "and every camera card; exfat is every stick over 32 GB sold in the last"; \
+    : "decade, because that is what Windows formats them as; ntfs3 is what an"; \
+    : "external drive pulled out of a PC is. All three are in-tree modules in"; \
+    : "the base's kernel and none of them is an RPM this image installs -- so"; \
+    : "the failure mode if a future base drops one is not a build error, it is"; \
+    : "a stick that mounts on every other machine and reports 'unknown"; \
+    : "filesystem' on this one, with no console to read the mount error from."; \
+    : "Searched by module NAME across kernel/fs rather than at a guessed"; \
+    : "path: vfat.ko lives in fs/fat/, not in an fs/vfat/ that does not"; \
+    : "exist, and a check that hard-codes the wrong directory fails for the"; \
+    : "wrong reason. The output goes to a file, not a pipe, for the"; \
+    : "SIGPIPE-plus-pipefail reason the initramfs greps above spell out."; \
+    KV="$(rpm -q --qf '%{VERSION}-%{RELEASE}.%{ARCH}\n' kernel-core | tail -1)"; \
+    for fs in vfat exfat ntfs3; do \
+        find "/usr/lib/modules/${KV}/kernel/fs" -name "${fs}.ko*" > /tmp/fsmod.txt; \
+        test -s /tmp/fsmod.txt \
+            || { echo "the kernel has no ${fs} module; a ${fs} stick would not mount"; exit 1; }; \
+    done; \
+    rm -f /tmp/fsmod.txt; \
     : "bootc is what an update IS on this machine -- a base image that stopped"; \
     : "shipping it would leave the Updates screen permanently unable to answer."; \
     command -v bootc; \
@@ -812,6 +865,7 @@ RUN set -euxo pipefail; \
     test -s /usr/lib/marwanos/keys/root.keys; \
     test -f /usr/lib/systemd/system/sshd.service; \
     test -L /usr/lib/systemd/system/multi-user.target.wants/sshd.service; \
+    test -s /usr/lib/systemd/system/sshd.service.d/50-marwanos-persist.conf; \
     : "xdotool is how pad presses reach applications with no gamepad support"; \
     : "of their own (the pad-keys bridge); without it any app the bridge"; \
     : "drives would launch fine and then ignore every button on the pad."; \

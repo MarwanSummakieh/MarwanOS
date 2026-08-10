@@ -1,0 +1,37 @@
+[Unit]
+# One instance per removable block device with a filesystem on it, pulled in by
+# udev (99-marwanos-usb.rules). The instance name is the kernel device name --
+# sda1, nvme0n1p2, mmcblk0 -- so the unit and the device it is about cannot get
+# out of step.
+Description=Mount removable media on %I
+Documentation=file:///usr/lib/marwanos/usbmount
+
+# THE WHOLE REASON THIS IS A TEMPLATE UNIT. BindsTo makes systemd stop this
+# instance the moment the .device unit goes away, which is what runs ExecStop
+# and unmounts a stick that was pulled without being ejected. Without it a
+# yanked drive would stay in /run/media forever as a dead directory the file
+# manager still lists.
+#
+# systemd-escape's device naming: /dev/sda1 is dev-sda1.device.
+BindsTo=dev-%i.device
+After=dev-%i.device
+
+[Service]
+Type=oneshot
+# The mount has to outlive ExecStart or systemd would consider the unit
+# finished, release it, and take the mount with it on the next stop.
+RemainAfterExit=yes
+ExecStart=/usr/lib/marwanos/usbmount attach %i
+ExecStop=/usr/lib/marwanos/usbmount detach %i
+
+# NOT PrivateMounts / no mount namespace of any kind, deliberately: a mount made
+# inside a private namespace is invisible to the shell, which is the only reader
+# there is. Everything else this unit could be sandboxed with it does not need.
+
+StandardOutput=journal
+StandardError=journal
+SyslogLevelPrefix=true
+SyslogIdentifier=marwanos-usbmount
+
+# No [Install]. Nothing enables this: udev pulls each instance in by name, and a
+# WantedBy here would try to start an instance called "" at boot.

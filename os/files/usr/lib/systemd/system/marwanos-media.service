@@ -1,0 +1,28 @@
+[Unit]
+# The eject half of removable media: the privileged consumer of the shell's
+# /run/marwanos/media requests. Mounting needs no daemon -- udev pulls in
+# marwanos-usbmount@<device> when a stick appears -- but unmounting does, because
+# it is the one direction a person asks for and umount(2) needs root.
+Description=Eject removable media on request (/run/marwanos/media)
+Documentation=file:///usr/lib/marwanos/usbmount
+# Not ordered on the network for marwanos-appctl's reason turned up a notch:
+# nothing about a USB stick has ever needed one.
+After=local-fs.target
+
+[Service]
+Type=exec
+ExecStart=/usr/lib/marwanos/usbmount daemon
+
+# A control service that died silently would leave the shell writing requests
+# into a directory nothing reads -- a button that does nothing, which on this
+# machine is indistinguishable from broken input.
+Restart=always
+RestartSec=5
+
+StandardOutput=journal
+StandardError=journal
+SyslogLevelPrefix=true
+SyslogIdentifier=marwanos-usbmount
+
+[Install]
+WantedBy=multi-user.target

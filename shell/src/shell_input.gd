@@ -1,27 +1,27 @@
 extends Node
 
-## The nine actions the shell is allowed to use, defined here rather than in
+## The ten actions the shell is allowed to use, defined here rather than in
 ## project.godot.
 ##
-## The ninth is ui_shell_options, on the pad's OPTIONS button -- see its
+## The tenth is ui_shell_options, on the pad's OPTIONS button -- see its
 ## _define below for why the options menu moved off Triangle and onto the
 ## button that says what it does.
 ##
 ## It was six until the on-screen keyboard landed (ADR 0006, fifth amendment).
 ## Six was never a cap for its own sake -- it was the count that fell out of
-## "define exactly what is used, explicitly, at device -1" -- and the two added
-## are both confined to keyboard.gd, where the alternative was making every
-## backspace a trip across a 5x10 grid with a thumbstick. Nothing outside that
-## screen reads them, and neither is required for the shell to be navigable:
-## Shift and Delete are on-screen keys as well, so a pad missing these buttons
-## loses a shortcut rather than the feature.
+## "define exactly what is used, explicitly, at device -1". The two the keyboard
+## added are shortcuts rather than load-bearing: Shift and Delete are on-screen
+## keys as well, so a pad missing Square or Triangle loses a shortcut rather
+## than the feature. The home button and OPTIONS are not shortcuts -- each is
+## the only route to something (leaving a running application, and the options
+## menu), which is why both are checked at startup.
 ##
 ## Why here. Godot serialises an InputMap override into project.godot as a
 ## one-line `Object(InputEventJoypadButton,"resource_name":"","device":0,...)`
 ## blob per event. Those are unreviewable in a diff and easy to corrupt by hand,
 ## in a repo whose entire discipline is hand-authored, LF-normalised, reviewable
-## text. Six calls in a file anyone can read is the better trade, and it can carry
-## the comment explaining why each binding exists.
+## text. Ten calls in a file anyone can read is the better trade, and each can
+## carry the comment explaining why that binding exists.
 ##
 ## Why redefine at all -- two things about the built-in map are not safe to
 ## inherit on this machine:
