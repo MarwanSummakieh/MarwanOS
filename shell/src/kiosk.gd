@@ -70,6 +70,14 @@ func _ready() -> void:
 
 func _log_after_first_frame() -> void:
 	_log_display_geometry("after the first frame")
+	# The overlay property is written to zero before it is ever needed, not
+	# because a fresh window could carry a stale one -- it cannot -- but
+	# because this proves ON EVERY BOOT that the xprop path works, in the
+	# journal, before the first time an overlay actually depends on it. The
+	# 2026-08-10 bench videos showed the shell composited twice, which is
+	# what a lingering =1 produces; after this line, "was the property set"
+	# is a question one boot's journal can answer.
+	_write_overlay_property(false)
 
 
 func _notification(what: int) -> void:
@@ -275,6 +283,17 @@ func set_overlay(enabled: bool) -> void:
 		window.transparent_bg = enabled
 	get_tree().root.transparent_bg = enabled
 
+	_write_overlay_property(enabled)
+
+
+## Set, then PROVE. A property write that silently failed used to be one
+## journal line easily missed, and the failure mode is not subtle to look at:
+## an =1 that never cleared has gamescope compositing the shell over itself --
+## two shells at two offsets, which is one reading of the 2026-08-10 bench
+## videos. So the write is read back, a mismatch is retried once, and a
+## mismatch that survives the retry is an ERROR naming the state the
+## compositor was left in, not a warning naming an exit code.
+func _write_overlay_property(enabled: bool) -> void:
 	var handle := DisplayServer.window_get_native_handle(DisplayServer.WINDOW_HANDLE)
 	if handle == 0:
 		ShellLog.warn("no native window handle; cannot set %s (overlay will cover the app)"
@@ -284,19 +303,41 @@ func set_overlay(enabled: bool) -> void:
 	# xprop wants the id in hex; Godot hands back the XID as an integer.
 	var window_id := "0x%x" % handle
 	var value := "1" if enabled else "0"
-	var args := PackedStringArray([
-		"-id", window_id,
-		"-f", OVERLAY_PROPERTY, "32c",
-		"-set", OVERLAY_PROPERTY, value,
-	])
 
+	for attempt in 2:
+		var args := PackedStringArray([
+			"-id", window_id,
+			"-f", OVERLAY_PROPERTY, "32c",
+			"-set", OVERLAY_PROPERTY, value,
+		])
+		var output: Array = []
+		var code := OS.execute("xprop", args, output, true)
+		if code == 0 and _read_overlay_property(window_id) == value:
+			ShellLog.info("%s=%s on window %s (verified)"
+				% [OVERLAY_PROPERTY, value, window_id])
+			return
+		ShellLog.warn("xprop %s=%s on %s did not take (attempt %d, exit %d): %s"
+			% [OVERLAY_PROPERTY, value, window_id, attempt + 1, code, " ".join(output)])
+
+	ShellLog.error("%s could not be set to %s; gamescope may composite the shell %s"
+		% [OVERLAY_PROPERTY, value,
+			"over the running app twice" if value == "0" else "instead of the app"])
+
+
+## What the property actually reads on the window right now: "0", "1", or ""
+## for absent/unreadable. Absent counts as "0" -- a window with no property
+## is not an overlay, which is also why the boot-time clear writing an
+## explicit 0 is a proof of plumbing rather than a change of state.
+func _read_overlay_property(window_id: String) -> String:
 	var output: Array = []
-	var code := OS.execute("xprop", args, output, true)
-	if code != 0:
-		ShellLog.warn("xprop %s=%s on %s failed (exit %d): %s"
-			% [OVERLAY_PROPERTY, value, window_id, code, " ".join(output)])
-		return
-	ShellLog.info("%s=%s on window %s" % [OVERLAY_PROPERTY, value, window_id])
+	var code := OS.execute("xprop",
+		PackedStringArray(["-id", window_id, "-notype", OVERLAY_PROPERTY]), output, true)
+	if code != 0 or output.is_empty():
+		return ""
+	var line := str(output[0]).strip_edges()
+	if not line.contains("="):
+		return "0" if line.contains("not found") else ""
+	return line.get_slice("=", 1).strip_edges()
 
 
 # ---------------------------------------------------------------------------

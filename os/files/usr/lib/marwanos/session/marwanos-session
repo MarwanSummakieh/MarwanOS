@@ -497,6 +497,26 @@ start_gamescope() {
         warn "applications will open at their own size and nothing will resize them"
     fi
 
+    # ALWAYS COMPOSITE; NEVER SCAN A CLIENT OUT DIRECTLY. Without this,
+    # gamescope hands a fullscreen client's buffer straight to the display when
+    # it thinks it can, and on this NVIDIA driver that path is where the
+    # 2026-08-10 bench videos came from: the store screen composited twice at
+    # two offsets, tween trails burned into the frame, the UI's left edge
+    # hanging off the panel. Those are damage-tracking artifacts of the
+    # scanout/composite handoff, a known weakness of that path on NVIDIA, and
+    # forcing the compositor to actually composite every frame is the
+    # documented way out. The cost is one blit per frame the GPU does not
+    # notice; the benefit is that what is on the TV is what some client drew,
+    # every frame, always.
+    if gamescope_has_option "--force-composition"; then
+        set -- "$@" --force-composition
+        log "composition: --force-composition is ON"
+    else
+        warn "gamescope --help ran and does NOT list --force-composition;"
+        warn "direct scanout stays possible, and with it the NVIDIA ghosting the"
+        warn "2026-08-10 videos showed"
+    fi
+
     log "starting gamescope: $*"
     gamescope "$@" &
     GAMESCOPE_PID=$!

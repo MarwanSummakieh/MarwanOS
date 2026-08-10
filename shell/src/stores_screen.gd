@@ -33,6 +33,7 @@ const TvTheme = preload("res://src/tv_theme.gd")
 const Catalogue = preload("res://src/catalogue.gd")
 const StoreTab = preload("res://src/store_tab.gd")
 const Tile = preload("res://src/tile.gd")
+const CardMenu = preload("res://src/card_menu.gd")
 
 ## The apps grid's shape. Five columns leaves the focused card's growth room
 ## inside the pane at the design width; six would overflow the frame the
@@ -101,6 +102,7 @@ var _page_status: Label = null
 # specifically: right from it enters the grid, and B in the grid comes back to
 # it. The cards array is the focus-wiring and B-detection surface.
 var _apps_tab: Control = null
+var _card_menu: CardMenu = null
 var _grid_pane: Control = null
 var _grid: GridContainer = null
 var _grid_cards: Array = []
@@ -548,6 +550,12 @@ func _refresh_hints() -> void:
 	# that is not here would be a second Install with a stranger name.
 	if _selected_installed() and str(_selected.get("id", "")) == "store.steam":
 		_hints.add_child(TvTheme.hint("X", "Desktop mode"))
+	# Uninstall, advertised for the rail's reason turned around: a store's
+	# application deliberately has no rail card (one thing, one home), which
+	# without this line would make the ONE application everyone installs the
+	# one application nobody can remove.
+	if _selected_installed():
+		_hints.add_child(TvTheme.hint("Y", "Options"))
 	_hints.add_child(TvTheme.hint("B", "Back"))
 
 
@@ -743,7 +751,64 @@ func _on_launch_finished(_entry: Dictionary) -> void:
 		first.grab_focus()
 
 
+## Y on a store page: the same options menu a rail card gets, with the same
+## one-extra-press shape standing between a bounced button and a removal. The
+## menu writes the request through the apps seam and the page's own status
+## line narrates the removal -- see _refresh_status.
+func _open_card_menu() -> void:
+	if _card_menu != null or Launcher.is_busy() or Apps.is_busy():
+		return
+	if not _selected_installed():
+		ShellLog.info("Y on a store page whose application is not installed; nothing to offer")
+		return
+
+	_card_menu = CardMenu.new()
+	# The menu acts on the APPLICATION, so the entry it gets carries the
+	# desktop-entry id appctl matches -- not the tab's own name for itself.
+	_card_menu.entry = {
+		"id": str(_selected.get("app_id", "")),
+		"title": str(_selected.get("title", "")),
+		"state": "installed",
+	}
+	_card_menu.closed.connect(_on_card_menu_closed, CONNECT_ONE_SHOT)
+	# Deaf while the menu is up, for the launch case's reason: the menu is a
+	# later sibling and consumes what it handles, but this screen must not be
+	# one reparent away from B doing two things at once.
+	set_process_unhandled_input(false)
+	get_tree().root.add_child(_card_menu)
+
+
+func _on_card_menu_closed() -> void:
+	_close_card_menu.call_deferred()
+
+
+func _close_card_menu() -> void:
+	if _card_menu == null:
+		return
+	var menu := _card_menu
+	_card_menu = null
+	menu.get_parent().remove_child(menu)
+	menu.queue_free()
+	set_process_unhandled_input(true)
+	# The tab is where focus was when Y was pressed, and the menu's own row
+	# took it; without this the screen comes back ringless and dead-looking.
+	for tab in _tabs:
+		if str(tab.entry.get("id", "")) == str(_selected.get("id", "")):
+			tab.grab_focus()
+			return
+
+
 func _unhandled_input(event: InputEvent) -> void:
+	# Y opens the store application's options -- checked before everything
+	# else for the rail's reason: it is the only way to remove this
+	# application on a machine with no terminal.
+	if event.is_action_pressed("ui_shell_y"):
+		if str(_selected.get("id", "")) == "store.apps":
+			return
+		get_viewport().set_input_as_handled()
+		_open_card_menu()
+		return
+
 	# X on the Steam page: the desktop client, with the stick as a mouse. The
 	# entry's icon prefers appscan's resolved path -- the same art the tab
 	# draws -- so the launch splash shows the real logo, not the cache's

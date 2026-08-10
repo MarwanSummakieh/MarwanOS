@@ -106,6 +106,7 @@ func _ready() -> void:
 	_add_row(list, "System", _system_value())
 	_add_row(list, "Engine", _engine_value())
 	_add_row(list, "Display", _display_value())
+	_add_row(list, "Surface", _surface_value())
 	_add_row(list, "Renderer", RenderingServer.get_video_adapter_name())
 	_controller_row = _add_row(list, "Controller", _controller_value())
 	# The network rows answer from the status seam, live -- the same files the
@@ -246,6 +247,25 @@ func _display_value() -> String:
 	if window == null:
 		return DisplayServer.get_name()
 	return "%s, %d x %d" % [DisplayServer.get_name(), window.size.x, window.size.y]
+
+
+## The compositor verdict, phrased for a phone photo. SSH to the bench has
+## been down for days and the journal is unreachable without it, so the one
+## diagnostic that keeps mattering -- does the shell's window match a real
+## screen, or did the compositor hand it something else -- is rendered where
+## a camera can reach it. This is kiosk.gd's spanning check re-said as a
+## settings value; the journal still carries the full geometry.
+func _surface_value() -> String:
+	var window_size := DisplayServer.window_get_size()
+	var count := DisplayServer.get_screen_count()
+	for index in count:
+		if DisplayServer.screen_get_size(index) == window_size:
+			return "matches screen %d of %d" % [index, count]
+	if count == 0:
+		return "no screens reported"
+	var first := DisplayServer.screen_get_size(0)
+	return "MISMATCH: window %d x %d on screen %d x %d" \
+		% [window_size.x, window_size.y, first.x, first.y]
 
 
 func _controller_value() -> String:
