@@ -89,6 +89,13 @@ func is_busy() -> bool:
 	return not _current.is_empty()
 
 
+## Is something other than the shell provably drawing? shell_root asks when the
+## app menu closes: giving the screen back up is only safe if there is somebody
+## to give it to. See _app_on_screen.
+func app_on_screen() -> bool:
+	return _app_on_screen
+
+
 ## What is running, for anything that needs to name it on screen. A copy, so a
 ## consumer cannot write back into the seam's own record of the launch.
 func current_entry() -> Dictionary:
@@ -330,6 +337,14 @@ const HANDOFF_DEADLINE_SECONDS := 60.0
 ## Whether this launch's lifecycle belongs to the window rather than to the pid.
 var _handoff := false
 
+## Whether SOMETHING OTHER THAN THE SHELL is provably drawing right now -- set
+## when the watchdog first answers ELSEWHERE, cleared when the launch ends.
+## Separate from _handoff_seen, which is only about games: this one is asked by
+## shell_root when the app menu closes, to decide whether it is safe to give
+## the screen back up again. Yielding on a launch that never drew would leave
+## the TV showing nothing at all.
+var _app_on_screen := false
+
 ## Whether the game has ever provably been on screen. Until it has, there is
 ## nothing to watch for the END of, and the deadline above is what applies.
 var _handoff_seen := false
@@ -400,6 +415,16 @@ func _app_is_up() -> void:
 	if not _handoff:
 		_stop_watchdog()
 	_remove_splash()
+	# THE SHELL GETS OUT OF THE WAY, and this is the only place it may: the
+	# watchdog has just proved somebody else owns the screen, so unmapping this
+	# window cannot leave the TV with nothing on it. Whether it actually does is
+	# the `yield` window profile's decision, not this line's -- the call is
+	# unconditional and Kiosk is where the choice lives, so that every route into
+	# and out of a launch goes through one gate rather than five copies of a
+	# condition. See Kiosk.yield_screen for what a second fullscreen window costs
+	# while Steam is mapping its own.
+	_app_on_screen = true
+	Kiosk.yield_screen(true)
 	# The one moment the bridge may start: there is now provably an application
 	# on screen to type into. Which is also why a desk run never gets one -- the
 	# watchdog only answers ELSEWHERE where gamescope exists, and that is the only
@@ -651,6 +676,13 @@ func minimize_current() -> void:
 	_stop_watchdog()
 	_remove_splash()
 	_remove_pad_keys()
+	# The window itself comes back before anything asks the compositor for
+	# focus: this call is the rail returning, and a foreground request aimed at
+	# a minimised window is a request about nothing. The app keeps running and
+	# keeps its own window -- which is exactly the two-fullscreen-clients state
+	# Kiosk.yield_screen exists to avoid, and the honest cost of a control that
+	# backgrounds an application instead of closing it.
+	Kiosk.yield_screen(false)
 	DisplayServer.window_move_to_foreground()
 	minimized.emit(_current)
 
@@ -787,6 +819,13 @@ func _on_closed() -> void:
 func _finish() -> void:
 	var entry := _current
 	_current = {}
+
+	# Unconditionally, and first: every route out of a launch passes through
+	# this function, so this is the one line that guarantees a yielded window
+	# always comes back. A rail restored behind an unmapped window is the black
+	# TV this project keeps designing against. See Kiosk.yield_screen.
+	_app_on_screen = false
+	Kiosk.yield_screen(false)
 
 	# THE ORPHAN SWEEP. The watched pid and the application are not the same
 	# life when something WRAPS the flatpak: the nested-gamescope evening

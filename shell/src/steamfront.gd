@@ -41,6 +41,21 @@ signal featured_changed(categories: Array)
 ## Emitted when one application's detail page arrives.
 signal app_changed(appid: int, details: Dictionary)
 
+## Emitted when a search answer lands, including an empty one. The term comes
+## back with the items because it has to: the results file has a fixed name, so
+## the only way the screen can tell "no hits for what I asked" from "the previous
+## term's hits are still on disk" is to compare what the service says it searched
+## for against what was typed.
+signal search_changed(term: String, items: Array)
+
+## Emitted when the signed-in account changes, including to and from nobody.
+## Carries the display name and never the SteamID: the shell has no use for the
+## number and nothing on a television should be drawing it.
+signal account_changed(signed_in: bool, persona: String)
+
+## Emitted when the wishlist shelf changes, including to and from empty.
+signal wishlist_changed(items: Array)
+
 ## Matches every other seam here. The service answers a cached request in one
 ## poll and a cold one in a second or two; two seconds is the latency of the
 ## screen noticing either.
@@ -90,8 +105,28 @@ var _state_path := STATE_FILE
 var _request_path := REQUEST_FILE
 var _front_dir := STORE_DIR.path_join("front")
 
+## The last search's results and the term the SERVICE says produced them --
+## which is not necessarily the term last asked for. See search_changed.
+var search_items: Array = []
+var search_term: String = ""
+
+## Who Steam is signed in as, from Steam's own loginusers.vdf by way of the
+## service. THE SHELL NEVER SEES A CREDENTIAL and never asks for one: signing in
+## happens inside Valve's client, which is the same boundary the missing Buy
+## button draws. What crosses into this file is a name and a yes/no.
+var account_signed_in := false
+var account_persona := ""
+
+## The wishlist, as appids in the order Valve returned them. The ITEMS are
+## assembled from the per-app detail cache -- see wishlist_items -- because the
+## wishlist endpoint returns appids and nothing else.
+var wishlist_appids: Array = []
+
 var _loaded := false
 var _last_featured_raw := ""
+var _last_search_raw := ""
+var _last_account_raw := ""
+var _last_wishlist_raw := ""
 
 ## Detail pages already read off disk, keyed by appid. A cache of file contents
 ## rather than of network answers -- the service owns freshness, and re-reading
@@ -124,6 +159,20 @@ func _ready() -> void:
 	# has a full store to draw and nothing to say about it yet, and that is the
 	# case this line exists for.
 	_load_featured()
+	# AND THE LAST SEARCH, which is not symmetry -- it is the fix for a stall
+	# that has a specific shape. The service answers a repeated term from disk by
+	# writing the state file and nothing else, and if the state was ALREADY
+	# `done search` that write changes no byte anywhere: no state transition, no
+	# poll reaction, no signal. A screen waiting for one would wait forever. So
+	# the results are on hand from startup and the screen renders them
+	# synchronously when the term it just asked for is the term already loaded;
+	# the signal is only ever the ASYNC arrival. See stores_screen's _open_search.
+	_load_search()
+	# The account and the wishlist, for _load_featured's reason: both survive a
+	# reboot on purpose, and a machine that booted with no network still knows
+	# whose Steam this is and what was on their list last time it looked.
+	_load_account()
+	_load_wishlist()
 
 
 # ---------------------------------------------------------------------------
@@ -135,6 +184,39 @@ func _ready() -> void:
 ## asks every time it opens costs Valve one request an hour at most.
 func request_featured() -> void:
 	_write_request(["featured"])
+
+
+## Ask who Steam is signed in as. Cheap by construction and safe offline: the
+## service answers it by reading one local file, without the cache window, the
+## failure cooldown or the network check the other requests go through.
+func request_account() -> void:
+	_write_request(["account"])
+
+
+## Ask for the signed-in account's wishlist. Answered from disk for an hour like
+## the front page, and answered with an empty shelf when nobody is signed in --
+## which is a state, not a failure.
+func request_wishlist() -> void:
+	_write_request(["wishlist"])
+
+
+## Search Valve's store for a term somebody typed on the keyboard.
+##
+## THE ONE REQUEST IN THIS SEAM THAT CARRIES FREE TEXT. _write_request already
+## strips the tab, newline and carriage return that would restructure the file
+## the service reads, and the service bounds the length and removes control
+## characters before anything else happens to it. What makes it SAFE rather than
+## merely tidy is on the root side: the term reaches a URL only through curl's
+## own percent-encoder, and never reaches a filename at all. See do_search.
+##
+## An empty term is refused here rather than sent: the service would reject it
+## anyway, and a request that exists only to be discarded is one more thing in
+## the journal to explain.
+func request_search(term: String) -> void:
+	var trimmed := term.strip_edges()
+	if trimmed.is_empty():
+		return
+	_write_request(["search", trimmed])
 
 
 ## Ask for one game's page. The appid is the number Valve uses; anything else
@@ -215,6 +297,12 @@ func _poll() -> void:
 	# state file was already `done` from a previous request.
 	if detail == "featured" or detail.is_empty():
 		_load_featured()
+	elif detail == "search":
+		_load_search()
+	elif detail == "account":
+		_load_account()
+	elif detail == "wishlist":
+		_load_wishlist()
 	elif detail.begins_with("app."):
 		var appid := int(detail.substr(4))
 		if appid > 0:
@@ -281,6 +369,141 @@ func _load_featured() -> void:
 		total += (category["items"] as Array).size()
 	ShellLog.info("steamfront: %d shelf/shelves, %d item(s)" % [categories.size(), total])
 	featured_changed.emit(categories)
+
+
+## The last search's results, from disk. Same raw-text comparison as the shelves
+## for the same reason -- but with one difference that matters: an EMPTY result
+## list is a real answer here and is emitted as one. "Nothing on Steam is called
+## that" is a sentence the screen has to be able to say, and it is not the same
+## sentence as "the search has not come back yet".
+##
+## Items are the same shape as a shelf's, deliberately, so the tile, the price
+## formatter and the detail view are all the ones that already exist.
+func _load_search() -> void:
+	var raw := _read_file(_front_dir.path_join("search.json"))
+	if raw == _last_search_raw:
+		return
+	_last_search_raw = raw
+
+	var found: Array = []
+	var term := ""
+	var parsed = JSON.parse_string(raw)
+	if parsed is Dictionary:
+		term = str(parsed.get("term", ""))
+		for item in parsed.get("items", []):
+			if not (item is Dictionary):
+				continue
+			var appid := int(item.get("appid", 0))
+			var name := str(item.get("name", ""))
+			# Same two-field floor as the shelves: an item with no appid cannot
+			# be opened and one with no name cannot be read.
+			if appid <= 0 or name.is_empty():
+				continue
+			found.append({
+				"appid": appid,
+				"name": name,
+				"discounted": bool(item.get("discounted", false)),
+				"discount_percent": int(item.get("discount_percent", 0)),
+				"original_price": int(item.get("original_price", 0)),
+				"final_price": int(item.get("final_price", 0)),
+				"currency": str(item.get("currency", "")),
+			})
+	elif not raw.strip_edges().is_empty():
+		ShellLog.warn("steamfront: the stored search is not in a shape this shell knows")
+
+	search_items = found
+	search_term = term
+	# The COUNT and not the term, matching the service: the term is text somebody
+	# typed and the journal is not where it belongs.
+	ShellLog.info("steamfront: %d search result(s)" % search_items.size())
+	search_changed.emit(search_term, search_items)
+
+
+## Who is signed in, from disk.
+func _load_account() -> void:
+	var raw := _read_file(_front_dir.path_join("account.json"))
+	if raw == _last_account_raw:
+		return
+	_last_account_raw = raw
+
+	var signed_in := false
+	var persona := ""
+	var parsed = JSON.parse_string(raw)
+	if parsed is Dictionary:
+		signed_in = bool(parsed.get("signed_in", false))
+		persona = str(parsed.get("persona", ""))
+
+	account_signed_in = signed_in
+	account_persona = persona
+	# WHETHER, never WHO, matching the service: a display name is somebody's and
+	# the journal is not where it goes.
+	ShellLog.info("steamfront: Steam is %s"
+		% ("signed in" if account_signed_in else "not signed in"))
+	account_changed.emit(account_signed_in, account_persona)
+
+
+## The wishlist's appids, from disk.
+func _load_wishlist() -> void:
+	var raw := _read_file(_front_dir.path_join("wishlist.json"))
+	if raw == _last_wishlist_raw:
+		return
+	_last_wishlist_raw = raw
+
+	var found: Array = []
+	var parsed = JSON.parse_string(raw)
+	if parsed is Dictionary:
+		for value in parsed.get("appids", []):
+			var appid := int(value)
+			if appid > 0:
+				found.append(appid)
+
+	wishlist_appids = found
+	var items := wishlist_items()
+	ShellLog.info("steamfront: %d wishlist appid(s), %d with a page to draw"
+		% [wishlist_appids.size(), items.size()])
+	wishlist_changed.emit(items)
+
+
+## The wishlist as drawable items, assembled from the per-app detail cache.
+##
+## ASSEMBLED RATHER THAN STORED, because the wishlist endpoint returns appids and
+## nothing else -- no name, no price, no picture. The service fills the gap by
+## fetching a detail page per appid (see do_wishlist for why that is the one
+## request here that makes more than one call, and how it is bounded), and those
+## pages already carry every field a tile draws in exactly the shape it wants.
+## Keeping a second copy in wishlist.json would be one more thing to go stale
+## against the file it was copied from.
+##
+## An appid whose page has not landed yet is SKIPPED rather than drawn blank: a
+## tile with no name is not a game somebody can recognise, and the shelf simply
+## fills in over the second or two the pages take on a cold machine.
+func wishlist_items() -> Array:
+	var items: Array = []
+	for appid in wishlist_appids:
+		var details := app_details(int(appid))
+		if details.is_empty():
+			continue
+		items.append(details)
+	return items
+
+
+## The small picture for a search result -- the 231x87 capsule, which is what
+## `storesearch` gives and what a list row is sized for. Deliberately its own
+## name and its own slot: writing it into the grid's `<appid>.jpg` would replace
+## a 616 px capsule with a third-width copy of itself the next time somebody
+## searched for a game that was already on a shelf.
+##
+## Falls back to the large capsule, so a result for a game the front page has
+## already fetched draws immediately rather than waiting for a second download.
+func search_art_path(appid: int) -> String:
+	if appid <= 0:
+		return ""
+	var art_dir := _front_dir.path_join("art")
+	var small := art_dir.path_join("%d.small.jpg" % appid)
+	if FileAccess.file_exists(small):
+		return small
+	var capsule := art_dir.path_join("%d.jpg" % appid)
+	return capsule if FileAccess.file_exists(capsule) else ""
 
 
 ## One application's detail page, read from disk and remembered. Empty when

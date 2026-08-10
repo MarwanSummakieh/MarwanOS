@@ -60,6 +60,7 @@ const StoreTab = preload("res://src/store_tab.gd")
 const CardMenu = preload("res://src/card_menu.gd")
 const StoreFrontTile = preload("res://src/store_front_tile.gd")
 const ActionRow = preload("res://src/action_row.gd")
+const Keyboard = preload("res://src/keyboard.gd")
 
 ## What the Steam page's install line says in each state the status seam can
 ## report. The same narration that lived on the rail card before the third
@@ -101,10 +102,17 @@ const APPCTL_ALERT_STATES := ["failed", "refused"]
 const HINT_OPEN := "Open store"
 const HINT_INSTALL := "Install"
 
-## WHAT THE PANEL IS SHOWING. Three renderings of one pane rather than three
+## WHAT THE PANEL IS SHOWING. Four renderings of one pane rather than four
 ## panes: with the content data-driven there is nothing for a second pane to
 ## hold, which was already this file's argument for one page pane per screen.
-enum { MODE_PAGE, MODE_GRID, MODE_DETAIL }
+##
+## MODE_SEARCH REUSES THE SHELF GRID rather than owning a second one, and that is
+## a deliberate reuse rather than a saving. A search result and a shelf item are
+## the same kind of thing -- the seam publishes them in the same shape for that
+## reason -- so they get the same tile, the same focus wiring, the same left-edge
+## doorway back to the tabs and the same detail page. What differs is the heading
+## above them and where B goes, which is what _search_active tracks.
+enum { MODE_PAGE, MODE_GRID, MODE_DETAIL, MODE_SEARCH }
 
 ## What the grid area says when there are no shelves to draw, by the seam's
 ## state word. EVERY ONE OF THESE IS A FIRST-CLASS RENDER -- the wifi screen's
@@ -131,6 +139,23 @@ const FRONT_ALERT_STATES := ["offline", "failed"]
 ## inside Valve's client where it belongs.
 const HINT_OPEN_IN_STEAM := "Open in Steam"
 
+## What the search half says when there is nothing to draw, by the seam's state
+## word. Same first-class-render argument as FRONT_STATE_LINES, and the same
+## table shape -- but the sentences differ because the situations do: a person
+## who has just typed a word is asking a question, and "Steam's store had nothing
+## to show" is not an answer to it.
+const SEARCH_STATE_LINES := {
+	"unknown": "Searching",
+	"idle": "Searching",
+	"fetching": "Searching",
+	"done": "Nothing on Steam matches that",
+	"offline": "No network -- searching the store needs one",
+	"failed": "Steam's store did not answer",
+}
+
+## What Y does, and it is the only button on this screen that opens a keyboard.
+const HINT_SEARCH := "Search"
+
 var _tabs: Array = []
 var _selected: Dictionary = {}
 var _hints: HBoxContainer = null
@@ -141,6 +166,7 @@ var _page_title: Label = null
 var _page_tagline: Label = null
 var _page_description: Label = null
 var _page_status: Label = null
+var _account_line: Label = null
 
 ## The storefront half of the pane: a scrolling column of shelves, or one line
 ## explaining why there are none.
@@ -176,6 +202,30 @@ var _detail_item: Dictionary = {}
 var _detail_tile: Control = null
 
 var _mode := MODE_PAGE
+
+## Whether the status line is currently saying something a person could act on,
+## as opposed to confirming a state they can already see. Set by _refresh_status,
+## which is the only thing that knows which sentence it just wrote, and read by
+## _refresh_page_chrome to decide whether the line survives a live storefront.
+var _status_is_news := false
+
+## Whether the grid currently holds SEARCH RESULTS rather than the shelves. Kept
+## separately from _mode because the two answer different questions and both are
+## needed at once: _mode says where the selection is standing (a game's page
+## opened from a result is MODE_DETAIL, but the grid behind it is still a search),
+## and this says what is in the grid underneath.
+var _search_active := false
+
+## The term the grid is currently showing results for, for the heading.
+var _search_shown := ""
+
+## Where B goes from a game's page -- the grid it was opened from, which is not
+## always the shelves. Without this, backing out of a result landed on the
+## storefront's front page and the search a person was halfway through reading
+## was simply gone.
+var _detail_from := MODE_GRID
+
+var _keyboard: Keyboard = null
 
 var _page_spacer: Control = null
 
@@ -265,6 +315,12 @@ func _ready() -> void:
 	Steamfront.featured_changed.connect(_on_featured_changed)
 	Steamfront.state_changed.connect(_on_front_state_changed)
 	Steamfront.app_changed.connect(_on_app_changed)
+	Steamfront.search_changed.connect(_on_search_changed)
+	# The account line and the wishlist shelf both react to their own arrivals:
+	# signing into Steam from Big Picture and coming back here is the case, and
+	# neither of them rides on the featured list's signal.
+	Steamfront.account_changed.connect(_on_account_changed)
+	Steamfront.wishlist_changed.connect(_on_wishlist_changed)
 
 	ShellLog.info("stores screen up with %d tabs" % _tabs.size())
 
@@ -321,6 +377,20 @@ func _build_page() -> Control:
 	_page_description.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_page_description.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	page.add_child(_page_description)
+
+	# THE ACCOUNT LINE, and it is what the trimmed prose left room for. Above the
+	# shelves rather than below them because it is the answer to "whose store is
+	# this" -- a question a person asks before they look at what is on it, and
+	# the one thing the old title and tagline never said. Hidden entirely until
+	# there is a storefront: on a machine with no Steam it would be a fact about
+	# nothing.
+	_account_line = Label.new()
+	_account_line.add_theme_font_size_override("font_size", TvTheme.SIZE_BODY)
+	_account_line.add_theme_color_override("font_color", TvTheme.TEXT_SECONDARY)
+	_account_line.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	_account_line.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_account_line.visible = false
+	page.add_child(_account_line)
 
 	_front = _build_front()
 	page.add_child(_front)
@@ -490,10 +560,20 @@ func _refresh_hints() -> void:
 	# on something else.
 	if _mode == MODE_DETAIL:
 		_hints.add_child(TvTheme.hint("A", HINT_OPEN_IN_STEAM))
+		# Named for where it actually goes, which is not always the same place.
+		# "Back to the store" under a result would point at the shelves the
+		# person never opened.
+		_hints.add_child(TvTheme.hint("B",
+			"Back to results" if _detail_from == MODE_SEARCH else "Back to the store"))
+		return
+	if _mode == MODE_SEARCH:
+		_hints.add_child(TvTheme.hint("A", "Open"))
+		_hints.add_child(TvTheme.hint("Y", "Search again"))
 		_hints.add_child(TvTheme.hint("B", "Back to the store"))
 		return
 	if _mode == MODE_GRID:
 		_hints.add_child(TvTheme.hint("A", "Open"))
+		_hints.add_child(TvTheme.hint("Y", HINT_SEARCH))
 		_hints.add_child(TvTheme.hint("B", "Back to stores"))
 		return
 
@@ -506,6 +586,10 @@ func _refresh_hints() -> void:
 	# glyph that font turns out not to carry would render as a box.
 	if _front_available() and not _tiles.is_empty():
 		_hints.add_child(TvTheme.hint("Right", "Browse the store"))
+	# Advertised wherever it works, for the doorway's reason: a keyboard behind a
+	# face button is not something anybody guesses at on a television.
+	if _front_available():
+		_hints.add_child(TvTheme.hint("Y", HINT_SEARCH))
 	# The desktop client is a second, deliberate way to open the same store
 	# application -- see Catalogue.steam_desktop_entry for why the in-client
 	# switch cannot be that way. Offered only while installed: X on a store
@@ -602,6 +686,10 @@ func _refresh_status() -> void:
 		_page_status.add_theme_color_override(
 			"font_color",
 			TvTheme.TEXT_ALERT if APPCTL_ALERT_STATES.has(Apps.state) else TvTheme.TEXT_SECONDARY)
+		# A request the person made moments ago is always news, including the
+		# ones that worked: "Removing" is the only feedback that button has.
+		_status_is_news = true
+		_refresh_page_chrome()
 		return
 
 	# Nothing in flight and the application is not here. This is what a store
@@ -611,6 +699,8 @@ func _refresh_status() -> void:
 			and SystemStatus.steam != "downloading" and SystemStatus.steam != "waiting-network":
 		_page_status.text = "Not installed -- A downloads and installs it"
 		_page_status.add_theme_color_override("font_color", TvTheme.TEXT_SECONDARY)
+		_status_is_news = true
+		_refresh_page_chrome()
 		return
 
 	var state := SystemStatus.steam
@@ -619,11 +709,29 @@ func _refresh_status() -> void:
 	# and "hung" to the person watching.
 	if not SystemStatus.steam_detail.is_empty():
 		_page_status.text = "Installing -- %s" % SystemStatus.steam_detail
+		_status_is_news = true
 	else:
 		_page_status.text = str(STEAM_INSTALL_LINES.get(state, STEAM_INSTALL_LINES["unknown"]))
+		# TWO SENTENCES THAT ARE NOT NEWS, and the second was found by looking at
+		# the card rather than by reading this function.
+		#
+		# "installed" under a working storefront is the machine confirming what
+		# the screen already shows. "unknown" -- "Checking the install state" --
+		# is worse than that: it is the machine saying it does not know, printed
+		# under a storefront it is visibly drawing, and it never resolves on a
+		# machine whose install state file was never written (Steam installed
+		# from this very card rather than by the first-boot installer is exactly
+		# that machine). Reaching this branch at all means the INSTALLED seam
+		# already said Steam is here -- see _front_available -- so the installer's
+		# vagueness adds nothing to a person's understanding of the screen.
+		#
+		# Every other word in that table is a reason the storefront might not be
+		# what somebody expected, and survives.
+		_status_is_news = state != "installed" and state != "unknown"
 	_page_status.add_theme_color_override(
 		"font_color",
 		TvTheme.TEXT_ALERT if STEAM_ALERT_STATES.has(state) else TvTheme.TEXT_SECONDARY)
+	_refresh_page_chrome()
 
 
 # ---------------------------------------------------------------------------
@@ -660,14 +768,36 @@ func _refresh_front() -> void:
 		_set_mode(MODE_PAGE)
 
 	_front.visible = available
-	# The long description and the storefront are alternatives, not neighbours:
-	# the description explains what pressing A does, which is the hint row's job
-	# once there is a shelf of games competing for the same pixels.
+	# THE PROSE AND THE STOREFRONT ARE ALTERNATIVES, NOT NEIGHBOURS, and this now
+	# covers every line of it rather than just the long one.
+	#
+	# The page was written for a card that had nothing on it: a title, a tagline,
+	# a paragraph and a wash standing in for the store it could not show. All four
+	# were doing the same job -- describing an absent thing -- and the moment
+	# Valve's actual front page is on screen every one of them is a caption on a
+	# photograph of itself. "Steam" over the Steam tab's own logo, "Valve's
+	# storefront and library" over Valve's storefront, and "Installed -- A opens
+	# the storefront" under the storefront it is already open on.
+	#
+	# So once there is a grid, the card is the grid. What survives is the ONE line
+	# that could still be news -- see _refresh_status for which, and why "the
+	# install is fine" is not it.
 	_page_description.visible = not available
 	_page_hero.visible = not available
 	_page_spacer.visible = not available
+	_refresh_page_chrome()
 
 	if not available:
+		return
+
+	# THE SEARCH OWNS THE GRID WHILE IT IS UP. This function runs on every tab
+	# focus, every install-state change and every arrival from the seam, and each
+	# of those would otherwise rebuild the shelves straight over somebody's
+	# results -- the storefront poll alone would do it within two seconds of the
+	# first search. The featured request below is skipped for the same reason:
+	# it is what triggers the arrival that does the rebuilding.
+	if _search_active:
+		_refresh_front_status()
 		return
 
 	if _tiles.is_empty() or _shelves_changed():
@@ -679,6 +809,11 @@ func _refresh_front() -> void:
 	# while its copy is under an hour old), and the alternative is a storefront
 	# that never refreshes on a machine nobody reboots.
 	Steamfront.request_featured()
+	# The account is cheaper still -- one local file, no network at all -- and it
+	# is the one that changes without warning: somebody signs into Steam from Big
+	# Picture and comes back here, and this is what notices.
+	Steamfront.request_account()
+	Steamfront.request_wishlist()
 
 
 func _shelves_changed() -> bool:
@@ -687,6 +822,14 @@ func _shelves_changed() -> bool:
 
 func _current_signature() -> String:
 	var signature := ""
+	# THE WISHLIST IS PART OF THE SIGNATURE, so a page landing for a wishlisted
+	# game rebuilds the shelf that was waiting for it. Without this the shelf
+	# would be drawn once, short by however many detail pages had not arrived in
+	# the first two seconds, and stay that way until the featured list changed.
+	signature += "wishlist:"
+	for item in Steamfront.wishlist_items():
+		signature += "%d," % int(item.get("appid", 0))
+	signature += ";"
 	for category in Steamfront.categories:
 		signature += "%s:" % str(category.get("id", ""))
 		for item in category.get("items", []):
@@ -697,14 +840,26 @@ func _current_signature() -> String:
 
 func _rebuild_grid() -> void:
 	_shelf_signature = _current_signature()
+	_clear_grid()
 
-	for child in _front_column.get_children():
-		_front_column.remove_child(child)
-		child.queue_free()
-	_tiles.clear()
-	_tile_rows.clear()
+	# THE WISHLIST GOES FIRST, ahead of Valve's own shelves, and that ordering is
+	# the argument for having it at all: everything below it is what a shop wants
+	# to sell, and this is what the person already said they wanted. It is also
+	# the only shelf on this screen that is about THEM.
+	#
+	# A synthetic category rather than a separate rendering path, so it gets the
+	# same heading, the same tiles, the same focus wiring and the same detail page
+	# as everything else. It disappears entirely when it is empty -- nobody signed
+	# in, an empty or private wishlist, or the pages not fetched yet all render as
+	# "no shelf", which is right: a heading over nothing is the machine drawing
+	# attention to something it has nothing to say about.
+	var shelves: Array = []
+	var wishlist: Array = Steamfront.wishlist_items()
+	if not wishlist.is_empty():
+		shelves.append({"id": "wishlist", "name": "Your wishlist", "items": wishlist})
+	shelves.append_array(Steamfront.categories)
 
-	for category in Steamfront.categories:
+	for category in shelves:
 		var items: Array = category.get("items", [])
 		if items.is_empty():
 			continue
@@ -802,13 +957,220 @@ func _refresh_front_status() -> void:
 	if have:
 		return
 	var state := Steamfront.state
-	_front_status.text = str(FRONT_STATE_LINES.get(state, FRONT_STATE_LINES["unknown"]))
+	# TWO TABLES, because an empty grid means two different things. With no
+	# search running it is the storefront that has nothing on it; with one
+	# running it is an answer to a question somebody asked, and "Steam's store
+	# had nothing to show" would be answering a different one.
+	var lines: Dictionary = SEARCH_STATE_LINES if _search_active else FRONT_STATE_LINES
+	_front_status.text = str(lines.get(state, lines["unknown"]))
 	_front_status.add_theme_color_override("font_color",
 		TvTheme.TEXT_ALERT if FRONT_ALERT_STATES.has(state) else TvTheme.TEXT_SECONDARY)
 
 
+# ---------------------------------------------------------------------------
+# Searching
+# ---------------------------------------------------------------------------
+
+## Y on the Steam page or in the shelves: the keyboard, then a search.
+##
+## Y RATHER THAN X OR OPTIONS, and the other two were both taken by things that
+## act on the Steam APPLICATION -- desktop mode and the remove menu. A third
+## button on the same screen doing something to a different subject is how a pad
+## stops being learnable, so search got the one face button this screen had left.
+##
+## Offered only where a search could be run: the storefront gate is the same one
+## the grid is behind (see _front_available), because a search that returned
+## results a person could not open would be a shop they cannot walk out of --
+## this file's own argument for why the grid waits for Steam to be installed.
+func _open_search() -> void:
+	if _keyboard != null or not _front_available():
+		return
+
+	_keyboard = Keyboard.new()
+	_keyboard.title_text = "Search Steam"
+	# NOT MASKED, unlike the only other caller. The wifi screen hides what is
+	# typed because it is somebody's passphrase; a search term is the one thing
+	# on this screen a person most needs to see while they thumbstick it.
+	_keyboard.masked = false
+	# Opens holding the last term, for the file manager's rename reason: coming
+	# back to narrow a search by one word should not be a full retype on a
+	# thumbstick. Empty on the first search of a session, which is correct --
+	# there is nothing to narrow.
+	_keyboard.initial_text = _search_shown
+	_keyboard.submitted.connect(_on_search_submitted)
+	_keyboard.cancelled.connect(_on_search_cancelled)
+	# A child of this screen rather than of the root, so closing the store can
+	# never leave a keyboard orphaned over the rail -- the wifi screen's rule.
+	add_child(_keyboard)
+	# Deaf while the keyboard is up: its own _unhandled_input owns B, and both
+	# reacting would close the keyboard and the screen behind it on one press.
+	set_process_unhandled_input(false)
+
+
+func _close_search_keyboard() -> void:
+	if _keyboard == null:
+		return
+	var keyboard := _keyboard
+	_keyboard = null
+	remove_child(keyboard)
+	keyboard.queue_free()
+	set_process_unhandled_input(true)
+
+
+func _on_search_cancelled() -> void:
+	_close_search_keyboard()
+	# Back to whatever was on screen before, with focus somewhere real: the
+	# keyboard held it, and a screen that comes back ringless is a screen the pad
+	# appears to have stopped working on.
+	_restore_focus_after_search()
+
+
+func _on_search_submitted(term: String) -> void:
+	_close_search_keyboard()
+	var trimmed := term.strip_edges()
+	if trimmed.is_empty():
+		_restore_focus_after_search()
+		return
+
+	_search_shown = trimmed
+	_search_active = true
+	_set_mode(MODE_SEARCH)
+	Steamfront.request_search(trimmed)
+
+	# RENDERED SYNCHRONOUSLY WHEN THE ANSWER IS ALREADY IN HAND, and this is not
+	# an optimisation -- it is the fix for a stall. The service answers a repeated
+	# term from disk by writing the state file, and if the state was already
+	# `done search` that write changes nothing at all: no transition, no signal.
+	# A screen that only ever rendered on search_changed would sit on "Searching"
+	# forever for the one case a person is most likely to hit, which is searching
+	# the same thing twice. See Steamfront._ready.
+	if Steamfront.search_term == trimmed and not Steamfront.search_items.is_empty():
+		_rebuild_search_grid(Steamfront.search_items)
+	else:
+		_clear_grid()
+	_refresh_front_status()
+	_refresh_hints()
+	_focus_first_result()
+	ShellLog.info("storefront search submitted (%d character(s))" % trimmed.length())
+
+
+## Where focus goes when the keyboard closes. The first result if there is one,
+## and otherwise the tab -- never nowhere.
+func _focus_first_result() -> void:
+	if not _tiles.is_empty():
+		var first: Control = _tiles[0]
+		first.grab_focus()
+		return
+	_restore_focus_after_search()
+
+
+func _restore_focus_after_search() -> void:
+	var tab := _selected_tab()
+	if tab != null:
+		tab.grab_focus()
+
+
+func _on_search_changed(term: String, items: Array) -> void:
+	# Only if this is the answer to the question on screen. The seam publishes
+	# whatever the service last searched for, and a stale term arriving under a
+	# newer one would replace a person's results with somebody else's.
+	if not _search_active or term != _search_shown:
+		return
+	var focused := get_viewport().gui_get_focus_owner()
+	var was_in_grid := _tiles.has(focused)
+	_rebuild_search_grid(items)
+	_refresh_front_status()
+	if _mode == MODE_SEARCH and (was_in_grid or focused == null) and not _tiles.is_empty():
+		var first: Control = _tiles[0]
+		first.grab_focus()
+
+
+## The results, into the same grid the shelves use. One heading and one block of
+## tiles, rather than the shelves' several.
+func _rebuild_search_grid(items: Array) -> void:
+	_clear_grid()
+	# The shelf signature is emptied rather than set, so that leaving search
+	# rebuilds the shelves from scratch instead of finding a signature that
+	# matches the grid it is not looking at.
+	_shelf_signature = ""
+
+	if items.is_empty():
+		_wire_grid_neighbours()
+		return
+
+	var heading := Label.new()
+	# The term is drawn back to the person because a results list with no
+	# question above it is a list of games with no reason. It is text they typed
+	# on this machine's own keyboard, which is the only text on this screen that
+	# did not come from Valve.
+	heading.text = "Results for \"%s\"" % _search_shown
+	heading.add_theme_font_size_override("font_size", TvTheme.SIZE_BODY)
+	heading.add_theme_color_override("font_color", TvTheme.TEXT_SECONDARY)
+	heading.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	heading.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_front_column.add_child(heading)
+
+	var grid := GridContainer.new()
+	grid.columns = TvTheme.STORE_GRID_COLUMNS
+	grid.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	grid.add_theme_constant_override("h_separation", TvTheme.STORE_GRID_GAP)
+	grid.add_theme_constant_override("v_separation", TvTheme.STORE_GRID_GAP)
+	_front_column.add_child(grid)
+
+	var row: Array = []
+	for item in items:
+		var tile := StoreFrontTile.new()
+		# The search endpoint's own picture, which is a third the width of a
+		# shelf capsule. See StoreFrontTile.small_art -- it still prefers the big
+		# one when the game is also on a shelf.
+		tile.small_art = true
+		tile.setup_item(item)
+		tile.opened.connect(_on_tile_opened)
+		tile.focus_entered.connect(_on_tile_focused)
+		grid.add_child(tile)
+		_tiles.append(tile)
+		row.append(tile)
+		# Accumulated per block for _rebuild_grid's reason: the last row is short
+		# whenever the result count is not a multiple of the column count, and
+		# index arithmetic across it wires "down" into a column that is not there.
+		if row.size() == TvTheme.STORE_GRID_COLUMNS:
+			_tile_rows.append(row)
+			row = []
+	if not row.is_empty():
+		_tile_rows.append(row)
+
+	_wire_grid_neighbours()
+	ShellLog.info("storefront search grid: %d result(s) in %d row(s)"
+		% [_tiles.size(), _tile_rows.size()])
+
+
+## Empty the grid and forget its focus structure. Shared by both rebuilds so the
+## two can never disagree about what "empty" leaves behind.
+func _clear_grid() -> void:
+	for child in _front_column.get_children():
+		_front_column.remove_child(child)
+		child.queue_free()
+	_tiles.clear()
+	_tile_rows.clear()
+
+
+## Leave the results and go back to the shelves. The grid is rebuilt rather than
+## restored: the shelf signature was emptied when the search took the grid over,
+## so _refresh_front finds it stale and puts Valve's front page back.
+func _leave_search() -> void:
+	_search_active = false
+	_search_shown = ""
+	_set_mode(MODE_PAGE)
+	_refresh_front()
+	_restore_focus_after_search()
+	ShellLog.info("storefront search left")
+
+
 func _on_featured_changed(_categories: Array) -> void:
-	if not _front_available():
+	# Same rule as _refresh_front: the shelves may not touch a grid that is
+	# showing search results. The storefront refreshes on its own schedule and
+	# a person reading their results is not expecting them to vanish.
+	if not _front_available() or _search_active:
 		return
 	if _shelves_changed():
 		var focused := get_viewport().gui_get_focus_owner()
@@ -829,6 +1191,33 @@ func _on_featured_changed(_categories: Array) -> void:
 	_refresh_front_status()
 
 
+## Signing into Steam from Big Picture and coming back here is the case this
+## exists for: only the line changes, so only the line is redrawn.
+func _on_account_changed(_signed_in: bool, _persona: String) -> void:
+	_refresh_page_chrome()
+
+
+## The wishlist arriving, or its detail pages filling in behind it. Goes through
+## the ordinary shelf path -- the signature now covers the wishlist, so the
+## rebuild happens exactly when its contents actually changed.
+func _on_wishlist_changed(_items: Array) -> void:
+	if not _front_available() or _search_active:
+		return
+	if not _shelves_changed():
+		return
+	var focused := get_viewport().gui_get_focus_owner()
+	var was_in_grid := _tiles.has(focused)
+	_rebuild_grid()
+	# A rebuild frees the node focus was on, and the wishlist shelf lands at the
+	# TOP -- so a shelf appearing under somebody would otherwise shift every tile
+	# down a row while their thumb was on one. Landing on the first tile is the
+	# same honest restore _on_featured_changed makes for the same reason.
+	if was_in_grid and not _tiles.is_empty():
+		var first: Control = _tiles[0]
+		first.grab_focus()
+	_refresh_front_status()
+
+
 func _on_front_state_changed(_state: String, _detail: String) -> void:
 	_refresh_front_status()
 	if _mode == MODE_DETAIL:
@@ -838,6 +1227,13 @@ func _on_front_state_changed(_state: String, _detail: String) -> void:
 func _on_app_changed(appid: int, _details: Dictionary) -> void:
 	if _mode == MODE_DETAIL and int(_detail_item.get("appid", 0)) == appid:
 		_render_detail()
+	# A DETAIL PAGE IS ALSO A WISHLIST TILE. The wishlist arrives as bare appids
+	# and its shelf is assembled from these pages, so on a cold machine the shelf
+	# is short until they land -- one tile at a time, each arriving here. Without
+	# this the shelf would freeze at whatever it managed in the first two seconds.
+	# _on_wishlist_changed does the signature check, so an appid that is not on
+	# the wishlist costs one comparison.
+	_on_wishlist_changed([])
 
 
 # ---------------------------------------------------------------------------
@@ -854,16 +1250,49 @@ func _set_mode(mode: int) -> void:
 	_mode = mode
 	if _detail != null:
 		_detail.visible = mode == MODE_DETAIL
-	# The title and the tagline belong to the STORE and the detail belongs to a
-	# game, so the game's page gets the pane to itself.
-	if _page_title != null:
-		_page_title.visible = mode != MODE_DETAIL
-	if _page_tagline != null:
-		_page_tagline.visible = mode != MODE_DETAIL
-	if _page_status != null:
-		_page_status.visible = mode != MODE_DETAIL
+	_refresh_page_chrome()
 	_refresh_front_status()
 	_refresh_hints()
+
+
+## Which of the store page's own lines are showing. ONE FUNCTION rather than the
+## two places that used to decide it, because they had started to disagree: the
+## mode switch hid the title for a game's page and the storefront switch hid the
+## description for a grid, and neither knew about the other, so a title survived
+## onto a page that had a whole storefront on it.
+##
+## Three rules, in order of how much they take away:
+##
+##   A GAME'S PAGE GETS THE PANE TO ITSELF. The title and the tagline belong to
+##   the STORE and the detail belongs to a game.
+##   A LIVE STOREFRONT REPLACES THE PROSE ABOUT IT. See _refresh_front.
+##   THE STATUS LINE SURVIVES ONLY WHEN IT IS NEWS. "Installed -- A opens the
+##   storefront", printed under an open storefront, is the machine describing
+##   what a person is looking at. An install that is downloading, out of space or
+##   failed is the opposite: it is the only place that says so, and hiding it to
+##   tidy the card would be hiding the one line somebody needs.
+func _refresh_page_chrome() -> void:
+	var detail := _mode == MODE_DETAIL
+	var storefront := _front_available()
+
+	if _page_title != null:
+		_page_title.visible = not detail and not storefront
+	if _page_tagline != null:
+		_page_tagline.visible = not detail and not storefront
+	if _page_status != null:
+		_page_status.visible = not detail and (not storefront or _status_is_news)
+
+	if _account_line != null:
+		_account_line.visible = not detail and storefront
+		if _account_line.visible:
+			# THE SIGN-IN PROMPT IS NOT A FORM, and this line is the whole of the
+			# account boundary on this screen. Nothing here takes a password:
+			# pressing A opens Valve's client, which is where signing in belongs
+			# for the same reason buying does. See the file header.
+			_account_line.text = ("Signed in as %s" % Steamfront.account_persona) \
+				if Steamfront.account_signed_in and not Steamfront.account_persona.is_empty() \
+				else ("Signed in" if Steamfront.account_signed_in
+					else "Not signed in -- A opens Steam, where you can sign in")
 
 
 ## Focus arriving on a tile IS entering the grid, and there is no key handler
@@ -874,13 +1303,19 @@ func _set_mode(mode: int) -> void:
 ## neighbour table exists to avoid.
 func _on_tile_focused() -> void:
 	if _mode == MODE_PAGE:
-		_set_mode(MODE_GRID)
-		ShellLog.info("storefront grid entered")
+		# Which grid it is depends on what is IN it, not on how focus got here:
+		# the left-edge doorway comes back to the tab and going right again
+		# returns to whatever the grid was still holding.
+		_set_mode(MODE_SEARCH if _search_active else MODE_GRID)
+		ShellLog.info("storefront %s entered" % ("results" if _search_active else "grid"))
 
 
 func _on_tile_opened(item: Dictionary) -> void:
 	_detail_item = item
 	_detail_tile = get_viewport().gui_get_focus_owner()
+	# Remembered BEFORE the mode changes, because after it there is no way left
+	# to tell a result from a shelf tile.
+	_detail_from = MODE_SEARCH if _search_active else MODE_GRID
 	_set_mode(MODE_DETAIL)
 	# Asked for BEFORE the first render, so the render draws whatever is
 	# already cached and the arrival redraws it. The seam answers from disk
@@ -893,7 +1328,7 @@ func _on_tile_opened(item: Dictionary) -> void:
 
 
 func _close_detail() -> void:
-	_set_mode(MODE_GRID)
+	_set_mode(_detail_from)
 	_refresh_front_status()
 	if is_instance_valid(_detail_tile) and _tiles.has(_detail_tile):
 		_detail_tile.grab_focus()
@@ -1132,6 +1567,23 @@ func _unhandled_input(event: InputEvent) -> void:
 		_open_card_menu()
 		return
 
+	# Y OPENS THE KEYBOARD, from the store page and from either grid. Not from a
+	# game's page: the selection there is one game, and a search box appearing
+	# over it would be a button that abandons what somebody was reading rather
+	# than acting on it -- B first, then Y, which is one more press and no
+	# ambiguity.
+	#
+	# TRIANGLE IS FREE ON THIS SCREEN. ui_shell_y is the on-screen keyboard's
+	# backspace shortcut and nothing else in the shell reads it, and this screen
+	# goes deaf the whole time that keyboard is up (see _open_search), so the two
+	# uses of the button can never both be live.
+	if event.is_action_pressed("ui_shell_y"):
+		if _mode == MODE_DETAIL or not _front_available():
+			return
+		get_viewport().set_input_as_handled()
+		_open_search()
+		return
+
 	# X on the Steam page: the desktop client, with the stick as a mouse. The
 	# entry's icon prefers appscan's resolved path -- the same art the tab
 	# draws -- so the launch splash shows the real logo, not the cache's
@@ -1165,6 +1617,13 @@ func _unhandled_input(event: InputEvent) -> void:
 	# places, not one screen with a mode.
 	if _mode == MODE_DETAIL:
 		_close_detail()
+		return
+	# THE RESULTS ARE A LEVEL OF THEIR OWN, and B unwinds them to the store page
+	# rather than to the shelves. Going "back" from a search to a grid the person
+	# never opened would be arriving somewhere new on the button whose whole
+	# meaning is returning.
+	if _mode == MODE_SEARCH:
+		_leave_search()
 		return
 	if _mode == MODE_GRID:
 		_set_mode(MODE_PAGE)

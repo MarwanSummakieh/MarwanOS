@@ -39,6 +39,7 @@ var _address_row: SettingsRow = null
 ## ActionRow, and GDScript resolves signal access against the static type --
 ## a SettingsRow-typed variable would fail to parse on `.activated.connect`.
 var _display_row: ActionRow = null
+var _window_row: ActionRow = null
 var _wifi_row: ActionRow = null
 var _wifi_screen: WifiScreen = null
 var _updates_row: ActionRow = null
@@ -153,6 +154,23 @@ func _ready() -> void:
 	list.add_child(_display_row)
 	_rows.append(_display_row)
 
+	# THE SECOND FLICKER SWITCH, and it is a separate row because it is a
+	# separate question. Display asks what the panel is being driven at; this
+	# asks what the compositor thinks Steam's windows are, which is the axis the
+	# 2026-08-11 report ("the moment steam runs the screen starts flickering")
+	# actually lives on. One row cycling twenty-five combinations would be a
+	# bisect nobody could finish; two rings of five is two afternoons at most.
+	#
+	# Named for the symptom rather than for the mechanism: "Steam windows" is
+	# what somebody with a flickering television is looking for on this screen.
+	# A person who has never read this repository cannot be expected to go
+	# looking under "Compositor".
+	_window_row = ActionRow.new()
+	_window_row.setup("Steam windows", _window_profile_value())
+	_window_row.activated.connect(_on_window_row_pressed)
+	list.add_child(_window_row)
+	_rows.append(_window_row)
+
 	_wifi_row = ActionRow.new()
 	_wifi_row.setup("Wi-Fi", _wifi_value())
 	_wifi_row.activated.connect(_on_wifi_row_pressed)
@@ -192,6 +210,7 @@ func _ready() -> void:
 	# theirs: the answer is root's to give, and a row that only updated on its
 	# own press would keep showing an optimistic guess after a refusal.
 	DisplayProfile.state_changed.connect(_on_display_state_changed)
+	WindowProfile.state_changed.connect(_on_window_state_changed)
 
 	ShellLog.info("settings screen up with %d rows" % _rows.size())
 
@@ -416,6 +435,39 @@ func _on_display_row_pressed() -> void:
 func _on_display_state_changed(_state: String, _profile: String) -> void:
 	if _display_row != null:
 		_display_row.set_value(_display_profile_value())
+
+
+## What window configuration is on screen, and what pressing A will do about it.
+##
+## THE PENDING CASE IS BROADER HERE than on the Display row, and deliberately.
+## WindowProfile.is_pending() is also true when the file and the RUNNING session
+## simply disagree -- somebody who pressed A last night and never restarted is in
+## that state with nothing outstanding at the seam. On the display axis that
+## situation is invisible because nothing keys off it; on this one `yield` is a
+## word the shell itself acts on, so "chosen" and "in force" being different is a
+## fact the row has to keep saying out loud rather than a transient.
+func _window_profile_value() -> String:
+	var profile_name := WindowProfile.label_for(WindowProfile.chosen_profile())
+	if WindowProfile.state == "refused":
+		return "%s -- not changed, press A to try again" % profile_name
+	if WindowProfile.is_pending():
+		return "%s -- restart to apply" % profile_name
+	return "%s -- A changes it, restart applies" % profile_name
+
+
+## Step to the next window profile and say so on the row immediately, for the
+## Display row's reason verbatim: the consumer polls twice a second and a button
+## that looks dead reads as a second fault.
+func _on_window_row_pressed() -> void:
+	var want := WindowProfile.request_next()
+	if _window_row != null:
+		_window_row.set_value(_window_profile_value())
+	ShellLog.info("window row: cycled to \"%s\"" % want)
+
+
+func _on_window_state_changed(_state: String, _profile: String) -> void:
+	if _window_row != null:
+		_window_row.set_value(_window_profile_value())
 
 
 ## Opens the Wi-Fi screen as a child of this one. A child rather than a third

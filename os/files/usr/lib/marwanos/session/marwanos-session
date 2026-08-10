@@ -273,6 +273,82 @@ readonly PROFILE_LIST="steady sixty-raw flat native raw"
 # NVIDIA flip path can find exotic. This is a headache, not a frame-rate budget.
 readonly PROFILE_REFRESH=60
 
+# ---------------------------------------------------------------------------
+# THE WINDOW PROFILE
+#
+# "the moment steam runs the screen starts flickering" -- the owner, 2026-08-11.
+#
+# A SECOND AXIS, and the separation is the design. The display profile above is
+# about the panel: refresh, composition, hardware planes, all of it aimed at a
+# flicker that was there at idle with nothing running. This one is about the
+# WINDOW STACK, and the report is narrower and more specific -- the screen is
+# calm until a second fullscreen client turns up, and then it is not. Those are
+# different causes with different levers, and the display block's own rule says
+# why they cannot share a switch: a profile that also moved the refresh rate
+# "would stop being an answer to which of these four things is flickering".
+#
+# WHAT IS ACTUALLY GOING ON, as far as it can be reasoned about from here. This
+# session passes --force-windows-fullscreen, which sizes EVERY window to the
+# nested display. The shell's window is one such window and it never goes away:
+# shell_root hides its Control while an application runs, but the window stays
+# mapped and fullscreen. Steam is not one window either -- it is a main window
+# plus notification popups, tooltips, hidden CEF helpers and an overlay, mapping
+# and unmapping constantly, every one of them forced fullscreen by that flag. So
+# steamcompmgr is repeatedly asked to choose a focus window from a pile of
+# fullscreen candidates that changes several times a second, and every time the
+# choice lands somewhere new the screen shows something new. From a sofa that is
+# a flicker.
+#
+# THAT IS A THEORY, NOT A MEASUREMENT, and the bench has been unreachable for
+# this whole investigation. Which is exactly why this ships as a switch: five
+# configurations, each removing a different part of the above, and whichever one
+# the owner stops on names the cause.
+#
+#   steam-split  -e AND --xwayland-count 2. What a Steam Deck actually runs.
+#                Steam's gamepadui expects two X servers -- its own UI on one,
+#                the game it launches on the other -- and this session has
+#                always given it one, so the client's windows and the game's
+#                windows share a single focus stack. This is the configuration
+#                closest to the one Valve tests, and the only theory here that
+#                has never been tried on this machine. FIRST IN THE CYCLE.
+#   loose        Drops --force-windows-fullscreen. If the flicker is Steam's
+#                transients being blown up to fullscreen one after another, this
+#                is the one flag responsible, and nothing else here removes it.
+#                The cost is real and worth knowing before choosing it: other
+#                applications go back to opening at whatever size they like.
+#   steam-aware  -e alone. Teaches steamcompmgr Steam's window hierarchy (the
+#                STEAM_GAME / STEAM_BIGPICTURE / STEAM_OVERLAY atoms) so it seats
+#                the one window that is the UI and leaves the transients alone.
+#                Half of what 58cc0e3 shipped, on its own so it can be judged.
+#   yield        The other half of 58cc0e3: the shell unmaps its own window once
+#                something else is provably drawing, leaving the compositor
+#                exactly one fullscreen candidate. No gamescope flags at all --
+#                this word is read by the SHELL, not by this script. See
+#                shell/src/window_profile.gd and Kiosk.yield_screen.
+#   plain        Today's exact behaviour, and THE DEFAULT. Every other word here
+#                is a theory about a flicker nobody has reproduced off the
+#                bench, and a theory is not a thing to boot somebody's only
+#                machine into without being asked.
+#
+# Under /var and no default file baked, for PROFILE_FILE's reason verbatim.
+readonly WINDOW_PROFILE_FILE="/var/marwanos/window.profile"
+
+# Today's behaviour. See `plain` above: this changes nothing until somebody
+# chooses otherwise from the couch.
+readonly WINDOW_DEFAULT="plain"
+
+# Where a rejected window profile lands, and the same word as the default
+# because the same argument applies twice: `plain` is the configuration this
+# machine has actually booted, repeatedly.
+readonly WINDOW_FALLBACK="plain"
+
+# In the order the settings screen cycles them: the untried theory first, then
+# the one flag nothing else removes, then the two halves of the reverted commit,
+# ending at today's behaviour. Kept identical to the PROFILES list in
+# /usr/lib/marwanos/window/profile so "the next one" means the same thing on
+# both sides of the seam.
+readonly WINDOW_LIST="steam-split loose steam-aware yield plain"
+
 log()  { printf '<6>%s: %s\n' "$TAG" "$*" >&2; }
 warn() { printf '<4>%s: %s\n' "$TAG" "$*" >&2; }
 err()  { printf '<3>%s: %s\n' "$TAG" "$*" >&2; }
@@ -429,6 +505,37 @@ read_display_profile() {
         warn "the profiles this image knows are: $PROFILE_LIST"
     fi
     printf '%s' "$PROFILE_DEFAULT"
+}
+
+# Which window profile this session runs, as one word from WINDOW_LIST.
+#
+# EVERY UNUSABLE ANSWER IS THE DEFAULT, and says so -- read_display_profile's
+# argument verbatim, and it matters more here rather than less: `plain` is
+# today's behaviour, so a machine that cannot read this file boots exactly as it
+# did before the file existed.
+read_window_profile() {
+    _want=""
+    if [ -r "$WINDOW_PROFILE_FILE" ]; then
+        IFS= read -r _want < "$WINDOW_PROFILE_FILE" 2>/dev/null || _want=""
+    fi
+
+    _want="$(printf '%s' "$_want" | tr -d '[:space:]')"
+
+    case " $WINDOW_LIST " in
+        *" $_want "*)
+            log "window profile '$_want' (from $WINDOW_PROFILE_FILE)"
+            printf '%s' "$_want"
+            return 0
+            ;;
+    esac
+
+    if [ -z "$_want" ]; then
+        log "no window profile set; using the default '$WINDOW_DEFAULT' (today's behaviour)"
+    else
+        warn "$WINDOW_PROFILE_FILE names a profile this image does not ship; using '$WINDOW_DEFAULT'"
+        warn "the window profiles this image knows are: $WINDOW_LIST"
+    fi
+    printf '%s' "$WINDOW_DEFAULT"
 }
 
 
@@ -760,10 +867,23 @@ start_gamescope() {
     # passes the gate under gamescope and fails it under cage -- which would read
     # as "Godot is broken under plan B" and is one of the criteria for flipping
     # the decision. Keep both flags anyway: they still cover anything run by hand.
+    # THE X SERVER COUNT IS A WINDOW-PROFILE DECISION, which is why it is a
+    # variable rather than the literal 1 it has been since M1. One server is
+    # right for everything this session used to host: a single Godot client with
+    # no second application in the picture. Steam's gamepadui is the case it was
+    # never right for -- Valve's own session gives Steam two, one for the client
+    # UI and one for the game it launches, so that a game mapping its window
+    # cannot land in the same focus stack as the client's notifications. See the
+    # WINDOW PROFILE block for why that is a candidate cause of the flicker.
+    _xwayland_count=1
+    case "$WINDOW_PROFILE" in
+        steam-split) _xwayland_count=2 ;;
+    esac
+
     set -- \
         --backend drm \
         --prefer-output "$MARWANOS_OUTPUT_CONNECTOR" \
-        --xwayland-count 1 \
+        --xwayland-count "$_xwayland_count" \
         --hide-cursor-delay "$MARWANOS_CURSOR_HIDE_MS" \
         --ready-fd "$_fifo"
 
@@ -795,13 +915,54 @@ start_gamescope() {
     # LOGGED EITHER WAY. Zen came up windowed on the bench and there was nothing
     # in the journal to say whether this flag had been passed -- so the next
     # boot answers that question in one line rather than by inference.
-    if gamescope_has_option "--force-windows-fullscreen"; then
+    #
+    # `loose` is the one profile that drops it, and dropping it is not free: this
+    # flag is what makes a placeholder satisfy M1's acceptance wording, and
+    # without it Zen and Kodi open at whatever size they choose on a television.
+    # It is a profile rather than a fix for that reason -- it is a diagnostic
+    # question ("is forcing Steam's popups fullscreen the flicker?"), and the
+    # answer being yes would mean finding a narrower way to keep it.
+    if [ "$WINDOW_PROFILE" = "loose" ]; then
+        log "window management: --force-windows-fullscreen is OFF for the 'loose' window profile"
+        log "applications open at their own size; if Steam is calm now, that flag was the flicker"
+    elif gamescope_has_option "--force-windows-fullscreen"; then
         set -- "$@" --force-windows-fullscreen
         log "window management: --force-windows-fullscreen is ON"
     else
         warn "gamescope --help ran and does NOT list --force-windows-fullscreen;"
         warn "applications will open at their own size and nothing will resize them"
     fi
+
+    # STEAM INTEGRATION, AND THIS REVERSES A DECISION MADE ABOVE. The comment a
+    # few lines up has said "No --steam ... that belongs to Steam, not to a
+    # compositor taking DRM master" since M1, and it was right when it was
+    # written: nothing on this machine was Steam, so a Steam-shaped flag was
+    # somebody else's session leaking into ours. Steam is now the workload.
+    #
+    # -e is what teaches steamcompmgr Steam's window hierarchy -- the
+    # STEAM_GAME / STEAM_BIGPICTURE / STEAM_OVERLAY atoms -- so it seats the one
+    # window that is the UI and leaves the notifications, tooltips and CEF
+    # helpers alone instead of treating each as another fullscreen candidate.
+    #
+    # PROBED AS --steam, PASSED AS -e, and they are the same option: the long
+    # form is what appears in --help, the short form is what the getopt table
+    # takes. Probing for the string that is actually printed is the whole point
+    # of gamescope_has_option -- see its header for why a wrong answer here is a
+    # silent loss of window management rather than a loud failure.
+    case "$WINDOW_PROFILE" in
+        steam-aware|steam-split)
+            if gamescope_has_option "--steam"; then
+                set -- "$@" -e
+                log "steam integration: -e is ON (steamcompmgr knows Steam's windows)"
+            else
+                warn "gamescope --help ran and does NOT list --steam;"
+                warn "the '$WINDOW_PROFILE' window profile cannot teach it Steam's window hierarchy"
+            fi
+            ;;
+        *)
+            log "steam integration: -e is OFF for the '$WINDOW_PROFILE' window profile"
+            ;;
+    esac
 
     # THE PROFILE'S OWN FLAGS. Everything above this line is the same under
     # every profile: the profile is a display configuration, not a different
@@ -908,7 +1069,7 @@ start_gamescope() {
         fi
     fi
 
-    log "starting gamescope with the '$DISPLAY_PROFILE' display profile: $*"
+    log "starting gamescope with the '$DISPLAY_PROFILE' display profile and the '$WINDOW_PROFILE' window profile: $*"
     gamescope "$@" &
     GAMESCOPE_PID=$!
 
@@ -961,6 +1122,14 @@ start_gamescope() {
     # gamescope's least-exercised path -- native Wayland clients under gamescope
     # are a long-standing broken area upstream -- to gain nothing a kiosk with no
     # decorations, no second window and no clipboard needs.
+    # FIRST TOKEN AND LAST TOKEN, which is what makes this survive
+    # --xwayland-count 2. With one server the handshake is "<x> <wayland>" and
+    # the two expansions take one each. With two it gains an X display in the
+    # middle, and first-and-last still lands on the primary X server -- the one
+    # the shell must run on -- and on the wayland name. An index-based parse
+    # would have picked the game's server for the shell the first time somebody
+    # chose the steam-split profile, which is a black screen for a shell that
+    # started perfectly well.
     DISPLAY="${_handshake%% *}"
     GAMESCOPE_WAYLAND_DISPLAY="${_handshake##* }"
     export DISPLAY GAMESCOPE_WAYLAND_DISPLAY
@@ -1109,6 +1278,21 @@ STEAM_SUPERVISOR_PID=""
 trap 'stop_gamescope; stop_background_steam' EXIT INT TERM
 
 DISPLAY_PROFILE="$(read_display_profile)"
+WINDOW_PROFILE="$(read_window_profile)"
+
+# THE SHELL IS TOLD WHAT THIS SESSION ACTUALLY APPLIED, and that is a different
+# fact from what /var/marwanos/window.profile says. Between somebody pressing A
+# on the settings row and the machine being restarted, the file names the NEXT
+# session's profile while this one is still running the old one -- and `yield` is
+# a word the shell acts on, so a shell that read the file would start unmapping
+# its own window the instant the row was pressed, several minutes before the
+# compositor it is coordinating with had changed at all.
+#
+# An environment variable rather than a state file because the session runs as
+# `player` and /run/marwanos is root's -- but it is also the honest shape: this
+# is the running session telling its own child what it did, which is exactly the
+# relationship DISPLAY and GAMESCOPE_WAYLAND_DISPLAY already have.
+export MARWANOS_WINDOW_PROFILE="$WINDOW_PROFILE"
 
 # A PROFILE CAN NEVER BRICK THIS MACHINE, and this is the whole of that promise.
 #
@@ -1130,19 +1314,38 @@ DISPLAY_PROFILE="$(read_display_profile)"
 # survives the reboot and the settings screen still names it, which is what lets
 # somebody see what they picked and pick again. A session that silently repaired
 # the file would be the compositor lever ADR 0005 removed, wearing a new hat.
+## BOTH AXES FALL BACK TOGETHER, and that is deliberate rather than lazy. The
+## retry's whole job is to reach a picture, so it has to go to the one
+## configuration this machine is known to boot -- and that is both known-good
+## words at once, not a known-good display profile still carrying whichever
+## window profile might have been what gamescope refused. `-e` on a gamescope
+## that does not take it, or --xwayland-count 2 on one that cannot start a second
+## server, fails in exactly the same place as a bad display flag does, and the
+## handshake cannot say which of the two caused it.
+##
+## Naming both in the journal matters for the same reason: the person reading it
+## has two settings rows to choose between and the message is what tells them
+## which one they changed last.
 start_gamescope_or_fall_back() {
     start_gamescope && return 0
 
-    if [ "$DISPLAY_PROFILE" = "$PROFILE_FALLBACK" ]; then
-        err "the '$PROFILE_FALLBACK' display profile could not start gamescope either"
+    if [ "$DISPLAY_PROFILE" = "$PROFILE_FALLBACK" ] && [ "$WINDOW_PROFILE" = "$WINDOW_FALLBACK" ]; then
+        err "the '$PROFILE_FALLBACK' display profile and '$WINDOW_FALLBACK' window profile could not start gamescope either"
         err "this is not a profile problem: there is nothing safer left to try"
         return 1
     fi
 
-    err "gamescope REJECTED the '$DISPLAY_PROFILE' display profile"
-    err "retrying ONCE with '$PROFILE_FALLBACK', which is this machine's known-good configuration"
+    err "gamescope REJECTED the '$DISPLAY_PROFILE' display profile with the '$WINDOW_PROFILE' window profile"
+    err "retrying ONCE with '$PROFILE_FALLBACK' + '$WINDOW_FALLBACK', which is this machine's known-good configuration"
     err "$PROFILE_FILE still says '$DISPLAY_PROFILE' -- change it from Settings > Display"
+    err "$WINDOW_PROFILE_FILE still says '$WINDOW_PROFILE' -- change it from Settings > Steam windows"
     DISPLAY_PROFILE="$PROFILE_FALLBACK"
+    WINDOW_PROFILE="$WINDOW_FALLBACK"
+    # RE-EXPORTED, because the shell has not started yet and what it is told has
+    # to be what this session actually applied. Without this line a failed
+    # `yield` boot would come up with the fallback's window handling and a shell
+    # still unmapping itself for a compositor that was no longer expecting it.
+    export MARWANOS_WINDOW_PROFILE="$WINDOW_PROFILE"
     start_gamescope
 }
 

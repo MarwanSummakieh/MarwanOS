@@ -228,7 +228,13 @@ func _process(_delta: float) -> void:
 ## screen beats clearing the pane: a failed descent that also lost the current
 ## view would be two failures for one press.
 func show_directory(new_path: String, focus_name: String = "") -> bool:
-	var listing := _read(new_path)
+	# `=` rather than `:=`, because _read returns Variant on purpose -- null is
+	# how a failed open is reported, and that is the whole of the next two lines.
+	# Inferring from it is a warning, this project treats warnings as errors, and
+	# the result was an export whose Files, Settings, Stores and Power autoloads
+	# all failed to compile in the editor's scan. The same idiom the storefront
+	# already uses for JSON.parse_string, for the same reason.
+	var listing = _read(new_path)
 	if listing == null:
 		return false
 

@@ -31,6 +31,18 @@ signal opened(item: Dictionary)
 
 var item: Dictionary = {}
 
+## Which picture this tile is for. A shelf tile has a 616x353 capsule waiting for
+## it; a SEARCH RESULT has whatever `storesearch` returned, which is a 231x87
+## one. Set before add_child, like every other configuration in this tree.
+##
+## It is a flag rather than two tile classes because the difference really is one
+## path lookup: the same rectangle, the same focus look, the same price line, the
+## same detail page behind it. See Steamfront.search_art_path, which prefers the
+## big capsule anyway when the game also happens to be on a shelf -- so a search
+## for something the front page is already showing draws at full fidelity and
+## only a game the shell has never fetched draws soft.
+var small_art: bool = false
+
 var _art: TextureRect = null
 var _wash: Panel = null
 
@@ -143,7 +155,8 @@ func refresh_art() -> void:
 		return
 	if _art.texture != null:
 		return
-	var path := Steamfront.art_path(int(item.get("appid", 0)))
+	var appid := int(item.get("appid", 0))
+	var path := Steamfront.search_art_path(appid) if small_art else Steamfront.art_path(appid)
 	if path.is_empty():
 		return
 	var image := Image.new()

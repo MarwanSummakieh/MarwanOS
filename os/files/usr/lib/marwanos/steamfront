@@ -96,8 +96,25 @@ NET_STATE="$RUN_DIR/network.state"
 FRONT_DIR=/var/marwanos/store/front
 ART_DIR="$FRONT_DIR/art"
 
+## Steam's own record of who is signed in. The same root marwanos-appscan reads
+## the library from, and the same fixed /var/home/player for the same reason:
+## this appliance has exactly one user, created by sysusers at uid 1000.
+##
+## WHAT THIS FILE IS AND IS NOT. It is the client's list of accounts that have
+## logged in on this machine, holding a SteamID64, an account name, a display
+## name and a "most recent" flag. It holds NO PASSWORD and no token -- those live
+## in `config.vdf` and the keyring, and nothing here reads either. That boundary
+## is the whole design of this feature: the shell learns WHO is signed in by
+## looking at what Steam already wrote down, and signing in remains something
+## that happens inside Valve's client where the password belongs.
+STEAM_DATA=/var/home/player/.var/app/com.valvesoftware.Steam/.local/share/Steam
+LOGINUSERS="$STEAM_DATA/config/loginusers.vdf"
+
+API_WISHLIST='https://api.steampowered.com/IWishlistService/GetWishlist/v1/'
+
 API_FEATURED='https://store.steampowered.com/api/featuredcategories'
 API_APP='https://store.steampowered.com/api/appdetails'
+API_SEARCH='https://store.steampowered.com/api/storesearch/'
 
 ## THE CATEGORIES, and this is a judgement made against the real response rather
 ## than from the endpoint's documentation (there is none). What comes back is
@@ -140,6 +157,25 @@ CACHE_SECONDS=3600
 ## one request per visit; with it, the worst a person leaning on the button can
 ## do is one request a minute.
 RETRY_SECONDS=60
+
+## How many search results to keep. The endpoint returns ten for most terms and
+## the shell draws them as a list rather than a capsule grid, so this is about
+## how far a thumb travels rather than about response size.
+SEARCH_RESULTS=12
+
+## How long a search answer is served from disk before the term is asked again.
+## A MINUTE, NOT AN HOUR, and the difference from CACHE_SECONDS is the point: a
+## storefront's front page is the same all evening, but somebody who searches
+## "portal", backs out and searches "portal" again is checking something, and an
+## hour-old answer would make the second search look broken. A minute is still
+## enough that walking in and out of a result cannot become a request per visit.
+SEARCH_CACHE_SECONDS=60
+
+## The longest search term this will send. Steam's own box accepts more, but a
+## term is typed on a television with a thumbstick -- nobody reaches sixty-four
+## characters on purpose, and the cap is what keeps a request file from becoming
+## an arbitrarily long URL.
+SEARCH_TERM_MAX=64
 
 ## How often to look for a request. Matches the other three seams: a person has
 ## just pressed a button and is watching the screen.
@@ -492,6 +528,399 @@ do_app() {
 
 
 # ---------------------------------------------------------------------------
+# account
+# ---------------------------------------------------------------------------
+
+## Who Steam is signed in as, from Steam's own loginusers.vdf.
+##
+## Prints `<steamid64>TAB<persona>` and returns 0, or returns 1 for "nobody, or
+## nothing readable" -- which are deliberately the same answer. A machine where
+## Steam has never been opened, one where the file is malformed, and one where
+## the person signed out all mean the same thing to the screen: there is no
+## account to name.
+##
+## THE FORMAT IS VALVE KeyValues, one `"key" "value"` pair per line inside
+## nested braces, and this needs BLOCK CONTEXT where marwanos-appscan's acf_get
+## does not: the SteamID is the name of the block, not a field inside it. So it
+## is a small state machine rather than a reuse of that function.
+##
+##   "users" { "76561198…" { "PersonaName" "…"  "MostRecent" "1" … } … }
+##
+## MostRecent picks the account when several have logged in here; the newest
+## Timestamp is the tie-break, because a file written by an older client may
+## carry no MostRecent at all.
+##
+## EVERYTHING IN THIS FILE IS UNTRUSTED. It sits under /var/home/player, which
+## the session user owns and can write. Two fields leave this function and they
+## are treated differently on purpose:
+##
+##   * The STEAMID goes into a URL, so it is checked to be exactly digits by the
+##     caller before any request is built from it -- do_app's rule, for do_app's
+##     reason.
+##   * The PERSONA is only ever displayed. It is stripped of control characters
+##     and capped here, and it reaches JSON through jq's --arg, which quotes and
+##     escapes it. It never reaches a URL, a path or a shell word.
+steam_account() {
+    local line key value
+    local block="" recent="" newest="" newest_ts=0
+    # Only the personas need remembering per account. The newest timestamp is
+    # tracked as it goes rather than stored, because nothing ever needs to ask
+    # about an account that is not the winner.
+    local -A personas=()
+
+    [ -r "$LOGINUSERS" ] || return 1
+
+    local inner
+    while IFS= read -r line || [ -n "$line" ]; do
+        # Strip leading whitespace so the quote tests below are about structure
+        # rather than about indentation, which Valve's writer has changed before.
+        line="${line#"${line%%[![:space:]]*}"}"
+
+        # A BLOCK HEADER IS A QUOTED TOKEN ALONE ON ITS LINE: "76561198…".
+        #
+        # Telling that apart from `"key"   "value"` needs more than "starts and
+        # ends with a quote", because a pair does too -- and the first version of
+        # this loop used exactly that glob, so every PersonaName line was read as
+        # a block header, failed the digits test, and cleared the block that had
+        # just been opened. The result was a parser that found nobody signed in
+        # on a perfectly ordinary file. Caught by the fixtures rather than on the
+        # bench, which is the only reason it is a comment and not a bug report.
+        #
+        # So: strip the outer quotes and require that what is left has NO quote
+        # in it. A pair fails that and falls through to the branch below.
+        case "$line" in
+            \"*\")
+                inner="${line#\"}"
+                inner="${inner%\"}"
+                case "$inner" in
+                    *\"*) ;;
+                    *)
+                        case "$inner" in
+                            ''|*[!0-9]*) block="" ;;
+                            *) block="$inner" ;;
+                        esac
+                        continue
+                        ;;
+                esac
+                ;;
+        esac
+
+        [ -n "$block" ] || continue
+
+        case "$line" in
+            \"*\"*\"*\"*)
+                key="${line#\"}"; key="${key%%\"*}"
+                value="${line#*\"$key\"}"
+                value="${value#*\"}"; value="${value%%\"*}"
+                case "$key" in
+                    PersonaName) personas["$block"]="$value" ;;
+                    MostRecent)  [ "$value" = "1" ] && recent="$block" ;;
+                    Timestamp)
+                        case "$value" in
+                            ''|*[!0-9]*) ;;
+                            *) if [ "$value" -gt "$newest_ts" ]; then
+                                   newest_ts="$value"; newest="$block"
+                               fi ;;
+                        esac
+                        ;;
+                esac
+                ;;
+        esac
+    done < "$LOGINUSERS"
+
+    local chosen="${recent:-$newest}"
+    [ -n "$chosen" ] || return 1
+
+    local persona="${personas[$chosen]:-}"
+    persona="$(printf '%s' "$persona" | tr -d '[:cntrl:]')"
+    persona="${persona:0:64}"
+
+    printf '%s\t%s' "$chosen" "$persona"
+}
+
+
+## Publish who is signed in. LOCAL ONLY -- this touches no network at all, which
+## is why it runs before the online check rather than after it: a machine with no
+## network still knows perfectly well whose Steam is installed on it, and a card
+## that forgot the account every time the wifi dropped would be lying about
+## something it can see.
+##
+##   { "request": "account", "fetched": <epoch>, "signed_in": true,
+##     "steamid": "765611…", "persona": "Marwan" }
+##
+## `signed_in: false` with no other fields is a real answer and the common one on
+## a fresh machine.
+do_account() {
+    local found steamid="" persona="" body
+
+    if found="$(steam_account)"; then
+        steamid="${found%%	*}"
+        persona="${found#*	}"
+        [ "$persona" = "$found" ] && persona=""
+    fi
+
+    # DIGITS ONLY, and this is the load-bearing check for everything downstream:
+    # the id is what do_wishlist puts in a URL. Seventeen is the length of every
+    # SteamID64 Valve has issued; the range test is belt and braces on top.
+    case "$steamid" in
+        ''|*[!0-9]*) steamid="" ;;
+        ?????????????????) ;;
+        *) steamid="" ;;
+    esac
+
+    if [ -n "$steamid" ]; then
+        body="$(jq -nc --arg id "$steamid" --arg persona "$persona" \
+            --argjson now "$(date +%s)" \
+            '{request: "account", fetched: $now, signed_in: true,
+              steamid: $id, persona: $persona}' 2>/dev/null)" || body=""
+    else
+        body="$(jq -nc --argjson now "$(date +%s)" \
+            '{request: "account", fetched: $now, signed_in: false,
+              steamid: "", persona: ""}' 2>/dev/null)" || body=""
+    fi
+
+    if [ -z "$body" ]; then
+        err "could not describe the Steam account"
+        state failed "account"
+        return
+    fi
+
+    publish account "$body" || { state failed "cannot write"; return; }
+    # WHETHER, never WHO. The persona is somebody's display name and the journal
+    # is a log a person reads to triage a machine, not a place to copy it into.
+    if [ -n "$steamid" ]; then
+        info "Steam is signed in"
+    else
+        info "Steam is not signed in, or has never been opened on this machine"
+    fi
+    state "done" account
+}
+
+
+# ---------------------------------------------------------------------------
+# wishlist
+# ---------------------------------------------------------------------------
+
+## The signed-in account's wishlist, as a shelf.
+##
+## KEYLESS, AND THAT WAS THE WHOLE QUESTION. Steam's owned-games endpoints all
+## want a Web API key now -- the old `?xml=1` profile route redirects to a login
+## page (measured 2026-08-11) -- and a key is a credential this appliance has
+## nowhere to keep and no way for its owner to obtain from a couch. The WISHLIST
+## is the one part of an account that is still readable without one:
+## IWishlistService/GetWishlist takes a SteamID64 and nothing else. A private
+## wishlist answers `{"response":{}}`, which reads here as an empty shelf --
+## correct, and the same rendering as having no wishlist at all.
+##
+## THE OWNED LIBRARY IS DELIBERATELY NOT HERE, and not because of the key. Every
+## installed Steam game is ALREADY on the home rail: marwanos-appscan reads the
+## appmanifests and emits a card each. A "your library" shelf on the store card
+## would be the machine's own library listed a second time, which is the exact
+## thing stores_screen.gd's header says the deleted apps shelf was removed for.
+##
+## THIS IS THE ONE REQUEST THAT MAKES MORE THAN ONE CALL, and the header's rate
+## rules are amended rather than quietly broken:
+##
+##   * One call for the wishlist itself.
+##   * Then, for at most ITEMS_PER_CATEGORY of them, one call each -- and ONLY
+##     for the ones with no detail page already on disk. GetWishlist returns
+##     appids and nothing else: no name, no price, no picture. There is no
+##     batched endpoint that fills that gap (appids= with more than one id is
+##     rejected for every filter except price_overview, measured the same day),
+##     so it is per-app or it is a shelf of numbers.
+##   * A wishlist is stable, so the steady state after the first fetch is ZERO
+##     extra calls. The worst case is eight, once, for somebody who has just
+##     added eight games, and it is bounded by the same constant that bounds
+##     every shelf on this screen.
+do_wishlist() {
+    local steamid="$1" raw appids count=0 fetched=0 appid body
+
+    raw="$(curl -fsSL --max-time "$CURL_MAX_TIME" --retry 1 \
+        --get --data-urlencode "steamid=$steamid" "$API_WISHLIST" 2>/dev/null)" || raw=""
+    if [ -z "$raw" ]; then
+        err "Steam's wishlist endpoint did not answer"
+        state failed "no answer"
+        return
+    fi
+
+    # Sorted by the order Valve returns them, capped, and appids only.
+    appids="$(printf '%s' "$raw" | jq -r --argjson n "$ITEMS_PER_CATEGORY" \
+        '[(.response.items // [])[] | .appid | select(type == "number")][0:$n][]' 2>/dev/null)" \
+        || appids=""
+
+    # THE DETAIL PAGES, one per appid that has none. do_app is reused whole
+    # rather than reimplemented: it already writes app.<id>.json in the shape the
+    # shell reads, fetches the screenshot and the header, and refuses anything
+    # that is not digits. What is NOT reused is its state() calls -- they would
+    # narrate eight sub-fetches to a screen waiting for one answer -- so the
+    # state file is rewritten at the end regardless of what do_app left there.
+    for appid in $appids; do
+        case "$appid" in ''|*[!0-9]*) continue ;; esac
+        count=$(( count + 1 ))
+        if [ -f "$FRONT_DIR/app.$appid.json" ]; then
+            continue
+        fi
+        do_app "$appid"
+        fetched=$(( fetched + 1 ))
+    done
+
+    # The shelf itself is just the ordered appids: every field the tiles draw is
+    # already in the per-app files the loop above guaranteed. Storing names here
+    # too would be a second copy to go stale.
+    body="$(printf '%s' "$raw" | jq -c --argjson n "$ITEMS_PER_CATEGORY" \
+        --argjson now "$(date +%s)" \
+        '{request: "wishlist", fetched: $now,
+          appids: [(.response.items // [])[] | .appid | select(type == "number")][0:$n]}' \
+        2>/dev/null)" || body=""
+
+    if [ -z "$body" ]; then
+        err "Steam's wishlist answer could not be parsed"
+        state failed "unreadable answer"
+        return
+    fi
+
+    publish wishlist "$body" || { state failed "cannot write"; return; }
+    info "wishlist: $count item(s), $fetched page(s) newly fetched"
+    state "done" wishlist
+}
+
+
+# ---------------------------------------------------------------------------
+# search
+# ---------------------------------------------------------------------------
+
+## One search, reshaped into the same item structure the shelves use:
+##
+##   { "request": "search", "fetched": <epoch>, "term": "portal",
+##     "items": [ { "appid": 620, "name": "Portal 2", "discounted": false,
+##                  "discount_percent": 0, "original_price": 999,
+##                  "final_price": 999, "currency": "USD" }, ... ] }
+##
+## THE SAME SHAPE ON PURPOSE. A search result and a shelf item are the same kind
+## of thing -- a game with a name and a price that opens a detail page -- so
+## giving them one structure means the shell has one renderer, one price
+## formatter and one detail path for both. A second shape would have been a
+## second set of bugs about money.
+##
+## THIS IS THE FIRST REQUEST IN THIS SEAM THAT CARRIES FREE TEXT, and that is
+## worth naming because every other one carries a fixed word or digits. The term
+## comes out of a file an unprivileged process wrote, and it reaches three places
+## that would each be a different kind of wrong:
+##
+##   * A URL. Handled by `curl --get --data-urlencode`, which percent-encodes the
+##     value itself. Building the query by hand is the one thing not done here --
+##     an ampersand in a search term would otherwise append a parameter of
+##     somebody else's choosing to a request this machine makes.
+##   * A FILENAME. It never reaches one. The result is always `search.json`, a
+##     fixed name, which is why do_app's digits-only check has no counterpart
+##     here: there is nothing for a traversal to traverse.
+##   * A SHELL WORD. It never reaches one either -- it is passed as a single
+##     argument to curl and as --arg to jq, both of which take it as data.
+##
+## What the caller has already done is bound its LENGTH and strip control
+## characters; see the loop. Neither of those is a safety property, they are
+## politeness -- the three above are the safety properties.
+##
+## ONE API CALL, like every other request here, and this endpoint is unusually
+## kind about it: `storesearch` returns the name, the price AND a capsule URL
+## for every hit, so a page of results costs exactly one request no matter how
+## many games are on it. The prices come back in the same minor units as
+## `featuredcategories` (measured 2026-08-11: Portal 2 at 999 USD), so the
+## shell's divide-by-100 is right here too.
+do_search() {
+    local term="$1" raw body count
+
+    # `--get --data-urlencode` rather than an interpolated query string. See the
+    # header: this is the line that keeps a search for "half-life & portal" from
+    # being a request with two parameters in it.
+    raw="$(curl -fsSL --max-time "$CURL_MAX_TIME" --retry 1 \
+        --get --data-urlencode "term=$term" --data-urlencode "l=english" \
+        "$API_SEARCH" 2>/dev/null)" || raw=""
+    if [ -z "$raw" ]; then
+        err "Steam's search endpoint did not answer"
+        state failed "no answer"
+        return
+    fi
+
+    body="$(printf '%s' "$raw" | jq -c \
+        --argjson n "$SEARCH_RESULTS" \
+        --arg term "$term" \
+        --argjson now "$(date +%s)" '
+        {
+            request: "search",
+            fetched: $now,
+            term: $term,
+            items: [
+                (.items // [])[]
+                | select((.id | type) == "number")
+                | select(((.name // "") | length) > 0)
+                | {
+                    appid: .id,
+                    name: .name,
+                    # storesearch has no discount fields at all -- it reports
+                    # `initial` and `final` and leaves the reader to notice they
+                    # differ. So the discount is DERIVED here rather than
+                    # invented in the shell: same three keys the shelves carry,
+                    # computed from the two numbers this endpoint does give.
+                    discounted: (((.price.initial // 0) > (.price.final // 0))
+                                 and ((.price.final // 0) > 0)),
+                    discount_percent: (
+                        if ((.price.initial // 0) > 0) and ((.price.final // 0) > 0)
+                           and ((.price.initial) > (.price.final))
+                        then (((.price.initial - .price.final) * 100 / .price.initial) | floor)
+                        else 0 end),
+                    original_price: (.price.initial // 0),
+                    final_price: (.price.final // 0),
+                    currency: (.price.currency // "")
+                  }
+            ][0:$n]
+        }' 2>/dev/null)" || body=""
+
+    if [ -z "$body" ]; then
+        err "Steam's search answer could not be parsed"
+        state failed "unreadable answer"
+        return
+    fi
+
+    # AN EMPTY RESULT IS PUBLISHED, and this is the one place that differs from
+    # do_featured's "never overwrite a good answer with an empty one". A search
+    # with no hits is a REAL ANSWER about the term that was typed -- "nothing
+    # here called that" -- and keeping the previous term's results on screen
+    # instead would be the shell answering a question nobody asked. The state
+    # file still says `done`, because the request succeeded; it is the item count
+    # that is zero, and the shell has a sentence for that.
+    count="$(printf '%s' "$body" | jq -r '.items | length' 2>/dev/null)" || count=0
+    case "$count" in ''|*[!0-9]*) count=0 ;; esac
+
+    publish search "$body" || { state failed "cannot write"; return; }
+    # The COUNT, never the term: it came out of a request file an unprivileged
+    # process wrote, and this is a log a person reads to triage a machine.
+    info "storefront search returned $count result(s)"
+
+    # THE PICTURES, into a name of their own. `tiny_image` is a 231x87 capsule --
+    # a third the width of the `large_capsule_image` the shelves fetch -- so it
+    # lands as `<appid>.small.jpg` rather than overwriting the grid's art with a
+    # smaller copy of it. The shell draws search results as a list of rows at
+    # about that size, which is why the small one is the right picture rather
+    # than a compromise; opening a result still fetches the full screenshot
+    # through do_app.
+    local appid url fetched=0
+    while IFS=$'\t' read -r appid url; do
+        [ -n "$appid" ] || continue
+        case "$appid" in ''|*[!0-9]*) continue ;; esac
+        fetch_art "$url" "$appid.small.jpg" && fetched=$(( fetched + 1 ))
+    done < <(printf '%s' "$raw" | jq -r \
+        --argjson n "$SEARCH_RESULTS" '
+        (.items // [])[0:$n][]
+        | select((.id | type) == "number")
+        | "\(.id)\t\(.tiny_image // "")"' 2>/dev/null)
+
+    info "$fetched of $count search picture(s) on disk"
+    state "done" search
+}
+
+
+# ---------------------------------------------------------------------------
 # The loop
 # ---------------------------------------------------------------------------
 
@@ -530,9 +959,46 @@ while :; do
         [ "$arg" = "$line" ] && arg=""
 
         name=""
+        # How long a stored answer for THIS request stays good. Per-verb rather
+        # than one constant because the two kinds of answer go stale at
+        # completely different rates -- see SEARCH_CACHE_SECONDS.
+        cache_window="$CACHE_SECONDS"
         case "$verb" in
             featured)
                 name=featured
+                ;;
+            account)
+                name=account
+                ;;
+            wishlist)
+                name=wishlist
+                ;;
+            search)
+                # THE TERM IS BOUNDED AND STRIPPED HERE, and neither of those is
+                # what makes it safe -- do_search's header lists the three
+                # properties that do. This is politeness: a term nobody could
+                # have typed on a thumbstick is not worth sending, and control
+                # characters in a request file are a sign of something other
+                # than a person.
+                #
+                # Printable ASCII plus space is deliberately NOT the rule. Steam
+                # sells games with accents and CJK titles in them and a person
+                # may reasonably search for one, so what is removed is the
+                # control range specifically, and the length cap does the rest.
+                arg="$(printf '%s' "$arg" | tr -d '[:cntrl:]')"
+                arg="${arg:0:$SEARCH_TERM_MAX}"
+                # A term of only spaces is not a search. Trimmed for the test
+                # rather than for the request -- Steam can decide what internal
+                # spacing means.
+                case "$(printf '%s' "$arg" | tr -d '[:space:]')" in
+                    "") arg="" ;;
+                esac
+                if [ -z "$arg" ]; then
+                    warn "ignoring a search request with no term in it"
+                else
+                    name=search
+                    cache_window="$SEARCH_CACHE_SECONDS"
+                fi
                 ;;
             app)
                 # DIGITS ONLY, AND THIS IS THE LOAD-BEARING CHECK in the whole
@@ -559,11 +1025,39 @@ while :; do
                 ;;
         esac
 
+        # ACCOUNT IS ANSWERED BEFORE EVERY GATE BELOW, and that is the point of
+        # it rather than an exception to the rules. It reads one local file and
+        # opens no socket, so the cache window, the failure cooldown and the
+        # online check are all answering questions it does not ask -- and the
+        # one that would actually hurt is `online`: a machine with no network
+        # still knows perfectly well whose Steam is installed on it, and a card
+        # that forgot the account whenever the wifi dropped would be forgetting
+        # something it can see from here.
+        if [ "$name" = "account" ]; then
+            do_account
+            continue
+        fi
+
         if [ -n "$name" ]; then
             cached="$FRONT_DIR/$name.json"
             now="$(date +%s)"
 
-            if [ -f "$cached" ] && [ "$(age_of "$cached")" -lt "$CACHE_SECONDS" ]; then
+            # A CACHED SEARCH ONLY COUNTS FOR THE SAME TERM. Without this a
+            # second search inside the cache window would be answered with the
+            # first one's results -- the file is always search.json, so freshness
+            # alone cannot tell the two apart, and the failure would look like a
+            # search box that ignores what is typed into it.
+            #
+            # Guarded on the file existing rather than letting the redirect fail:
+            # `< a-file-that-is-not-there` is a shell error on stderr, and this
+            # loop's stderr is the journal.
+            if [ "$verb" = "search" ] && [ -f "$cached" ] \
+                && [ "$(jq -r '.term // ""' < "$cached" 2>/dev/null)" != "$arg" ]; then
+                cache_window=0
+            fi
+
+            if [ -f "$cached" ] && [ "$cache_window" -gt 0 ] \
+                && [ "$(age_of "$cached")" -lt "$cache_window" ]; then
                 # ANSWERED FROM DISK, with the network untouched -- see the
                 # header's rate-courtesy list. The shell re-reads the same file
                 # it would have read anyway; `done` is what tells it to.
@@ -588,6 +1082,35 @@ while :; do
                 case "$verb" in
                     featured) do_featured ;;
                     app)      do_app "$arg" ;;
+                    search)   do_search "$arg" ;;
+                    wishlist)
+                        # The id is looked up here rather than passed in: a
+                        # SteamID arriving in a request file would be the shell
+                        # telling root whose wishlist to fetch, and the shell has
+                        # no business naming an account. Steam's own file is the
+                        # authority, and do_account has already checked its shape.
+                        wl_found=""
+                        wl_id=""
+                        if wl_found="$(steam_account)"; then
+                            wl_id="${wl_found%%	*}"
+                        fi
+                        case "$wl_id" in
+                            ''|*[!0-9]*) wl_id="" ;;
+                            ?????????????????) ;;
+                            *) wl_id="" ;;
+                        esac
+                        if [ -n "$wl_id" ]; then
+                            do_wishlist "$wl_id"
+                        else
+                            # Not an error and not a failure of the wire: nobody
+                            # is signed in, so there is no wishlist to want.
+                            # `done` with an empty shelf is the honest answer and
+                            # the shell renders the sign-in line instead.
+                            info "asked for a wishlist with no Steam account signed in"
+                            publish wishlist '{"request":"wishlist","appids":[]}' || true
+                            state "done" wishlist
+                        fi
+                        ;;
                 esac
                 # One read-back rather than a return code threaded through
                 # every branch of both functions: the state file is the record

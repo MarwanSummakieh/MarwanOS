@@ -1,0 +1,210 @@
+#!/usr/bin/env bash
+#
+# The window profile's privileged half: the one process allowed to write
+# /var/marwanos/window.profile.
+#
+# WHY A SECOND PROFILE AXIS, and not five more words on the display one. The
+# display profile answers "what is this panel being asked to do" -- refresh,
+# composition, hardware planes. It exists because the whole screen was flickering
+# at idle. This one answers a different question: "what does the compositor think
+# Steam's windows ARE", and it exists because of a narrower report --
+#
+#   "the moment steam runs the screen starts flickering"  -- the owner, 2026-08-11
+#
+# -- a flicker that appears when a second fullscreen client turns up and is
+# absent the rest of the time. Those are two independent causes with two
+# independent sets of levers, and marwanos-session's own profile block already
+# states the rule this obeys: a switch that also moved something else "would stop
+# being an answer to which of these four things is flickering". Folding Steam's
+# window handling into the display list would mean picking `steam-split` also
+# gave up the 60 Hz pin, and the next bisect would have two variables in it.
+#
+# So: two files, two lists, two rows, and the cross product is never needed
+# because the two axes are testing different halves of the stack.
+#
+# THIS GROUND HAS BEEN WALKED ONCE ALREADY. Commit 58cc0e3 shipped two of the
+# five configurations below at once, unconditionally and with no way back from
+# the couch -- gamescope's -e AND a shell that unmapped its own window -- and was
+# reverted 48 minutes later. Neither half was wrong to try; shipping them welded
+# together with no switch was. Each is a separate word here, and today's exact
+# behaviour is the default, so the machine that boots after this change is the
+# machine that booted before it until somebody chooses otherwise.
+#
+# THE SEAM IS THE DISPLAY PROFILE'S, verbatim (wifi, update, appctl, steamfront,
+# display, this). The shell drops a one-line request into a player-owned
+# directory under /run; this, as root, consumes it and writes the one word:
+#
+#   the shell writes  /run/marwanos/window/request   (0700 player-owned dir)
+#   this writes       /var/marwanos/window.profile   (one word, root-owned)
+#   this writes       /run/marwanos/window.state     <state>TAB<profile>
+#
+# WHAT THE SESSION APPLIED IS A DIFFERENT QUESTION, and it is deliberately not
+# answered here. This file says what the NEXT session will use; the running one
+# exports MARWANOS_WINDOW_PROFILE to the shell, because between a request and a
+# restart the two genuinely differ and a settings row that conflated them would
+# be lying in exactly the window where somebody is watching it. See
+# marwanos-session, and shell/src/window_profile.gd which reads both.
+#
+# NOTHING HERE RESTARTS THE SESSION, for the display profile's reason: a change
+# only takes effect when gamescope starts again, and doing that unasked takes the
+# screen away from somebody who is probably mid-something. The row says "restart
+# to apply" and Power -> Restart is two rows away.
+set -uo pipefail
+
+TAG=marwanos-window-profile
+RUN_DIR=/run/marwanos
+REQ_DIR="$RUN_DIR/window"
+REQ="$REQ_DIR/request"
+CONSUMED="$RUN_DIR/window-request.consumed"
+STATE="$RUN_DIR/window.state"
+
+VAR_DIR=/var/marwanos
+PROFILE="$VAR_DIR/window.profile"
+
+# THE ALLOW-LIST, and it is the whole of what this service trusts. Kept in the
+# session's cycle order so "the next one" means the same thing on both sides of
+# the seam. See marwanos-session's own window-profile block for what each one
+# actually passes to gamescope and which theory of the Steam flicker it kills.
+PROFILES=(steam-split loose steam-aware yield plain)
+
+# Matches marwanos-session's WINDOW_DEFAULT. Duplicated rather than shared
+# because the two halves must survive each other: a session that cannot read
+# this file still has to start, and this service still has to answer "what is it
+# set to" on a machine where the session has never run.
+#
+# `plain` is TODAY'S EXACT BEHAVIOUR and that is the whole of why it is the
+# default. Every other word here is a theory about a flicker nobody has been
+# able to reproduce off the bench; a theory is not a thing to boot somebody's
+# only machine into without being asked.
+DEFAULT=plain
+
+POLL=0.5
+
+info() { printf '<6>%s: %s\n' "$TAG" "$*" >&2; }
+warn() { printf '<4>%s: %s\n' "$TAG" "$*" >&2; }
+err()  { printf '<3>%s: %s\n' "$TAG" "$*" >&2; }
+
+install -d -m 0755 "$RUN_DIR" || { err "cannot create $RUN_DIR"; exit 1; }
+install -d -m 0700 -o player -g player "$REQ_DIR" \
+    || { err "cannot create $REQ_DIR -- the shell could never ask for anything"; exit 1; }
+# /var/marwanos is a tmpfiles.d line and exists by the time anything reaches
+# here; asserted anyway so a machine whose tmpfiles run was skipped still gets a
+# writable profile rather than a service that fails on its first request.
+install -d -m 0755 "$VAR_DIR" || { err "cannot create $VAR_DIR"; exit 1; }
+
+
+## Is this one of the words this machine knows?
+known_profile() {
+    local candidate="$1" name
+    for name in "${PROFILES[@]}"; do
+        [ "$name" = "$candidate" ] && return 0
+    done
+    return 1
+}
+
+
+## What is on disk right now, or the empty string if the file is absent,
+## unreadable or says something this image does not recognise.
+##
+## An unrecognised word reads as absent DELIBERATELY, for the display seam's
+## reason: marwanos-session falls back to the default when it cannot make sense
+## of the file, so reporting the garbage verbatim here would have the settings
+## row name a profile the session is not using.
+current_profile() {
+    local line=""
+    [ -r "$PROFILE" ] || { printf ''; return; }
+    IFS= read -r line < "$PROFILE" 2>/dev/null || true
+    line="${line//[[:space:]]/}"
+    known_profile "$line" && printf '%s' "$line"
+}
+
+
+## `<state>TAB<profile>`. States: current (this is what is on disk), pending
+## (written, and it does not mean anything until gamescope is started again),
+## refused (the request named something this image does not ship).
+state() {
+    { printf '%s\t%s\n' "$1" "${2:-}" > "$STATE.tmp" && mv -f "$STATE.tmp" "$STATE"; } \
+        || err "cannot write $STATE"
+}
+
+
+## Write the word, atomically, and only after it has been checked.
+##
+## Temp-then-rename because /var/marwanos/window.profile is read by
+## marwanos-session at the one moment nothing may go wrong -- the start of a
+## session on a machine with no console.
+apply_profile() {
+    local want="$1"
+
+    if ! known_profile "$want"; then
+        warn "refusing a request for an unknown window profile"
+        # The word itself is deliberately not echoed into the journal or the
+        # state file. It came from a request file in a player-owned directory,
+        # and the shell only ever sends words it got from the same list, so
+        # anything else is a bug or a probe and neither needs quoting back.
+        state refused "$(current_profile)"
+        return
+    fi
+
+    if [ "$want" = "$(current_profile)" ]; then
+        info "window profile is already '$want'; nothing to write"
+        state current "$want"
+        return
+    fi
+
+    if ! printf '%s\n' "$want" > "$PROFILE.tmp"; then
+        err "cannot write $PROFILE.tmp"
+        state current "$(current_profile)"
+        return
+    fi
+    chmod 0644 "$PROFILE.tmp" 2>/dev/null || true
+    if ! mv -f "$PROFILE.tmp" "$PROFILE"; then
+        err "cannot place $PROFILE"
+        rm -f "$PROFILE.tmp"
+        state current "$(current_profile)"
+        return
+    fi
+
+    info "window profile set to '$want' -- it takes effect on the next restart"
+    state pending "$want"
+}
+
+
+# The state the shell reads before anybody has pressed anything. An absent file
+# is reported as the DEFAULT rather than as "unknown", because that is what
+# marwanos-session will actually use.
+boot_profile="$(current_profile)"
+if [ -n "$boot_profile" ]; then
+    info "window profile on disk: $boot_profile"
+    state current "$boot_profile"
+else
+    info "no usable $PROFILE; the session uses the default profile '$DEFAULT'"
+    state current "$DEFAULT"
+fi
+
+while :; do
+    # Same rename-then-read as every other seam here: REQ_DIR is player-owned,
+    # so the file could be swapped for a symlink or a FIFO between any test and
+    # any read. rename(2) follows neither and opens nothing.
+    if mv -f "$REQ" "$CONSUMED" 2>/dev/null; then
+        want=""
+        if [ -L "$CONSUMED" ] || [ ! -f "$CONSUMED" ]; then
+            warn "discarding a request that was not a regular file"
+        else
+            IFS= read -r want < "$CONSUMED" 2>/dev/null || true
+        fi
+        rm -f "$CONSUMED"
+
+        # Whitespace only, and only whitespace: a profile name is one word from
+        # a fixed list, so anything the trim does not remove is checked against
+        # that list by apply_profile rather than being made safe here.
+        want="${want//[[:space:]]/}"
+        [ -n "$want" ] && apply_profile "$want"
+
+        # Deliberately no sleep before looping: a second request may already be
+        # waiting, and sleeping first would add latency to a queued press.
+        continue
+    fi
+
+    sleep "$POLL"
+done

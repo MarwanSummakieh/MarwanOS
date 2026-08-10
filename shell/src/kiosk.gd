@@ -267,6 +267,84 @@ const OVERLAY_PROPERTY := "GAMESCOPE_EXTERNAL_OVERLAY"
 var _overlay_active := false
 
 
+# ---------------------------------------------------------------------------
+# YIELDING THE SCREEN
+#
+# The shell hides its UI while an application runs -- shell_root's
+# _hand_screen_over hides the Control -- but the WINDOW stays exactly where it
+# was: mapped, fullscreen, and as far as the compositor is concerned still a
+# candidate for the screen. gamescope with --force-windows-fullscreen then has
+# two fullscreen clients and a heuristic for choosing between them, and every
+# window Steam maps or unmaps (notifications, tooltips, CEF helpers, the
+# overlay) is another chance for that choice to come back to us for a frame.
+# The owner's words for what that looks like from a sofa: "the moment steam
+# runs the screen starts flickering".
+#
+# So under the `yield` window profile the shell gets out of the way for real
+# once something else is PROVABLY drawing: minimised, which unmaps it and leaves
+# the compositor exactly one fullscreen candidate. Nothing about the shell's own
+# life changes -- the process runs, the scene tree ticks, the pad still arrives,
+# because input on this machine comes from evdev through SDL rather than from X
+# focus.
+#
+# BEHIND A PROFILE, AND THAT IS THE LESSON OF 58cc0e3. This shipped once before,
+# welded to a gamescope flag, unconditionally, with no way back from the couch --
+# and it was reverted within the hour. Not because it was the wrong thing to try
+# but because an appliance with no terminal cannot afford an experiment it cannot
+# undo from a sofa. WindowProfile.yields_screen() is that undo: `plain` is the
+# default and does none of this.
+#
+# NEVER ON THE DESK. The Xvfb harness drives this window with `xdotool key`,
+# which needs a mapped window to send to, and a developer's desk run that
+# minimised itself mid-test would look like a crash. Same guard as every other
+# kiosk policy: the appliance never sets WINDOWED_ENV, so the branch below is
+# unreachable there. (The profile check would catch a desk run anyway -- no
+# session means no MARWANOS_WINDOW_PROFILE means `plain` -- but the two guards
+# answer different questions and neither is the other's excuse.)
+#
+# THE ORDER MATTERS AT BOTH ENDS. Yielded only after the watchdog reports
+# ELSEWHERE (see Launcher._app_is_up), never at launch time -- the splash is
+# drawn by THIS window, and minimising while it is the only thing on screen is
+# a black TV. Taken back before the overlay is composited and on every path
+# that ends a launch, because a menu drawn into an unmapped window is a menu
+# nobody can see.
+var _yielded := false
+
+
+## Give the screen to whatever else is drawing, or take it back.
+##
+## Taking it BACK is deliberately not gated on the profile, and the asymmetry is
+## the safety property: if the profile ever changed under a yielded window --
+## it cannot today, but this is the function a black screen would come from --
+## the shell must still be able to come back. Only the giving-away is a choice.
+func yield_screen(yielded: bool) -> void:
+	if yielded and not WindowProfile.yields_screen():
+		return
+	if yielded == _yielded:
+		return
+	if _windowed_for_desk():
+		return
+	_yielded = yielded
+
+	var window := get_window()
+	if window == null:
+		ShellLog.warn("no window; cannot %s the screen"
+			% ("yield" if yielded else "take back"))
+		return
+
+	if yielded:
+		window.mode = Window.MODE_MINIMIZED
+		ShellLog.info("screen yielded: the shell's window is minimised")
+		return
+
+	# Back to the kiosk policy rather than to MODE_WINDOWED: _assert_display_policy
+	# is the one place that knows what fullscreen means here, and duplicating it
+	# is how the two drift.
+	_assert_display_policy()
+	DisplayServer.window_move_to_foreground()
+	ShellLog.info("screen taken back: the shell's window is fullscreen again")
+
+
 ## Ask gamescope to composite this window over the running application.
 ##
 ## Transparency is toggled alongside the property, and both directions matter:
