@@ -54,6 +54,15 @@ var _subtitle: Label = null
 var _clock: Label = null
 var _rail_viewport: Control = null
 var _rail: HBoxContainer = null
+
+## The three things the details panel covers: the selected entry's title block,
+## the rail itself, and the hint row under it. Held so they can be HIDDEN while
+## the panel is up rather than painted over -- the sheet is transparent now, so
+## "covered" is no longer a thing a rectangle can do. See
+## _set_lower_deck_visible.
+var _title_block: Control = null
+var _rail_row: Control = null
+var _hint_row: Control = null
 var _status: Label = null
 var _app_alert: Label = null
 var _app_alert_timer: Timer = null
@@ -267,9 +276,14 @@ func _build() -> void:
 	spacer.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	column.add_child(spacer)
 
-	column.add_child(_inset(_build_title_block()))
-	column.add_child(_build_rail())
-	column.add_child(_inset(_build_hints()))
+	# Kept as fields, not just added, because the details panel hides all three
+	# while it is up -- see _set_lower_deck_visible.
+	_title_block = _inset(_build_title_block())
+	column.add_child(_title_block)
+	_rail_row = _build_rail()
+	column.add_child(_rail_row)
+	_hint_row = _inset(_build_hints())
+	column.add_child(_hint_row)
 
 
 ## THE WHOLE BACKGROUND IS THE SELECTED ENTRY'S ART, which is the difference
@@ -1432,12 +1446,18 @@ func _on_details_requested(tile: Control) -> void:
 	_details.entry = tile.entry
 	_details.play_requested.connect(_on_details_play)
 	_details.closed.connect(_on_details_closed)
-	# A CHILD OF THE RAIL, unlike the card menu and the app overlay, which are
+	# A CHILD OF THIS SURFACE, unlike the card menu and the app overlay, which are
 	# children of the tree root. Those two cover the shell; this one is part of
-	# it -- the top half of the screen stays the selected game's background, and
-	# the panel slides over the bottom half where the rail is. Last child, so it
-	# paints over the rail it is covering.
+	# it -- the whole screen stays the selected game's background, and the panel's
+	# words go over the bottom of it. Last child, so it paints over everything
+	# else here.
 	add_child(_details)
+
+	# AFTER add_child, and the order is load-bearing. The panel grabs focus in
+	# its own _ready, which runs during that call; hiding the rail first would
+	# take the focus off the card while nothing else was ready to hold it, and a
+	# viewport with no focused control is a pad that does nothing.
+	_set_lower_deck_visible(false)
 
 
 ## Play: exactly the press the card already answers, asked of the card itself.
@@ -1469,6 +1489,10 @@ func _close_details() -> void:
 	_details_tile = null
 	panel.get_parent().remove_child(panel)
 	panel.queue_free()
+	# BEFORE the focus restore below, which grabs focus on a card in the rail:
+	# Godot will not focus a control inside a hidden parent, so restoring the
+	# rail after the grab would leave the pad pointing at nothing.
+	_set_lower_deck_visible(true)
 	# The artwork rebuild the open panel deferred -- see _on_gameart_changed.
 	# After the teardown so the rebuild's focus restore is the last word.
 	if _gameart_pending:
@@ -1479,6 +1503,31 @@ func _close_details() -> void:
 	# control would strand it there.
 	if visible and is_instance_valid(tile) and _tiles.has(tile):
 		tile.grab_focus()
+
+
+## Show or hide the three controls the details panel occupies the space of.
+##
+## THIS USED TO BE A COLOUR. The panel's sheet was an opaque slab, and the rail,
+## the title block and the hint row stayed in the tree underneath it doing
+## nothing but being painted over. That worked exactly as long as the slab was
+## opaque; the sheet is transparent now (TvTheme.details_sheet_box), so the
+## hiding has to be said out loud, and saying it out loud is better anyway --
+## a control that is invisible is also unfocusable, which is a guarantee no
+## amount of z-order ever gave.
+##
+## THE TOP BAR IS DELIBERATELY NOT IN THE LIST. The clock, the network state and
+## the store, files, settings and power buttons are true whatever screen is up,
+## and the panel does not reach that far up the surface. The art layer stays too
+## -- it is the thing the panel is about.
+##
+## Hiding a child of a VBoxContainer takes it out of the layout entirely, so the
+## separation around it collapses with it and nothing below shifts; the spacer
+## above simply grows. Guarded per node because this runs during teardown, when
+## a rebuild may have freed one of them.
+func _set_lower_deck_visible(shown: bool) -> void:
+	for node in [_title_block, _rail_row, _hint_row]:
+		if is_instance_valid(node):
+			node.visible = shown
 
 
 ## The options menu for the selected card. Guarded rather than always available,

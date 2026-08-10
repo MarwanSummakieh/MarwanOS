@@ -639,21 +639,28 @@ static func pane_frame(active: bool) -> StyleBoxFlat:
 	return box
 
 
-## The details sheet's surface: the card's box with its BOTTOM corners squared
-## off.
+## The details sheet has NO surface. Pressing down on a game shows the game's own
+## key art with the panel's words over it, and nothing between the two.
 ##
-## Not card_idle_box, and the difference is not decoration. The sheet is flush
-## with the bottom of the screen, so a rounded bottom-left corner would be a
-## notch of background showing through at the very edge of the panel -- the same
-## "art leaking past its own border" defect card_art_box exists to fix, arriving
-## from the other direction. Rounded on top, where the sheet has an edge someone
-## can actually see.
-static func details_sheet_box() -> StyleBoxFlat:
-	var box := StyleBoxFlat.new()
-	box.bg_color = SURFACE
-	box.corner_radius_top_left = CARD_CORNER_RADIUS
-	box.corner_radius_top_right = CARD_CORNER_RADIUS
-	return box
+## IT WAS AN OPAQUE SLAB, and the slab was doing a second job nobody asked it to
+## do: it was how the panel HID the home screen. The rail, the title block and
+## the hint row are all still in the tree while the panel is up, and covering
+## them with a rectangle is what stopped the panel's title drawing on top of the
+## home screen's title. Taking the colour away exposes that -- so shell_root now
+## hides those three explicitly while the panel is open, which is the honest
+## version of what this colour was quietly doing. See _on_details_requested.
+##
+## LEGIBILITY IS NOT LEFT TO LUCK, and it is not this box's job either. The home
+## screen already darkens the bottom of the surface behind the rail
+## (HERO_GRADIENT_FRACTION), which is the band the sheet occupies, so the panel's
+## text sits on the darkened part of the art rather than on raw key art.
+##
+## Returns StyleBoxEmpty, so the type widened to StyleBox. The old rounded-top
+## comment went with the colour: a transparent box has no corners to round, and
+## the "notch of background at the bottom edge" it was avoiding cannot happen to
+## something that draws no pixels.
+static func details_sheet_box() -> StyleBox:
+	return StyleBoxEmpty.new()
 
 
 ## A row that is being pressed and has nothing else to say so. Brighter than

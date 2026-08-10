@@ -75,9 +75,9 @@ var _size_tween: Tween
 ## picture, which is a hole in the rail.
 var _art: Image = null
 
-## Whether this card is its own artwork, edge to edge, with no plate under it
-## and no inset around it. See _wants_full_bleed.
-var _full_bleed := false
+## Whether this card draws its picture and nothing else -- no plate under it, no
+## surface behind it, no inset around it. See _wants_chrome.
+var _chromeless := false
 
 
 func setup(new_entry: Dictionary) -> void:
@@ -99,11 +99,11 @@ func _ready() -> void:
 	text = ""
 
 	# Both of these come before the styleboxes because the styleboxes depend on
-	# them: a card that is its own artwork has no surface to tint.
+	# them: a card that is only its picture has no surface to tint.
 	_art = _load_art()
-	_full_bleed = _wants_full_bleed()
+	_chromeless = _art != null
 
-	if _full_bleed:
+	if _chromeless:
 		# NO SURFACE AT ALL, in any state. The idle box is the plate this card
 		# is doing without, and the focus box is that plate lit up -- neither
 		# has anything to say about a tile that is entirely covered by its own
@@ -153,7 +153,7 @@ func _build_contents() -> void:
 	# rectangle whatever is underneath it, so its corners sat outside the rounded
 	# ring and the rounded card box -- the art visibly leaking past its own
 	# border on the TV. See TvTheme.card_art_box.
-	if not _full_bleed:
+	if not _chromeless:
 		var art := Panel.new()
 		art.add_theme_stylebox_override("panel", TvTheme.card_art_box(_wash()))
 		art.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
@@ -174,35 +174,35 @@ func _build_contents() -> void:
 	# comment describes, arriving from the other side.
 	_ring = Panel.new()
 	_ring.add_theme_stylebox_override("panel",
-		TvTheme.card_focus_ring(0 if _full_bleed else TvTheme.CARD_CORNER_RADIUS))
+		TvTheme.card_focus_ring(0 if _chromeless else TvTheme.CARD_CORNER_RADIUS))
 	_ring.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	_ring.visible = false
 	_ring.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(_ring)
 
 
-## Whether this card should be its own picture, edge to edge, with no plate.
+## THE PLATE IS GONE FROM EVERY CARD THAT HAS A PICTURE, applications included,
+## and the rule is now the simplest one available: if there is something to draw,
+## draw it and nothing else.
 ##
-## THE ASK WAS "NO CARDS AROUND THE GAME ICONS", and the word doing the work is
-## GAME. A game's tile is key art: a picture drawn to be looked at, already the
-## right shape, and the thing a console home screen is made of -- a plate around
-## it and a 34 px gutter inside that plate turns it into a stamp on a coloured
-## square, which is the PS5 look inverted. An application's icon is the opposite
-## kind of picture: a logo with transparency around it, drawn to sit ON
-## something, at whatever aspect its author chose. Blown up to the full tile it
-## is a cropped logo on the desktop background, which is worse than the plate it
-## replaced, so applications keep theirs.
+## It was games-only for one revision, on the argument that an application's icon
+## is a logo drawn to sit ON something rather than key art that fills a tile.
+## That argument was about what the pictures ARE, and the answer is about what
+## the screen looks like -- a rail of coloured squares with stamps in the middle
+## of them, which is the thing this shell is trying not to be. It also barely
+## costs what it appeared to: freedesktop application icons are square far more
+## often than not, so an icon fitted to a square tile with no gutter fills it,
+## and the one that does not keeps its own shape rather than being cropped (see
+## the stretch mode in _build_icon).
 ##
-## ART IS REQUIRED, not merely expected. A game whose picture has not been
-## fetched yet -- installed minutes ago, storeart's timer not yet around, Steam's
-## own cache still cold -- has nothing to fill a tile with, and a chromeless card
-## with no picture is not a card at all, it is a gap in the rail where a game
-## should be. Those keep the plate and the accent wash until the file lands, and
-## the next rebuild (shell_root._on_gameart_changed) promotes them silently.
-func _wants_full_bleed() -> bool:
-	if _art == null:
-		return false
-	return str(entry.get("id", "")).begins_with(STEAM_PREFIX)
+## A CARD WITH NO PICTURE AT ALL STILL KEEPS ITS PLATE, and that is the whole
+## remaining condition. There is nothing else for it to be: a chromeless card
+## with no art is not a card, it is a gap in the rail where a game should be, and
+## the rail is full of them at exactly the wrong moment -- a pending install
+## carries no icon and no exec by construction (appscan's `pending`), so the
+## first thing a new machine does is draw two cards that would be invisible.
+## Those keep the accent wash until a file lands, and the next rebuild
+## (shell_root._on_gameart_changed) promotes them silently.
 
 
 func _wash() -> Color:
@@ -317,33 +317,47 @@ func _build_icon() -> void:
 	icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	icon.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 
-	if _full_bleed:
-		# COVERED, NOT CENTERED, and it is the only stretch mode that can honour
-		# "no card". Centered fits the picture INSIDE the tile, so anything that
-		# is not square leaves bars down two sides -- and with the plate gone
-		# those bars are not a wash any more, they are whatever the home screen
-		# is drawing behind the rail. Covered fills the tile and crops the
-		# overflow instead.
-		#
-		# What gets cropped is nearly always nothing. _art_candidates prefers
-		# Steam's square library icon, which is already the tile's aspect, so
-		# this is a no-op in the warm case. The one shape it does cut is the
-		# 600x900 portrait standing in until that icon arrives, and taking the
-		# middle square of a portrait is what every console library does with
-		# one.
+	# NO INSET EITHER WAY once the plate is gone. CARD_ICON_INSET exists to leave
+	# a gutter of wash around a logo so the wash reads as a frame; with no wash
+	# it is a gutter of home-screen background, which is a smaller picture for no
+	# reason.
+	#
+	# THE TWO STRETCH MODES ARE THE ONE PLACE A GAME AND AN APPLICATION STILL
+	# DIFFER, and it is about the shape of the picture rather than the kind of
+	# thing it depicts.
+	#
+	# A game gets COVERED: fill the tile, crop the overflow. _art_candidates
+	# prefers Steam's square library icon, so this is a no-op in the warm case;
+	# the shape it does cut is the 600x900 portrait standing in until that icon
+	# arrives, and taking the middle square of a portrait is what every console
+	# library does with one. Letterboxing it instead would put bars down two
+	# sides -- and with the plate gone those bars are not a wash any more, they
+	# are whatever the home screen is drawing behind the rail.
+	#
+	# An application gets CENTERED: fit the tile, keep the shape. Its icon is
+	# almost always square and fills the tile identically, but the ones that are
+	# not are logos with deliberate proportions, and cropping a logo to a square
+	# cuts a piece off a mark somebody designed. A distorted or beheaded logo is
+	# more obviously wrong than a slightly smaller one.
+	# No `_chromeless` test guarding this: reaching here means _art decoded, and
+	# _chromeless IS "_art decoded", so the inset branch that used to sit under
+	# this was a branch nothing could take. CARD_ICON_INSET now has exactly one
+	# reader left -- the glyph above, which is drawn on a plate and still wants
+	# its gutter.
+	if _is_game():
 		icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
 	else:
-		# KEEP_ASPECT_CENTERED so a non-square icon is letterboxed inside the card
-		# rather than stretched -- a distorted logo is more obviously wrong than a
-		# small one.
 		icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
-		icon.offset_left = TvTheme.CARD_ICON_INSET
-		icon.offset_top = TvTheme.CARD_ICON_INSET
-		icon.offset_right = -TvTheme.CARD_ICON_INSET
-		icon.offset_bottom = -TvTheme.CARD_ICON_INSET
 
 	icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(icon)
+
+
+## Whether this entry is a Steam library game rather than an application. The
+## same prefix test the artwork seam uses, named because it is now asked about
+## the picture's shape as well as about where the picture comes from.
+func _is_game() -> bool:
+	return str(entry.get("id", "")).begins_with(STEAM_PREFIX)
 
 
 ## What a rasterised SVG is rendered at, in pixels on the long edge.
