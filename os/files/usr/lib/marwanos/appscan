@@ -56,11 +56,44 @@
 # here republishes the row with a path in it. See steam_art() for the full
 # choreography and why nothing has to be ordered against anything.
 #
+# GAMES ALSO GET A SECOND FILE, /run/marwanos/gameart.tsv, and apps.tsv did not
+# change to make room for it. A game has three pictures worth naming and the
+# record here has one icon field; growing a seventh column would break every
+# shell that counts six. See the GAMEART constant below for the join the shell
+# does instead, and scan_gameart for the row shape.
+#
 set -uo pipefail
 
 TAG=marwanos-appscan
 STATE_DIR=/run/marwanos
 APPS="$STATE_DIR/apps.tsv"
+
+# THE SECOND FILE, AND WHY IT IS A SECOND FILE.
+#
+# apps.tsv has exactly one icon column, and the shell has parsed six fields per
+# record since the rail stopped being placeholders. Games now have THREE
+# pictures worth naming -- the portrait a card draws as its tile, the square
+# icon Steam's client caches, and the wide hero the shell wants full-bleed
+# behind a focused card -- and there is no honest way to put three paths in one
+# field. Adding a seventh column would have been the obvious move and it is a
+# breaking change: installed.gd treats a record whose field count is not six as
+# malformed and skips it, so a scanner that grew a column would empty the rail
+# of every machine running an older shell, including one mid-upgrade.
+#
+# So apps.tsv is untouched, down to the byte: its icon column is still
+# portrait-first exactly as steam_art() has always chosen it. The extra art
+# rides in a file of its own, which nothing older than it knows to read and
+# nothing older than it is broken by.
+#
+# THE SEAM: the shell joins apps.tsv rows with gameart.tsv rows BY ID. A
+# gameart row is `steam.<appid>TAB<icon or empty>TAB<hero or empty>`, one per
+# installed game, with the same id string that starts the game's apps.tsv
+# record. A game with no gameart row, an empty column in the row it has, or no
+# gameart.tsv at all are all the same answer -- "nothing extra to draw" -- and
+# the card falls back to what apps.tsv gave it. That is the same join a
+# database would call a left outer one, and it is deliberately the kind of join
+# where the right-hand side missing costs nothing.
+GAMEART="$STATE_DIR/gameart.tsv"
 
 # How often to look for a CHANGE. The scan itself only re-runs when one of the
 # watched paths has a newer mtime, so this is a stat of a handful of
@@ -403,13 +436,71 @@ steam_art() {
 }
 
 
-## One TSV record per fully-installed Steam game, or nothing at all.
+## The SQUARE icon Steam's client caches for a game, or nothing.
+##
+## LOCAL ONLY, and that is not an oversight. marwanos-storeart fetches the
+## portrait, the header and the hero from Valve's public CDN, but there is no
+## public name for the little square icon -- it is a client-side asset, written
+## by Steam when its own UI has drawn the game, and nothing on the network will
+## serve it. So the only way this column is ever non-empty is a Steam client
+## that has actually run on this machine.
+##
+## Which is why the session now keeps one running. marwanos-session starts
+## `flatpak run com.valvesoftware.Steam -silent` after the shell is up: no
+## window, nothing on the TV, and a librarycache that fills itself. Before
+## that, this cache only filled if somebody had opened Steam's own interface by
+## hand, which on an appliance with no desktop is a thing that never happens.
+##
+## Both layouts the client has used are checked -- flat `<appid>_icon.jpg` and
+## the per-app subdirectory newer clients write -- because which one exists
+## depends on the Steam version that populated the cache, and two stats are
+## cheaper than knowing.
+steam_icon() {
+    local appid="$1" candidate
+    for candidate in \
+        "$STEAM_LIBCACHE/${appid}_icon.jpg" \
+        "$STEAM_LIBCACHE/$appid/icon.jpg"; do
+        [ -f "$candidate" ] && { printf '%s' "$candidate"; return 0; }
+    done
+    return 0
+}
+
+
+## The wide hero image for a game, or nothing.
+##
+## Local first, then storeart's download, which is the same preference order
+## steam_art() gives the portrait and for the same reason: Steam's own copy is
+## the identical asset without a round trip, and on a machine that has been
+## used it is already there. The CDN copy is what covers the game installed ten
+## minutes ago that the client has not drawn yet.
+steam_hero() {
+    local appid="$1" candidate
+    for candidate in \
+        "$STEAM_LIBCACHE/${appid}_library_hero.jpg" \
+        "$STEAM_LIBCACHE/$appid/library_hero.jpg" \
+        "$STORE_ICON_DIR/steam.$appid.hero.jpg"; do
+        [ -f "$candidate" ] && { printf '%s' "$candidate"; return 0; }
+    done
+    return 0
+}
+
+
+## Every fully-installed, non-tooling Steam game as `<appid>TAB<name>`, or
+## nothing at all.
+##
+## SPLIT OUT SO THERE IS ONE ANSWER TO "WHICH MANIFESTS COUNT". Two files are
+## built from this list now -- apps.tsv's game rows and gameart.tsv's art rows
+## -- and the filter below is four judgement calls deep: a numeric appid, the
+## StateFullyInstalled bit, a name that exists, and Valve's own tooling
+## excluded by name. Two copies of that would agree right up until the first
+## time one of them was fixed, and the symptom would be a rail and an art file
+## that disagree about which games exist.
 ##
 ## No steamapps directory means Steam is absent or has never downloaded
 ## anything, and both are ordinary states of this appliance rather than
 ## faults: the function returns before its loop and logs nothing.
-scan_steam() {
-    local file appid flags name icon
+steam_games() {
+    local file appid flags name
 
     [ -d "$STEAM_APPS_DIR" ] || return 0
     for file in "$STEAM_APPS_DIR"/appmanifest_*.acf; do
@@ -453,6 +544,24 @@ scan_steam() {
         name="${name//$'\n'/ }"
         name="${name//$'\r'/}"
 
+        printf '%s\t%s\n' "$appid" "$name"
+    done
+}
+
+
+## One apps.tsv record per fully-installed Steam game, or nothing at all.
+##
+## The icon column is UNCHANGED by the arrival of gameart.tsv: steam_art()
+## still chooses it, still portrait-first, still local-cache-before-CDN. See
+## GAMEART at the top of this file for why the extra art went into a second
+## file rather than a seventh column here.
+scan_steam() {
+    local appid name icon
+
+    # Piped rather than read into an array, so a machine with no Steam runs the
+    # loop body zero times instead of once with an empty appid. The subshell a
+    # pipeline creates costs nothing here: the body only prints.
+    steam_games | while IFS=$'\t' read -r appid name; do
         icon="$(steam_art "$appid")"
 
         # Launched back through Steam rather than directly: Steam owns the
@@ -465,10 +574,40 @@ scan_steam() {
         # appid is numeric), which the space-joined, space-split exec field
         # requires -- the title, which may contain anything, never rides in
         # it.
+        #
+        # This still starts a client even when the session already has one warm
+        # in the background: `flatpak run` on a running Steam hands the URL to
+        # the existing instance and exits, which is precisely the speed-up the
+        # background client exists for.
         printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
             "steam.$appid" "$name" "" "$icon" \
             "flatpak run com.valvesoftware.Steam -gamepadui steam://rungameid/$appid" \
             "installed"
+    done
+}
+
+
+## One gameart.tsv record per fully-installed Steam game, or nothing at all.
+##
+## `steam.<appid>TAB<icon or empty>TAB<hero or empty>`, three fields, joined by
+## the shell against the apps.tsv record with the same id. Emitted for every
+## game even when both columns are empty, deliberately: a row of two empties is
+## the machine saying "this game has no extra art yet", which is a different
+## and more useful statement than a missing row, and it is what makes the file
+## a complete picture of the library rather than a partial index of it.
+##
+## Every path here is a stat of something another process wrote -- Steam's own
+## cache, or storeart's download directory -- so this is the same
+## no-coordination handshake steam_art() describes at length: nobody is called,
+## nothing is ordered, and the worst outcome of any of the three services being
+## restarted mid-flight is a card that stays plain for one more ten-second
+## poll.
+scan_gameart() {
+    local appid
+
+    steam_games | while IFS=$'\t' read -r appid _; do
+        printf '%s\t%s\t%s\n' \
+            "steam.$appid" "$(steam_icon "$appid")" "$(steam_hero "$appid")"
     done
 }
 
@@ -562,9 +701,30 @@ dirs_signature() {
 ## not move (installed apps resolve icons from the theme roots, never from
 ## here). The re-run produces the same Steam rows and the atomic write
 ## republishes them to nobody's harm; that is the entire cost of sharing.
+##
+## STEAM'S OWN CACHE IS WATCHED TOO, and it has to be watched two ways.
+##
+## gameart.tsv's icon column can only ever be filled by the Steam client (see
+## steam_icon), and the client fills it minutes or hours after the game was
+## installed -- whenever its UI first draws that title. No manifest is touched
+## when that happens and no file lands in storeart's directory, so a signature
+## built from the two blocks above would hold a gameart.tsv full of empty
+## columns until the next install, which could be never.
+##
+## The directory's own mtime catches the flat layout, where the client creates
+## `<appid>_icon.jpg` directly in it. It does NOT catch the per-app
+## subdirectory layout: once `<appid>/` exists, a file created inside it moves
+## that subdirectory's mtime and leaves the parent's alone. So the subdirectories
+## are stat'ed as well. There is one per game the client has drawn -- the same
+## order of cheap as the manifest walk below, and the alternative is an art
+## column that is right on some Steam versions and permanently empty on others.
 steam_signature() {
     local file
     printf '%s:%s ' "$STORE_ICON_DIR" "$(stat -c %Y "$STORE_ICON_DIR" 2>/dev/null || echo 0)"
+    printf '%s:%s ' "$STEAM_LIBCACHE" "$(stat -c %Y "$STEAM_LIBCACHE" 2>/dev/null || echo 0)"
+    for file in "$STEAM_LIBCACHE"/*/; do
+        [ -d "$file" ] && printf '%s:%s ' "$file" "$(stat -c %Y "$file" 2>/dev/null || echo 0)"
+    done
     [ -d "$STEAM_APPS_DIR" ] || return 0
     printf '%s:%s ' "$STEAM_APPS_DIR" "$(stat -c %Y "$STEAM_APPS_DIR" 2>/dev/null || echo 0)"
     for file in "$STEAM_APPS_DIR"/appmanifest_*.acf; do
@@ -616,6 +776,24 @@ while :; do
         if [ "$steam_now" != "$last_steam" ]; then
             last_steam="$steam_now"
             steam_listing="$(scan_steam)"
+
+            # Published here rather than beside apps.tsv below, because this is
+            # the only branch whose inputs it depends on: gameart rows are made
+            # of Steam manifests, Steam's cache and storeart's directory, and
+            # all three are exactly what steam_signature watches. A pending
+            # install finishing or a desktop file appearing changes apps.tsv
+            # and cannot change this.
+            #
+            # Written on the first cycle whatever the machine looks like --
+            # last_steam starts empty and no real signature is -- so the shell
+            # finds an empty file rather than no file on a stick with no Steam,
+            # and never has to tell "no games" apart from "the scanner has not
+            # run". Atomic via rename for the usual reason: the shell polls it
+            # and must never read half a row.
+            gameart_listing="$(scan_gameart)"
+            { printf '%s' "${gameart_listing:+$gameart_listing$'\n'}" > "$GAMEART.tmp" \
+                && mv -f "$GAMEART.tmp" "$GAMEART"; } \
+                || err "cannot write $GAMEART -- game cards will fall back to their apps.tsv icon"
         fi
         last_pending="$pending_now"
 

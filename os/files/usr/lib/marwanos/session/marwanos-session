@@ -101,6 +101,43 @@ readonly BAKED_CLIENT="/usr/lib/marwanos/shell/marwanos-shell"
 readonly CRASH_LIMIT=5
 readonly CRASH_WINDOW=60
 
+# BACKGROUND STEAM, and why the session owns it rather than the shell.
+#
+# `flatpak run com.valvesoftware.Steam -silent` starts the client with no
+# window. Under gamescope that means nothing reaches the TV at all, which is
+# the entire point: this is furniture, not an application, and D6's "no text
+# visible at any point" is not softened by it.
+#
+# What it buys is everything only a WARM client can give. The home menu
+# launches games as `steam://rungameid/<appid>`, and against a client that has
+# already started, logged in, mounted its libraries and read its manifests that
+# URL is handled in a couple of seconds; against no client it is a cold Steam
+# start first, which on this machine is the difference between pressing A and
+# watching a black screen wondering whether the press registered. It also fills
+# Steam's own appcache/librarycache as a side effect -- the square icons and
+# hero art marwanos-appscan publishes in gameart.tsv come from exactly that
+# cache, and before this existed the cache only filled if somebody had opened
+# Steam's own UI by hand.
+readonly STEAM_FLATPAK_ID="com.valvesoftware.Steam"
+
+# Thirty seconds between attempts; five attempts inside five minutes and then
+# nothing until the next boot.
+#
+# The delay is deliberately unlike the client's, which restarts with no backoff
+# at all because somebody is staring at a blank TV until it comes back. Nobody
+# is looking at Steam -- it has no window -- so there is nothing to be quick
+# for, and half a minute is still short enough that a game launched a minute
+# later finds a warm client.
+#
+# The cap is what keeps a broken Steam out of the journal. An install that
+# cannot start at all would otherwise print a line every thirty seconds for the
+# life of the session, on a machine whose only triage surface is journalctl.
+# Five lines and one final explanation is the whole of what this is allowed to
+# cost, and it does not get a second budget until the machine reboots.
+readonly STEAM_RESTART_DELAY=30
+readonly STEAM_EXIT_LIMIT=5
+readonly STEAM_EXIT_WINDOW=300
+
 # How long to wait for the compositor to say it is up. See start_gamescope for
 # why this is a readiness handshake and not a check for a nonzero exit.
 #
@@ -306,6 +343,109 @@ show_error_screen() {
     hold_forever
 }
 
+# Is Steam actually on this machine?
+#
+# ASKED, NEVER ASSUMED. A fresh stick has no Steam -- it is a flatpak
+# marwanos-flatpak-install fetches on first boot, or that somebody installs
+# from the store screen weeks later -- and `flatpak run` on an app that is not
+# installed fails in milliseconds. Without this check every such machine would
+# carry a spawn-fail-sleep loop for the life of its session, burning its whole
+# exit budget in the first two and a half minutes and leaving five confusing
+# lines in the journal of an appliance where nothing is wrong.
+#
+# `flatpak info --system` is the same question marwanos-appctl and
+# marwanos-flatpak-install ask about every other app in this tree, so there is
+# one answer to "is this installed" and this file did not invent a second one.
+# --system rather than --user because that is the only installation this image
+# has: the shell installs into it and nothing here ever writes a user remote.
+steam_installed() {
+    command -v flatpak >/dev/null 2>&1 || return 1
+    flatpak info --system "$STEAM_FLATPAK_ID" >/dev/null 2>&1
+}
+
+# The background client's own supervision loop, run as a child of the session
+# so it inherits DISPLAY, the journal-connected descriptors and the session
+# user without any of them being passed.
+#
+# THE SHELL KILLS THIS ON PURPOSE, AND THAT IS FINE. When a person closes a
+# game from the home menu the shell runs `flatpak kill com.valvesoftware.Steam`
+# -- the game and the client that launched it are one sandbox and there is no
+# smaller thing to take down. This loop cannot tell that apart from a crash and
+# does not try to: it counts an exit and comes back. Close costs a ~30s
+# background respawn, which is invisible from the couch.
+#
+# Nothing here can delay or block the shell. It runs in the background, it is
+# started after the client, and every path through it either sleeps or returns.
+supervise_steam() {
+    _steam_exits=0
+    _steam_window_start="$(uptime_seconds)"
+
+    while :; do
+        # Steam's own output goes to /dev/null rather than to the journal, and
+        # that is the difference between bounded log noise and a journal made
+        # entirely of Steam. The client narrates asset loads, controller
+        # enumeration and CEF chatter at info level; an hour of it would bury
+        # every other service on this machine. What is worth knowing -- that it
+        # started, that it stopped, that it is not coming back -- is said below
+        # in this script's own voice, which is also the only voice
+        # `journalctl -t marwanos-session` can be searched with.
+        flatpak run "$STEAM_FLATPAK_ID" -silent >/dev/null 2>&1
+        _steam_status=$?
+
+        _steam_now="$(uptime_seconds)"
+        if [ "$((_steam_now - _steam_window_start))" -ge "$STEAM_EXIT_WINDOW" ]; then
+            _steam_exits=0
+            _steam_window_start="$_steam_now"
+        fi
+        _steam_exits=$((_steam_exits + 1))
+
+        # A fixed window rather than a sliding one, for the same reason the
+        # client's guard uses one: a client that exits four times every five
+        # minutes forever is broken in a way somebody can still see, and a
+        # sliding window would silence it permanently on the fourth exit.
+        if [ "$_steam_exits" -ge "$STEAM_EXIT_LIMIT" ]; then
+            warn "background Steam exited $_steam_exits times in under ${STEAM_EXIT_WINDOW}s (last status $_steam_status); giving up until the next boot"
+            warn "games still launch from the home menu -- they will just wait out a cold client first"
+            return 0
+        fi
+
+        log "background Steam exited with status $_steam_status; restarting it in ${STEAM_RESTART_DELAY}s"
+        sleep "$STEAM_RESTART_DELAY"
+    done
+}
+
+# Start the background client, at most once per session.
+#
+# supervise_client calls this on every client restart, and a shell that crashed
+# twice must not end up with two supervisors racing to run the same Steam. The
+# guard is a flag rather than the pid, so a machine with no Steam answers
+# `flatpak info` once instead of once per shell crash.
+start_background_steam() {
+    [ -z "${STEAM_STARTED:-}" ] || return 0
+    STEAM_STARTED=1
+
+    if ! steam_installed; then
+        log "Steam is not installed; the session starts no background client"
+        return 0
+    fi
+
+    log "starting Steam in the background: -silent, no window, warm client for steam:// launches"
+    supervise_steam &
+    STEAM_SUPERVISOR_PID=$!
+}
+
+stop_background_steam() {
+    [ -n "${STEAM_SUPERVISOR_PID:-}" ] || return 0
+    kill "$STEAM_SUPERVISOR_PID" 2>/dev/null || true
+    STEAM_SUPERVISOR_PID=""
+    # Killing the loop does not kill the client: `flatpak run` handed the
+    # sandbox to the flatpak session helper, so this shell is not its parent
+    # and has no pid to signal. flatpak is the only thing that knows where it
+    # went, so flatpak is asked -- otherwise a session that ends leaves a
+    # logged-in Steam behind for the next one to collide with.
+    flatpak kill "$STEAM_FLATPAK_ID" >/dev/null 2>&1 || true
+}
+
 # M3's supervision spec, scaffolded now because M1 is where the first client
 # runs and a session that died to a console would fail D6 the first time the
 # placeholder crashed.
@@ -331,9 +471,37 @@ supervise_client() {
             show_error_screen
         fi
 
+        # BACKGROUNDED AND WAITED FOR, and ordering is the only reason.
+        #
+        # There has to be a moment where the shell process genuinely exists and
+        # this loop is still executing, because the background Steam client is
+        # allowed to start strictly after the shell and never in front of it --
+        # a cold Steam start competing with the shell's first frame for a USB
+        # stick's read bandwidth is exactly the boot the 2026-08-05 film already
+        # measured at 74 seconds. `wait` hands back the same exit status the
+        # foreground run did, so nothing below this line changed.
         log "starting client $_client"
-        "$_client"
-        _status=$?
+        "$_client" &
+        _client_pid=$!
+
+        # After the shell exists, before anything blocks on it. Returns
+        # immediately in every case: not installed is one log line, installed
+        # is a `&`.
+        start_background_steam
+
+        # WAIT UNTIL THE CLIENT IS ACTUALLY GONE, not merely until `wait`
+        # returns. POSIX has `wait` return as soon as a TRAPPED signal arrives,
+        # whether or not the child has exited -- and this script traps TERM and
+        # INT. Taking the first return at face value would read a SIGTERM on
+        # session teardown as a client crash and answer it by starting a second
+        # shell against a compositor that stop_gamescope had just killed. The
+        # foreground run this replaced could not be fooled that way, so the
+        # re-wait is what keeps the change to ordering and nothing else.
+        while :; do
+            wait "$_client_pid"
+            _status=$?
+            kill -0 "$_client_pid" 2>/dev/null || break
+        done
 
         _now="$(uptime_seconds)"
         if [ "$((_now - _window_start))" -ge "$CRASH_WINDOW" ]; then
@@ -694,7 +862,9 @@ fi
 # not needed now that the only consumer is gone.
 
 GAMESCOPE_PID=""
-trap 'stop_gamescope' EXIT INT TERM
+STEAM_STARTED=""
+STEAM_SUPERVISOR_PID=""
+trap 'stop_gamescope; stop_background_steam' EXIT INT TERM
 
 if start_gamescope; then
     supervise_client

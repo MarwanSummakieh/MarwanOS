@@ -897,6 +897,12 @@ RUN set -euxo pipefail; \
     : "of their own (the pad-keys bridge); without it any app the bridge"; \
     : "drives would launch fine and then ignore every button on the pad."; \
     command -v xdotool; \
+    : "jq is how marwanos-storeart parses Valve's appdetails JSON into the"; \
+    : "per-game metadata files the shell draws descriptions from. It comes"; \
+    : "from the base image rather than a dnf line here, which is exactly why"; \
+    : "it is asserted: a base bump that dropped it would leave every game"; \
+    : "card with a title and no sentence under it, silently, at runtime."; \
+    command -v jq; \
     test -L /etc/systemd/system/ModemManager.service; \
     test -f /usr/lib/systemd/logind.conf.d/50-marwanos-lid.conf; \
     test -L /etc/systemd/system/getty@tty1.service; \

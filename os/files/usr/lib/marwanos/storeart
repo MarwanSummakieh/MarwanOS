@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Prefetch artwork the machine cannot produce itself, so cards render from disk.
+# Prefetch what the machine cannot produce itself, so cards render from disk.
 #
 # TWO JOBS, ONE TIMER, and they are kept as two sections below rather than
 # folded together because only the download is shared. The Flathub half fetches
@@ -9,6 +9,22 @@
 # it learns that list by reading what another service published. Same fetch
 # shape, opposite lifetimes; a merged loop would have to carry both stories in
 # every line of it.
+#
+# THE STEAM HALF NOW FETCHES THREE THINGS PER GAME, and only the first of them
+# is about a gap somebody reported. The portrait (and its header fallback)
+# fills an empty icon column appscan published. The hero -- library_hero.jpg,
+# the wide text-free key art -- and the store description are wanted for EVERY
+# installed game, because a card with a perfectly good portrait still has
+# nothing behind it and nothing under it. Two different questions, so two
+# different lists: steam_wanted answers the first, steam_appids the second.
+#
+# ONE OF THE THREE IS NOT A PICTURE. The description comes from Valve's public
+# appdetails endpoint as JSON and lands as JSON, in a directory of its own
+# under /var/marwanos/store/meta, parsed with jq -- which the base image ships
+# and the Containerfile's verify block now asserts. What lands is the RAW
+# `data` object rather than the two fields the shell draws today; see
+# STEAM_META_URL for why a cache with no invalidation story should store
+# everything it was given.
 #
 # WHY THIS EXISTS. The store screen draws a card for every application the
 # image ships, installed or not (catalogue.gd's AVAILABLE_APPS) -- and for the
@@ -116,6 +132,52 @@ APPS_TSV="$STATE_DIR/apps.tsv"
 STEAM_ART_BASE=https://cdn.cloudflare.steamstatic.com/steam/apps
 STEAM_ART_NAMES=(library_600x900.jpg header.jpg)
 
+## The hero: the wide, text-free key art Steam's own library draws behind a
+## game's page. Same CDN path family as the two capsules above, so it costs one
+## more name and no new knowledge about Valve's hosting.
+##
+## WANTED FOR EVERY GAME, NOT ONLY THE ARTLESS ONES, which is the difference
+## between this and the portrait fetch above. A portrait is fetched to fill a
+## gap appscan reported -- if the card already has a picture there is nothing
+## to fix. A hero is a different asset for a different job: it is what the
+## shell puts full-bleed behind a focused game, and a card with a perfectly
+## good portrait still has no background. So the hero list is built from every
+## `steam.` row rather than from the empty-icon ones.
+STEAM_HERO_NAME=library_hero.jpg
+
+## Valve's public store API, and the one thing in this script that fetches text
+## instead of pixels.
+##
+## `filters=basic` trims the response to the description block -- type, name,
+## short_description, the capsule urls and the requirements -- instead of the
+## full page payload with its price, packages, categories, screenshots and
+## movies. Measured on appid 367520 (Hollow Knight): 19 KB with the filter, and
+## the `data` object this keeps is 18.7 KB of it.
+##
+## THE RAW `data` OBJECT IS WHAT LANDS ON DISK, not the two fields the shell
+## needs today. Extracting short_description and name here would mean a second
+## fetch of everything already downloaded the first time somebody wanted the
+## header image url or the controller_support flag -- and this is a cache with
+## no invalidation story, so "refetch to get one more field" means "delete the
+## whole directory on the bench". Storing what Valve sent costs 19 KB per game
+## and makes every later field free. The shell picks what it draws.
+STEAM_META_URL=https://store.steampowered.com/api/appdetails
+
+## Root writes, player reads, 0755 -- the same one-way flow as the icons
+## directory next door, and created by tmpfiles.d as well as here so its
+## existence never depends on which got there first.
+META_DIR=/var/marwanos/store/meta
+
+## One appdetails request per second, at most.
+##
+## COURTESY, NOT CORRECTNESS. Valve publishes no rate limit for this endpoint
+## and does not need to: a library of thirty games is thirty requests, once,
+## and never again. But this runs every fifteen minutes forever on every
+## machine this image is ever installed on, and an unpaced loop over a big
+## library is the shape of thing that gets an appliance's user agent blocked
+## for everybody. A second between requests makes the worst case boring.
+STEAM_META_DELAY=1
+
 info() { printf '<6>%s: %s\n' "$TAG" "$*"; }
 err()  { printf '<3>%s: %s\n' "$TAG" "$*" >&2; }
 
@@ -191,6 +253,166 @@ steam_wanted() {
 
         printf '%s\n' "$appid"
     done < "$APPS_TSV"
+}
+
+
+## Every Steam appid appscan has published, one per line, or nothing.
+##
+## THE ICON COLUMN IS NOT CONSULTED, and that is the whole difference from
+## steam_wanted above. That function answers "which cards have no picture",
+## which is a question about a gap somebody reported. This one answers "which
+## games are installed", because the hero and the description are wanted for
+## every game whether or not its card already draws something -- see
+## STEAM_HERO_NAME's note.
+##
+## Same digits-only check for the same load-bearing reason: the appid goes into
+## a URL and into a filename and it arrives from a file another process wrote.
+## Numeric means it can be neither a path traversal nor a query string nor a
+## shell word.
+steam_appids() {
+    local line id appid
+
+    [ -f "$APPS_TSV" ] || return 0
+
+    while IFS= read -r line || [ -n "$line" ]; do
+        id="$(tsv_field "$line" 1)"
+        case "$id" in steam.*) ;; *) continue ;; esac
+
+        appid="${id#steam.}"
+        case "$appid" in ''|*[!0-9]*) continue ;; esac
+
+        printf '%s\n' "$appid"
+    done < "$APPS_TSV"
+}
+
+
+## Fetch one game's hero image. Same three outcomes, and the same discipline,
+## as steam_fetch below: 0 if a file landed, 1 if the network failed, 2 if
+## Valve simply publishes no hero for this appid.
+##
+## Present means skipped before the network is considered, so a machine whose
+## library is fully cached costs one stat per game here and no requests. Not
+## every appid has a hero -- older titles predate the asset entirely -- and
+## like the portrait's missing header that answer is not written down, so it is
+## re-asked every fifteen minutes and re-answered with a 404 that costs
+## nothing. The alternative is a tombstone file with its own invalidation story
+## for the day Valve backfills.
+steam_fetch_hero() {
+    local appid="$1" dest tmp rc
+
+    dest="$ICON_DIR/steam.$appid.hero.jpg"
+    [ -f "$dest" ] && return 0
+    tmp="$dest.tmp"
+
+    # stderr discarded and the exit code kept, exactly as steam_fetch does it
+    # and for the same reason: --retry makes curl narrate a 404 even under -s,
+    # and a 404 is a NORMAL outcome here, every fifteen minutes, forever, for
+    # every game Valve never made a hero for.
+    curl -fsSL --max-time 30 --retry 2 -o "$tmp" "$STEAM_ART_BASE/$appid/$STEAM_HERO_NAME" 2>/dev/null
+    rc=$?
+    if [ "$rc" -ne 0 ]; then
+        rm -f "$tmp"
+        # 22 is --fail on a >=400 status: Valve answered, the answer was no.
+        [ "$rc" -eq 22 ] && return 2
+        err "could not fetch $STEAM_HERO_NAME for Steam appid $appid (curl exit $rc)"
+        return 1
+    fi
+
+    # FFD8FF is the JPEG SOI marker plus the first byte of the next one. -f
+    # keeps out the 404s; this keeps out the CDN edge that answers 200 with an
+    # error page, which would otherwise surface as a broken texture on the TV.
+    if [ "$(od -An -tx1 -N3 "$tmp" | tr -d ' \n')" != "ffd8ff" ]; then
+        err "the $STEAM_HERO_NAME download for appid $appid is not a JPEG -- discarding it"
+        rm -f "$tmp"
+        return 1
+    fi
+
+    chmod 0644 "$tmp"
+    mv -f "$tmp" "$dest"
+    info "fetched $STEAM_HERO_NAME for Steam appid $appid"
+    return 0
+}
+
+
+## Fetch one game's store metadata. 0 if a file landed, 1 if the network or the
+## parse failed, 2 if Steam has no store page for this appid.
+##
+## THE PARSER IS jq, AND IT WAS CHECKED RATHER THAN ASSUMED. The base image
+## (ghcr.io/ublue-os/base-main:43, pinned by digest in the Containerfile) ships
+## jq-1.8.1-3.fc43 and python3-3.14.6-1.fc43; nothing this image does removes
+## either. So the honest choice was between a real JSON parser already on the
+## disk and hand-rolled grep/sed, and there was no contest: the field wanted
+## most is short_description, whose value routinely contains escaped quotes,
+## commas, braces and unicode escapes, and every regex that survives a
+## fixture's worth of those fails on the next game. The Containerfile's verify
+## block now asserts `command -v jq` beside curl and flatpak so that a base
+## bump which dropped it fails the BUILD rather than quietly leaving every game
+## card without a description.
+##
+## `success` IS THE GATE, and it is not the same thing as an HTTP status. Valve
+## answers 200 with `{"<appid>":{"success":false}}` for an appid that has no
+## store page -- delisted titles, and anything installed from outside the store
+## -- so curl is perfectly happy and there is nothing to cache. Verified
+## against appid 999999999, which returns exactly that. Treating it as a
+## failure would put a permanently red unit on a machine where nothing is
+## wrong, so it is outcome 2, like a game Valve has no art for.
+##
+## A file that exists is never refetched. Descriptions change on the timescale
+## of a store page rewrite, this cache has no invalidation story, and "refresh
+## on missing only" is what lets this run every fifteen minutes forever without
+## being able to break metadata that already works. Same escape hatch as the
+## icons: delete the file on the bench.
+steam_fetch_meta() {
+    local appid="$1" dest raw tmp rc name
+
+    dest="$META_DIR/steam.$appid.json"
+    [ -f "$dest" ] && return 0
+    raw="$dest.raw"
+    tmp="$dest.tmp"
+
+    # The appid is digits-only by the time it reaches here (steam_appids), so
+    # it cannot smuggle a second query parameter into this URL.
+    curl -fsSL --max-time 30 --retry 2 -o "$raw" \
+        "$STEAM_META_URL?appids=$appid&filters=basic" 2>/dev/null
+    rc=$?
+    if [ "$rc" -ne 0 ]; then
+        rm -f "$raw"
+        [ "$rc" -eq 22 ] && return 2
+        err "could not fetch store metadata for Steam appid $appid (curl exit $rc)"
+        return 1
+    fi
+
+    # jq -e exits 1 when the expression is false and 5 when the input does not
+    # parse at all, and both mean the same thing to this caller: there is
+    # nothing here worth keeping. Folding them together is deliberate -- an
+    # HTML error page from an interception proxy and an honest `success:false`
+    # are equally not-a-description, and the difference is not something this
+    # machine could act on differently.
+    if ! jq -e --arg id "$appid" '.[$id].success == true' "$raw" >/dev/null 2>&1; then
+        rm -f "$raw"
+        return 2
+    fi
+
+    # The `data` object, unwrapped from the appid key it arrived under, so the
+    # shell reads `.name` and `.short_description` rather than having to know
+    # the appid twice -- once in the filename and once inside it.
+    if ! jq --arg id "$appid" '.[$id].data' "$raw" > "$tmp" 2>/dev/null; then
+        err "the store metadata for appid $appid did not parse -- discarding it"
+        rm -f "$raw" "$tmp"
+        return 1
+    fi
+    rm -f "$raw"
+
+    # Atomic via rename and 0644 explicitly rather than by umask, matching
+    # every other file this script publishes: the shell may open this at the
+    # exact moment it lands, and it reads as `player`.
+    chmod 0644 "$tmp"
+    mv -f "$tmp" "$dest"
+    # First line only: a title is Valve's text and this is a log line, not a
+    # record, so the journal's one-line-per-event shape wins over completeness.
+    name="$(jq -r '.name // ""' "$dest" 2>/dev/null | head -n 1)"
+    info "cached store metadata for Steam appid $appid${name:+ ($name)}"
+    return 0
 }
 
 
@@ -295,6 +517,15 @@ if ! install -d -m 0755 "$ICON_DIR"; then
     exit 1
 fi
 
+# The metadata directory, same arrangement and same tmpfiles.d line as the
+# icons. NOT fatal, unlike the icons above: a machine with no descriptions
+# still draws every card it drew before this existed, so failing the whole run
+# over it would turn a missing subtitle into a red unit and an `offline`
+# claim the network never earned.
+if ! install -d -m 0755 "$META_DIR"; then
+    err "cannot create $META_DIR -- game cards will have titles and no descriptions"
+fi
+
 # The allow-list, one id per line, comments and blanks stripped. An empty
 # result is a broken image rather than an empty store -- the file ships with
 # ids -- so it is loud, not a quiet zero-icon success.
@@ -318,7 +549,24 @@ done
 # image, this one changes the moment somebody installs a game. See the header.
 mapfile -t games < <(steam_wanted)
 
-if [ "${#missing[@]}" -eq 0 ] && [ "${#games[@]}" -eq 0 ]; then
+# The other two per-game lists, surveyed the same way and for the same reason:
+# the steady state of a fully cached library must cost stats and nothing else,
+# and the network gate below has to be able to speak for the whole run.
+#
+# Built from EVERY installed game rather than from the ones appscan reported
+# without art -- a card with a portrait still has no hero behind it and no
+# sentence under it. Two stats per game; a thirty-game library is sixty stats
+# and then an exit.
+mapfile -t appids < <(steam_appids)
+heroes=()
+metas=()
+for appid in "${appids[@]}"; do
+    [ -f "$ICON_DIR/steam.$appid.hero.jpg" ] || heroes+=("$appid")
+    [ -f "$META_DIR/steam.$appid.json" ] || metas+=("$appid")
+done
+
+if [ "${#missing[@]}" -eq 0 ] && [ "${#games[@]}" -eq 0 ] \
+    && [ "${#heroes[@]}" -eq 0 ] && [ "${#metas[@]}" -eq 0 ]; then
     state "done ${#apps[@]}"
     exit 0
 fi
@@ -328,7 +576,7 @@ fi
 # do not try, the timer comes back.
 net="$(cat "$NET_STATE" 2>/dev/null)" || net=""
 if [ "$net" != "online" ]; then
-    info "${#missing[@]} store icon(s) and ${#games[@]} game portrait(s) missing and the network is not there; waiting for a later run"
+    info "${#missing[@]} store icon(s), ${#games[@]} game portrait(s), ${#heroes[@]} hero image(s) and ${#metas[@]} description(s) missing and the network is not there; waiting for a later run"
     state offline
     exit 0
 fi
@@ -371,6 +619,46 @@ for appid in "${games[@]}"; do
         2) info "Valve publishes no library art for appid $appid; leaving that card to its wash" ;;
         *) failed=$(( failed + 1 )) ;;
     esac
+done
+
+# The heroes, after the portraits and for the same ordering argument the
+# portraits get after the shipped icons: a card with no picture at all is a
+# worse thing to look at than a card with a picture and no background behind
+# it, so the asset that fixes the first failure goes first.
+for appid in "${heroes[@]}"; do
+    steam_fetch_hero "$appid"
+    case $? in
+        0) ;;
+        2) info "Valve publishes no hero image for appid $appid; the shell will fall back to the portrait" ;;
+        *) failed=$(( failed + 1 )) ;;
+    esac
+done
+
+# The descriptions last, because they are the only thing here that is not a
+# picture and the only thing that is paced.
+#
+# jq is asserted at build time (see steam_fetch_meta's note and the
+# Containerfile's verify block), so reaching this branch means a base image
+# changed underneath a machine that is already installed. It says so once per
+# run and keeps every other job in this script working, which is the right
+# trade for a subtitle.
+if [ "${#metas[@]}" -gt 0 ] && ! command -v jq >/dev/null 2>&1; then
+    err "jq is not installed, so store metadata cannot be parsed -- ${#metas[@]} description(s) skipped"
+    metas=()
+fi
+
+for appid in "${metas[@]}"; do
+    steam_fetch_meta "$appid"
+    case $? in
+        0) ;;
+        2) info "Steam has no store page for appid $appid; there is no description to cache" ;;
+        *) failed=$(( failed + 1 )) ;;
+    esac
+    # The courtesy pause, taken after every appid this run considered rather
+    # than only after the ones that succeeded: a 404 is a request too, and it
+    # is the artless-appid case that would otherwise sprint through a library.
+    # See STEAM_META_DELAY.
+    sleep "$STEAM_META_DELAY"
 done
 
 if [ "$failed" -gt 0 ]; then
