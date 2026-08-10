@@ -1,7 +1,11 @@
 [Unit]
-# Prefetches each shipped application's Flathub icon into
-# /var/marwanos/store/icons, so the store screen renders artwork from disk.
-# See the script header for why the shell cannot fetch this itself.
+# Prefetches artwork into /var/marwanos/store/icons: each shipped
+# application's Flathub icon, so the store screen renders logos from disk for
+# things that are not installed yet, and the library portrait for any Steam
+# game marwanos-appscan reported without one, so the home rail's game cards are
+# never bare. See the script header for why the shell cannot fetch this itself,
+# and appscan's steam_art() for how the second job's request and answer are
+# both just files.
 #
 # Started by marwanos-storeart.timer, not by a wants link of its own: the
 # timer is what gives an offline boot a second chance, and one starter means
@@ -16,7 +20,13 @@
 # Deliberately NOT ordered before greetd, same as flatpak-install: the shell
 # must come up whether or not artwork ever arrives, and a missing icon is a
 # fallback wash on a card, not a broken appliance.
-Description=Prefetch store artwork from Flathub (/var/marwanos/store/icons)
+#
+# NOT ordered against marwanos-appscan either, although it now reads that
+# service's output file. It does not need to be: a missing or stale apps.tsv
+# means this run finds no games to fetch for, and the timer's next pass reads
+# whatever appscan has published by then. Ordering would buy nothing, because
+# the interesting file appears minutes after appscan STARTS, not at its start.
+Description=Prefetch store and Steam game artwork (/var/marwanos/store/icons)
 Documentation=file:///usr/lib/marwanos/storeart
 After=network-online.target marwanos-netcheck.service
 Wants=network-online.target
@@ -29,7 +39,13 @@ ExecStart=/usr/lib/marwanos/storeart
 # measured taking minutes to do anything -- and the default 90s would turn a
 # slow fetch into a kill mid-write. The script's own curl timeouts keep any
 # single icon bounded.
-TimeoutStartSec=300
+# Bounded by the WORST run, not the usual one: each artless-but-unreachable
+# appid can legitimately burn ~180 s (two names x --max-time 30 x --retry 2),
+# so 300 s was two bad games on a bad link and then SIGTERM mid-write. Fifteen
+# minutes matches the timer's own cadence -- a run may take up to one full
+# period before the next one is due, and the script's per-curl timeouts keep
+# any single fetch bounded.
+TimeoutStartSec=900
 
 # Failure must never cascade, and never loop hot: the TIMER is the retry
 # mechanism, so the unit itself does not restart. A run that failed says so

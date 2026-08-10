@@ -1,6 +1,14 @@
 #!/usr/bin/env bash
 #
-# Prefetch store artwork, so the store screen renders from disk.
+# Prefetch artwork the machine cannot produce itself, so cards render from disk.
+#
+# TWO JOBS, ONE TIMER, and they are kept as two sections below rather than
+# folded together because only the download is shared. The Flathub half fetches
+# a FIXED list -- the applications the image ships -- once and forever. The
+# Steam half fetches a list that changes whenever somebody installs a game, and
+# it learns that list by reading what another service published. Same fetch
+# shape, opposite lifetimes; a merged loop would have to carry both stories in
+# every line of it.
 #
 # WHY THIS EXISTS. The store screen draws a card for every application the
 # image ships, installed or not (catalogue.gd's AVAILABLE_APPS) -- and for the
@@ -38,6 +46,38 @@
 # /var on the bench, or waiting for Phase 1, where marwand owns AppStream
 # metadata wholesale and this script is deleted.
 #
+# STEAM GAME ART, and why it needs fetching at all. marwanos-appscan emits a
+# home-rail row per installed Steam game and takes its portrait from Steam's
+# own appcache/librarycache. That cache is a CLIENT cache, not an install
+# artifact: it fills when Steam's UI has actually drawn the game. Install a
+# game from the couch and go straight back to the rail and the librarycache
+# entry does not exist yet, so appscan emits the row with an empty icon column
+# and the card is a bare wash with a title on it -- the exact "shelves blank
+# until you buy something" failure the Flathub half above exists to prevent,
+# arriving through a different door.
+#
+# Valve serves the same portrait publicly, so this fetches it: the game's
+# library_600x900 from the Steam CDN into /var/marwanos/store/icons, next to
+# the Flathub PNGs, and appscan's steam_art() picks it up on its next poll.
+#
+# THE TWO SERVICES NEVER TALK. appscan publishes the gap (a `steam.<appid>`
+# row with an empty icon column in /run/marwanos/apps.tsv), this fills it (a
+# file appears in the icon directory), appscan's next ten-second poll finds
+# the file and republishes the row with a path in it, and the shell -- which
+# polls the same TSV -- redraws. Three processes, no RPC, no signals, no
+# ordering requirement between any two of them: each one only ever looks at a
+# file the other one finished writing. Every step is idempotent and every step
+# survives the other two being restarted mid-flight, which is the whole reason
+# this project keeps choosing files over sockets.
+#
+# UNLIKE THE FLATHUB LIST, THIS ONE GROWS. The shipped-apps list only changes
+# with the image, so the Flathub half can decide "nothing missing" and mean it
+# forever. A new game can be installed at any moment, so the Steam half must
+# re-read the TSV on EVERY run -- there is no fast path that skips that read.
+# What it does skip is the network: an appid whose file already exists costs
+# one stat, so the steady state of a full library is still stats and nothing
+# else.
+#
 # Phase 1 note: same retirement plan as appscan and netcheck -- marwand serves
 # real AppStream data (names, descriptions, screenshots, icons) over RPC, and
 # this unit, its timer and its directory convention go away together.
@@ -57,6 +97,25 @@ ICON_DIR=/var/marwanos/store/icons
 ## soft beats blank, and Phase 1 replaces this with real AppStream anyway.
 ICON_BASE=https://dl.flathub.org/repo/appstream/x86_64/icons/128x128
 
+## What marwanos-appscan published, and the only place this learns which games
+## exist. Read-only here, and readable at all without any special arrangement:
+## appscan runs as root under systemd's default UMask=0022 (its unit sets no
+## UMask= of its own), so its `> "$APPS.tmp"` + `mv -f` leaves the file
+## 0644 root:root inside a 0755 root:root /run/marwanos -- see
+## tmpfiles.d/50-marwanos.conf. This script also runs as root, so the read is
+## trivially allowed; the perms matter because the SHELL reads the same file as
+## `player`, and that is what 0644 is there for.
+APPS_TSV="$STATE_DIR/apps.tsv"
+
+## Valve's public artwork host. `<appid>/library_600x900.jpg` is the portrait
+## grid image -- the same asset Steam's own library draws as a tile, and the
+## same one appscan prefers out of the local cache, so a card looks identical
+## whichever source filled it. `header.jpg` is the landscape capsule and the
+## fallback: it is the wrong aspect for a portrait card, but a stretched
+## header with the game's logo on it beats a flat wash with nothing.
+STEAM_ART_BASE=https://cdn.cloudflare.steamstatic.com/steam/apps
+STEAM_ART_NAMES=(library_600x900.jpg header.jpg)
+
 info() { printf '<6>%s: %s\n' "$TAG" "$*"; }
 err()  { printf '<3>%s: %s\n' "$TAG" "$*" >&2; }
 
@@ -69,6 +128,160 @@ state() {
     { printf '%s\n' "$*" > "$STATE.tmp" && mv -f "$STATE.tmp" "$STATE"; } \
         || err "cannot write $STATE"
 }
+
+## Field N (1-based) of a tab-separated record, or nothing.
+##
+## Hand-walked rather than the obvious `IFS=$'\t' read -r id name comment icon`,
+## and that is a correctness fix rather than a style choice. Tab counts as IFS
+## WHITESPACE in the shell's field-splitting rules even when IFS holds nothing
+## else, so a run of tabs collapses into one delimiter and every field after an
+## empty one shifts left. appscan emits empty fields as a matter of course --
+## a Steam row's comment column is ALWAYS empty, and it sits immediately before
+## the icon column this has to read -- so the obvious read would hand back the
+## icon path as the comment, find the icon field holding the exec line, and
+## conclude that every game already has art. Walking the tabs by hand keeps
+## empties empty.
+tsv_field() {
+    local record="$1" want="$2" i=1
+    while [ "$i" -lt "$want" ]; do
+        case "$record" in
+            *$'\t'*) record="${record#*$'\t'}" ;;
+            *) return 0 ;;
+        esac
+        i=$(( i + 1 ))
+    done
+    printf '%s' "${record%%$'\t'*}"
+}
+
+
+## The Steam appids that appscan says have no art, one per line, or nothing.
+##
+## THE GAP IS READ, NOT GUESSED. This could have walked Steam's steamapps
+## directory itself and worked out which manifests exist -- and then there
+## would be two files in this tree that both know how to read Valve's install
+## records, disagreeing the first time one of them was fixed. appscan already
+## did that work and wrote the answer down, including its own art lookup, so
+## this reads the answer: a row whose id starts `steam.` and whose icon column
+## is empty is precisely "appscan found this game and could not find a picture
+## for it". No TSV at all means appscan has not run yet, which reads the same
+## as no games.
+##
+## An appid whose file is already here is dropped before the network is ever
+## considered, so a full library costs one stat per game and no requests.
+steam_wanted() {
+    local line id icon appid
+
+    [ -f "$APPS_TSV" ] || return 0
+
+    while IFS= read -r line || [ -n "$line" ]; do
+        id="$(tsv_field "$line" 1)"
+        case "$id" in steam.*) ;; *) continue ;; esac
+
+        icon="$(tsv_field "$line" 4)"
+        [ -n "$icon" ] && continue
+
+        # Digits only, and this is the load-bearing check in the whole
+        # function: the appid goes into a URL and into a filename, and it
+        # arrives from a file written by another process. Numeric means it can
+        # be neither a path traversal nor a query string nor a shell word.
+        appid="${id#steam.}"
+        case "$appid" in ''|*[!0-9]*) continue ;; esac
+
+        [ -f "$ICON_DIR/steam.$appid.jpg" ] && continue
+
+        printf '%s\n' "$appid"
+    done < "$APPS_TSV"
+}
+
+
+## Fetch one game's portrait. 0 if a file landed, 1 if the network failed,
+## 2 if Valve simply has no art under either name.
+##
+## THE THREE OUTCOMES ARE KEPT APART because two of them mean "come back later"
+## and one means "stop asking". A timeout or a DNS failure is the link, and the
+## run should end in `failed` so the timer's retry is honest. An HTTP error
+## from both names is Valve answering clearly: this appid has no published
+## artwork -- a handful of appids never do -- and treating that as a failure
+## would put a permanent red unit on a machine where nothing is wrong. curl's
+## exit 22 is `--fail` seeing a >=400 status, which is exactly that distinction
+## already made for us.
+##
+## It DOES ask again in fifteen minutes, because nothing on disk records the
+## no-art answer. That is a deliberate trade: two 404s per artless game per
+## quarter hour is nothing, and the alternative -- a tombstone file -- is
+## cache state that would then need its own invalidation story for the day
+## Valve backfills the art.
+##
+## THE HEADER LANDS UNDER ITS OWN NAME, and that is what keeps the trade
+## honest (review caught the first version storing it as the portrait's
+## filename, which turned the landscape capsule into exactly the permanent
+## tombstone this comment forswears). Portrait missing means the portrait is
+## still WANTED: a game that has only a header today keeps being asked about,
+## and the day Valve backfills the 600x900 it replaces the fallback in one
+## run. appscan prefers the portrait name and falls back to the header name,
+## so the card upgrades itself with no invalidation story at all.
+steam_fetch() {
+    local appid="$1" name dest tmp rc http_only=1
+
+    for name in "${STEAM_ART_NAMES[@]}"; do
+        dest="$ICON_DIR/steam.$appid.jpg"
+        [ "$name" = "header.jpg" ] && dest="$ICON_DIR/steam.$appid.header.jpg"
+        # A fallback already on disk is not re-fetched; only the portrait's
+        # absence keeps this appid on the wanted list at all.
+        [ -f "$dest" ] && continue
+        tmp="$dest.tmp"
+        # stderr discarded, which the Flathub loop below does not do, and the
+        # difference is the word "quiet". `--retry` makes curl narrate its
+        # failures even under `-s`, so a 404 prints `curl: (22) ...` -- and
+        # this loop asks for a name that does not exist as a NORMAL outcome,
+        # every fifteen minutes, forever, for any appid Valve has no art for.
+        # Left alone that is two unexplained red lines per artless game per
+        # run in a journal nobody can then read. The exit code below is the
+        # only part of curl's opinion this needs, and everything worth saying
+        # gets said in this script's own voice.
+        curl -fsSL --max-time 30 --retry 2 -o "$tmp" "$STEAM_ART_BASE/$appid/$name" 2>/dev/null
+        rc=$?
+        if [ "$rc" -ne 0 ]; then
+            rm -f "$tmp"
+            # 22 is `--fail` on a >=400 status: Valve answered, the answer was
+            # no. Anything else is the wire, and that one gets a line, because
+            # having silenced curl above this is now the only place it can be
+            # said.
+            if [ "$rc" -ne 22 ]; then
+                err "could not fetch $name for Steam appid $appid (curl exit $rc)"
+                http_only=0
+            fi
+            continue
+        fi
+
+        # The same argument as the PNG check below, for the same reason: -f
+        # keeps out the 404s, but a CDN edge that answers 200 with an error
+        # page would land HTML in a .jpg and the failure would surface as a
+        # broken texture on the TV. FFD8FF is the JPEG SOI marker plus the
+        # first byte of the next one, which is what every JFIF and Exif file
+        # Valve serves starts with.
+        if [ "$(od -An -tx1 -N3 "$tmp" | tr -d ' \n')" != "ffd8ff" ]; then
+            err "the $name download for appid $appid is not a JPEG -- discarding it"
+            rm -f "$tmp"
+            http_only=0
+            continue
+        fi
+
+        # Atomic via rename, and here the reader is appscan rather than the
+        # shell: its next poll stats this path and puts it in the TSV, so a
+        # half-written file would be published as art and drawn as a corrupt
+        # texture. 0644 explicitly rather than by umask, matching the Flathub
+        # icons -- the shell reads these as `player`.
+        chmod 0644 "$tmp"
+        mv -f "$tmp" "$dest"
+        info "fetched $name for Steam appid $appid"
+        return 0
+    done
+
+    [ "$http_only" -eq 1 ] && return 2
+    return 1
+}
+
 
 install -d "$STATE_DIR" || err "cannot create $STATE_DIR"
 
@@ -94,12 +307,18 @@ fi
 
 # What is actually missing, before touching the network: the common case after
 # the first successful run is "nothing", and that case must cost stats only.
+# Both halves are surveyed BEFORE either fetches, so the network gate below is
+# asked once and the "nothing to do" exit can speak for the whole run.
 missing=()
 for app in "${apps[@]}"; do
     [ -f "$ICON_DIR/$app.png" ] || missing+=("$app")
 done
 
-if [ "${#missing[@]}" -eq 0 ]; then
+# Re-read every run, never cached: the Flathub list above is fixed by the
+# image, this one changes the moment somebody installs a game. See the header.
+mapfile -t games < <(steam_wanted)
+
+if [ "${#missing[@]}" -eq 0 ] && [ "${#games[@]}" -eq 0 ]; then
     state "done ${#apps[@]}"
     exit 0
 fi
@@ -109,7 +328,7 @@ fi
 # do not try, the timer comes back.
 net="$(cat "$NET_STATE" 2>/dev/null)" || net=""
 if [ "$net" != "online" ]; then
-    info "${#missing[@]} icon(s) missing and the network is not there; waiting for a later run"
+    info "${#missing[@]} store icon(s) and ${#games[@]} game portrait(s) missing and the network is not there; waiting for a later run"
     state offline
     exit 0
 fi
@@ -142,12 +361,29 @@ for app in "${missing[@]}"; do
     info "fetched the icon for $app"
 done
 
+# The Steam half, run after the shipped icons rather than before them: the
+# store screen's shelves are the thing a first boot stares at, and a library of
+# games is by definition a machine somebody has already been using.
+for appid in "${games[@]}"; do
+    steam_fetch "$appid"
+    case $? in
+        0) ;;
+        2) info "Valve publishes no library art for appid $appid; leaving that card to its wash" ;;
+        *) failed=$(( failed + 1 )) ;;
+    esac
+done
+
 if [ "$failed" -gt 0 ]; then
-    err "$failed icon(s) could not be fetched; the timer will retry"
+    err "$failed image(s) could not be fetched; the timer will retry"
     state failed
     exit 1
 fi
 
+# The count is the SHIPPED icons only, unchanged from before the Steam half
+# existed: this number answers "is the store screen fully stocked", which is a
+# question about a fixed list. Game portraits have no denominator -- the answer
+# would be N of however many games happen to be installed this minute -- so
+# they say their piece in the journal and stay out of the state file.
 present=0
 for app in "${apps[@]}"; do
     [ -f "$ICON_DIR/$app.png" ] && present=$(( present + 1 ))

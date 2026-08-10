@@ -232,12 +232,32 @@ func show_failure() -> void:
 ## silently is the correct reading of "the machine heard you, and no". The
 ## close goes through the seam's own close path, so the rail comes back the
 ## same way it does for every other exit.
+##
+## AND IT STANDS DOWN WHILE THE APP MENU IS UP, which is the other half of that
+## same promise. Letting home through was pointless on its own: the menu opened,
+## and then the splash ate the A that would have chosen anything on it, so a
+## person watching a launch that never drew got a menu with a dead button --
+## exactly the state the paragraph above claims to prevent. The overlay is a
+## SHELL surface with its own focus, so nothing needs eating while it is there;
+## shell_root pauses this the same way and in the same two places it pauses the
+## pad bridge. Verified under Xvfb, where the watchdog never answers and the
+## splash is therefore up for the whole run.
 const CONSUMED_ACTIONS := [
 	"ui_left", "ui_right", "ui_up", "ui_down", "ui_accept", "ui_cancel",
 ]
 
+var _paused := false
+
+
+## Set by Launcher on shell_root's behalf while the app menu is over this
+## splash. See the note above the action list.
+func set_paused(value: bool) -> void:
+	_paused = value
+
 
 func _input(event: InputEvent) -> void:
+	if _paused:
+		return
 	var consumed := false
 	for action in CONSUMED_ACTIONS:
 		if event.is_action(action):

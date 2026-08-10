@@ -2,10 +2,17 @@ extends Control
 
 ## The home screen -- everything the appliance shows when nothing is launched.
 ##
-## A console-style home: a full-bleed hero wash behind a top status bar, the
-## selected entry's title, and a horizontal rail of cards with one enlarged
-## selection. It replaced a 4x3 grid, and the reason is navigational rather than
-## cosmetic. A grid has two axes, so "what does right do at the end of a row"
+## A console-style home: the selected entry's own artwork as the FULL-BLEED
+## background, behind a top status bar, the selected entry's title, and a
+## horizontal rail of cards with one enlarged selection. It replaced a 4x3 grid,
+## and the reason is navigational rather than cosmetic.
+##
+## THE BACKGROUND IS THE SELECTION. Moving the cursor repaints the entire
+## surface with that entry's picture, not a strip of it and not an accent tint --
+## the Playnite and PS5 shape, and the thing that makes a screen of cards read as
+## a library. See _build_art_layer for the stack and why every layer in it is
+## there; the accent wash stays underneath as the base and as the whole answer
+## for an entry that ships no picture. A grid has two axes, so "what does right do at the end of a row"
 ## has no answer a person can predict, and the previous version needed an
 ## explicit twelve-entry neighbour table to make it defensible. A rail has one
 ## axis: left and right are the only moves, the ends are hard stops, and there is
@@ -32,6 +39,10 @@ const Glyphs = preload("res://src/glyphs.gd")
 const ErrorScreen = preload("res://src/error_screen.gd")
 
 var _hero: ColorRect = null
+## The key-art layer and its two stacked pictures. See _build_art_layer.
+var _art_layer: Control = null
+var _art_back: TextureRect = null
+var _art_front: TextureRect = null
 var _title: Label = null
 var _subtitle: Label = null
 var _clock: Label = null
@@ -56,6 +67,22 @@ var _tiles: Array = []
 var _last_focused: Control = null
 var _rail_tween: Tween = null
 var _hero_tween: Tween = null
+var _art_tween: Tween = null
+
+## The debounce between "the selection moved" and "load that picture", and the
+## path it is waiting to load. See TvTheme.HERO_ART_DEBOUNCE_SECONDS.
+var _art_timer: Timer = null
+var _art_pending_path := ""
+## What is actually on the screen, so re-selecting the same card is a no-op
+## rather than a crossfade from a picture to itself.
+var _art_shown_path := ""
+
+## path -> ImageTexture of already-softened backdrops, with the insertion order
+## kept alongside so the oldest can be dropped at the cap. A Dictionary has no
+## ordering to evict by, and the alternative -- letting it grow -- is a leak on
+## a machine that never reboots.
+var _art_cache: Dictionary = {}
+var _art_cache_order: Array = []
 
 
 func _ready() -> void:
@@ -146,13 +173,19 @@ func _build() -> void:
 	add_child(background)
 
 	# The hero wash: the selected entry's accent, full bleed, heavily dimmed. It
-	# stands in for the key art Phase 1 will load, and it deliberately bleeds past
-	# the TV-safe inset -- background may overscan, text may not.
+	# is the BASE of the background and the whole of it for an entry with no
+	# picture -- which is a normal card, not a broken one: the Files surface has
+	# no export to take an icon from, and neither does an app whose flatpak
+	# shipped none. It deliberately bleeds past the TV-safe inset -- background
+	# may overscan, text may not.
 	_hero = ColorRect.new()
 	_hero.color = TvTheme.BACKGROUND
 	_hero.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	_hero.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(_hero)
+
+	# The selected entry's own picture, over the wash and under everything else.
+	_build_art_layer()
 
 	# Darkens the lower part of the surface so the title and rail keep their
 	# contrast whatever the accent is. Anchored to the bottom and given a
@@ -208,6 +241,94 @@ func _build() -> void:
 	column.add_child(_inset(_build_title_block()))
 	column.add_child(_build_rail())
 	column.add_child(_inset(_build_hints()))
+
+
+## THE WHOLE BACKGROUND IS THE SELECTED ENTRY'S ART, which is the difference
+## between a library and a menu -- Playnite and the PS5 both repaint the entire
+## surface as the cursor moves, and an accent wash alone never reads as "this
+## screen is about that thing".
+##
+## Four children, in the order they paint, and every one of them is load-bearing:
+##
+##   _art_back    the picture currently up
+##   _art_front   the picture fading in over it, alpha 0 at rest
+##   a flat scrim TvTheme.HERO_ART_SCRIM over both, so text has a floor to stand
+##                on whatever the art is
+##   a top band   the mirror of the bottom gradient, for the top bar
+##
+## Two rects rather than one because a crossfade needs both frames alive at once;
+## _settle_front collapses them back to one as soon as the fade lands, so the
+## resting cost is one texture.
+##
+## ANCHORED TO THE FULL CONTROL RECT, NOT TO 1920x1080. The design surface is
+## 1920 wide and canvas_items scales it, but project.godot's stretch is
+## aspect=expand, which hands a wider panel the extra width instead of black
+## bars -- so on the 3440x1440 ultrawide this Control is ~2580 units across, and
+## a layer sized to BASE_WIDTH would leave a strip of bare wash down one side.
+## PRESET_FULL_RECT is the only correct answer, and it is why no number in here
+## is a width.
+##
+## The whole layer is transparent when there is no art, so an entry without a
+## picture costs nothing and shows the wash exactly as it always did -- INCLUDING
+## the scrim and the top band, which are children and go with it. A scrim that
+## stayed up over the wash would darken a screen that has nothing needing to be
+## darkened.
+func _build_art_layer() -> void:
+	_art_layer = Control.new()
+	_art_layer.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_art_layer.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_art_layer.modulate.a = 0.0
+	add_child(_art_layer)
+
+	_art_back = _build_art_rect()
+	_art_layer.add_child(_art_back)
+
+	_art_front = _build_art_rect()
+	_art_front.modulate.a = 0.0
+	_art_layer.add_child(_art_front)
+
+	var scrim := ColorRect.new()
+	scrim.color = TvTheme.hero_scrim_color()
+	scrim.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	scrim.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_art_layer.add_child(scrim)
+
+	var top_band := TextureRect.new()
+	top_band.texture = TvTheme.hero_top_gradient()
+	top_band.stretch_mode = TextureRect.STRETCH_SCALE
+	# Full rect first and then one anchor moved, rather than PRESET_TOP_WIDE:
+	# set_anchors_and_offsets_preset is the form that zeroes the offsets, and a
+	# preset that only moves anchors leaves whatever offsets the node was built
+	# with to be interpreted against the new ones.
+	top_band.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	top_band.anchor_bottom = TvTheme.HERO_ART_TOP_FRACTION
+	top_band.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_art_layer.add_child(top_band)
+
+
+## One of the two stacked pictures.
+##
+## KEEP_ASPECT_COVERED is the cover fit: the image is scaled until it fills the
+## rect on both axes and the overflow is cropped by the draw itself, so nothing
+## is ever stretched out of shape -- which a 600x900 portrait across a 2580-wide
+## panel very visibly would be. EXPAND_IGNORE_SIZE is what lets the rect be
+## whatever the anchors say instead of at least as large as its texture; it
+## matters in the other direction too, since these textures are deliberately
+## tiny (see TvTheme.HERO_ART_BLUR_DIVISOR).
+##
+## TEXTURE_FILTER_LINEAR is stated rather than inherited, because it IS the
+## blur. A backdrop resized down to 50 px and then drawn with nearest-neighbour
+## filtering is not a soft picture, it is a grid of enormous squares -- so the
+## one property the whole softening trick depends on does not get to be a
+## project-settings default that someone changes for an unrelated reason.
+func _build_art_rect() -> TextureRect:
+	var rect := TextureRect.new()
+	rect.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	rect.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+	rect.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
+	rect.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	return rect
 
 
 ## Wraps a row in the horizontal TV-safe inset.
@@ -538,6 +659,11 @@ func _on_card_selected(entry: Dictionary) -> void:
 	_title.text = str(entry.get("title", ""))
 	_subtitle.text = str(entry.get("subtitle", ""))
 	_fade_hero_to(TvTheme.accent(str(entry.get("accent", ""))))
+	# The wash changes NOW and the picture changes in a moment: the accent is a
+	# colour already in hand, and the picture is a file on disk. Splitting them
+	# is what makes a fast scroll cost one decode instead of ten -- see
+	# _request_hero_art.
+	_request_hero_art(str(entry.get("icon", "")))
 	_scroll_to_selected()
 
 
@@ -556,6 +682,195 @@ func _fade_hero_to(accent: Color) -> void:
 	_hero_tween = create_tween()
 	_hero_tween.set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
 	_hero_tween.tween_property(_hero, "color", target, TvTheme.RAIL_TWEEN_SECONDS)
+
+
+# ---------------------------------------------------------------------------
+# The hero art
+# ---------------------------------------------------------------------------
+
+## Asks for a picture, eventually.
+##
+## THE DEBOUNCE IS THE WHOLE FUNCTION. Holding right across ten cards emits ten
+## selections in about a second; every one of them lands here, and every one of
+## them restarts the same one-shot timer, so nine of them never touch the disk.
+## Only the card the thumb settles on is loaded and only one fade is ever in
+## flight. The alternative was measured in the shape of the problem rather than
+## on a stopwatch: a Steam portrait is a JPEG decode on a CPU renderer, and ten
+## of them queued behind ten crossfades is a rail that stops answering the pad
+## while it catches up -- the exact failure the rail's anchored selection exists
+## to avoid.
+##
+## An empty path is a real request, not a skipped one: it is how a card with no
+## picture takes the screen BACK from the last card that had one.
+func _request_hero_art(path: String) -> void:
+	_art_pending_path = path
+
+	if _art_timer == null:
+		_art_timer = Timer.new()
+		_art_timer.one_shot = true
+		_art_timer.timeout.connect(_on_art_settled)
+		add_child(_art_timer)
+
+	# start() on a running one-shot restarts it, which is the debounce.
+	_art_timer.start(TvTheme.HERO_ART_DEBOUNCE_SECONDS)
+
+
+func _on_art_settled() -> void:
+	var path := _art_pending_path
+
+	if path.is_empty():
+		# Said out loud rather than done silently, because on this machine the
+		# journal is the only place to tell "that entry ships no artwork" apart
+		# from "the loader fell over".
+		ShellLog.info("hero art: none, wash only")
+		_art_shown_path = ""
+		_clear_hero_art()
+		return
+
+	if path == _art_shown_path:
+		ShellLog.info("hero art: %s (already up)" % path)
+		return
+
+	var texture := _backdrop_texture(path)
+	if texture == null:
+		# Same policy as the card's own icon: a picture that will not decode is
+		# not worth a black screen, and the wash underneath is a complete answer.
+		ShellLog.warn("hero art: %s would not decode; wash only" % path)
+		_art_shown_path = ""
+		_clear_hero_art()
+		return
+
+	_art_shown_path = path
+	_show_hero_art(texture)
+
+
+## Crossfades to a picture.
+##
+## The two rects and the layer's own alpha do two different jobs and both are
+## needed. Fading _art_front in handles picture-to-picture. Fading the LAYER in
+## handles wash-to-picture, where there is no outgoing frame to cross from
+## because the outgoing frame is the accent wash sitting underneath. They run in
+## parallel so an interrupted fade-out -- selection moving back onto a card with
+## art while the layer is still on its way down -- is recovered by the same
+## tween that does the crossfade, rather than leaving the art stranded at 40%.
+##
+## The in-flight tween is killed first, always. Ten queued fades would each be
+## drawing a full-screen texture, and the last one to finish would win by luck
+## rather than by being the current selection.
+func _show_hero_art(texture: ImageTexture) -> void:
+	_settle_front()
+	_kill_art_tween()
+
+	_art_tween = create_tween()
+	_art_tween.set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
+	_art_tween.set_parallel(true)
+
+	if _art_back.texture == null:
+		_art_back.texture = texture
+	else:
+		_art_front.texture = texture
+		_art_front.modulate.a = 0.0
+		_art_tween.tween_property(
+			_art_front, "modulate:a", 1.0, TvTheme.HERO_ART_FADE_SECONDS)
+
+	_art_tween.tween_property(
+		_art_layer, "modulate:a", 1.0, TvTheme.HERO_ART_FADE_SECONDS)
+	_art_tween.chain().tween_callback(_settle_front)
+
+
+## Fades the art off, leaving the wash.
+func _clear_hero_art() -> void:
+	if _art_back.texture == null and _art_front.texture == null:
+		return
+
+	_kill_art_tween()
+	_art_tween = create_tween()
+	_art_tween.set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
+	_art_tween.tween_property(
+		_art_layer, "modulate:a", 0.0, TvTheme.HERO_ART_FADE_SECONDS)
+	_art_tween.tween_callback(_drop_art)
+
+
+## Collapses the two pictures back to one, so the resting state is always a
+## single texture and the next crossfade has a clean frame to cross FROM.
+##
+## Called at the end of a fade, where the front is fully opaque and simply
+## becomes the back -- and called again at the START of the next one, which is
+## the case that matters: a fade cut short by a faster thumb leaves the front
+## half shown, and the half-shown picture is what the person is looking at. Past
+## the midpoint it is promoted, before it, dropped. Either way the front is empty
+## afterwards, which is the invariant _show_hero_art relies on.
+func _settle_front() -> void:
+	if _art_front.texture == null:
+		return
+	if _art_front.modulate.a >= 0.5:
+		_art_back.texture = _art_front.texture
+	_art_front.texture = null
+	_art_front.modulate.a = 0.0
+
+
+func _drop_art() -> void:
+	_art_back.texture = null
+	_art_front.texture = null
+	_art_front.modulate.a = 0.0
+
+
+func _kill_art_tween() -> void:
+	if _art_tween != null and _art_tween.is_valid():
+		_art_tween.kill()
+	_art_tween = null
+
+
+## An entry's icon file, decoded once and softened into a backdrop.
+##
+## CACHED BY PATH, because the rail is walked back and forth: left, right and
+## left again over three cards would otherwise be three decodes of the same
+## JPEG, and revisiting a card is the single most common thing anyone does here.
+## The cache holds the SOFTENED texture rather than the source image, so a hit
+## costs a dictionary lookup and nothing else -- no resize, no upload.
+##
+## The decode itself is tile.gd's loader, unchanged and not reimplemented: it is
+## where PNG, JPG and the SVG two-pass were all paid for, and a second copy of
+## that reasoning would drift the first time one of them learned something.
+##
+## THE SOFTENING IS A RESIZE, and that is the entire trick -- see
+## TvTheme.HERO_ART_BLUR_DIVISOR for why a blur is not affordable here and why
+## an icon is taken further down than a portrait.
+func _backdrop_texture(path: String) -> ImageTexture:
+	if _art_cache.has(path):
+		ShellLog.info("hero art: %s (cached)" % path)
+		return _art_cache[path]
+
+	var image := Tile.load_icon_image(path)
+	if image == null:
+		return null
+
+	var width := image.get_width()
+	var height := image.get_height()
+	if width <= 0 or height <= 0:
+		return null
+
+	# A logo is square-ish; key art is not. The test is on the pixels rather than
+	# on the entry's id, because "steam.<appid>" is only today's source of
+	# portraits and the next one will not announce itself in the id.
+	var squareish := absf(1.0 - float(width) / float(height)) <= TvTheme.HERO_ART_SQUARE_TOLERANCE
+	var divisor := TvTheme.HERO_ART_BLUR_DIVISOR_SQUARE if squareish \
+		else TvTheme.HERO_ART_BLUR_DIVISOR
+
+	var small_w := maxi(TvTheme.HERO_ART_BLUR_MIN, width / divisor)
+	var small_h := maxi(TvTheme.HERO_ART_BLUR_MIN,
+		int(round(float(small_w) * float(height) / float(width))))
+	image.resize(small_w, small_h, Image.INTERPOLATE_BILINEAR)
+
+	var texture := ImageTexture.create_from_image(image)
+	_art_cache[path] = texture
+	_art_cache_order.append(path)
+	while _art_cache_order.size() > TvTheme.HERO_ART_CACHE_MAX:
+		_art_cache.erase(_art_cache_order.pop_front())
+
+	ShellLog.info("hero art: %s (%dx%d softened to %dx%d)"
+		% [path, width, height, small_w, small_h])
+	return texture
 
 
 ## Slides the strip so the selected card's left edge rests on the TV-safe margin.
@@ -638,6 +953,10 @@ func _refresh_empty_state() -> void:
 		_title.text = "No apps installed"
 		_subtitle.text = "Open the Store above to install something"
 		_fade_hero_to(TvTheme.ACCENT_FALLBACK)
+		# Nothing selected means nothing to show a picture OF, and the last card
+		# to be removed must not leave its backdrop behind on a screen that now
+		# says the machine is empty.
+		_request_hero_art("")
 
 	if _open_hint != null:
 		_open_hint.visible = not empty
@@ -932,17 +1251,36 @@ func _open_overlay() -> void:
 	# it. See Kiosk.set_overlay -- if this does not take, the overlay still
 	# works, it just covers the app.
 	Kiosk.set_overlay(true)
-	# While the menu is up the pad belongs to the menu. Without this a bridged
-	# application (Dolphin) receives an arrow for every menu move and a
+	# While the overlay is up the pad belongs to the overlay. Without this a
+	# bridged application (Dolphin) receives an arrow for every menu move and a
 	# BackSpace for the B that closes the menu -- input delivered twice, acted
 	# on twice, visible once.
+	#
+	# IT STAYS PAUSED THROUGH THE KEYBOARD TOO, and that is why this is paired
+	# with the overlay's lifetime rather than with the menu panel's. The menu's
+	# Type entry swaps the panel for the on-screen keyboard on the same node
+	# (see app_overlay.gd) -- so nothing here fires in between, and a stick
+	# crossing a 5x10 grid cannot also be arrowing around the application
+	# behind it. The bridge resumes in _close_overlay, once.
 	Launcher.set_pad_keys_paused(true)
+	# The launch splash stands down for the same span. It is only ever still up
+	# when the application has not drawn yet -- which is precisely when someone
+	# presses home to ask what is going on -- and its input eating would swallow
+	# the A that chooses a menu entry. See launch_splash.gd.
+	Launcher.set_splash_paused(true)
 
 
 func _on_overlay_closed() -> void:
 	_close_overlay.call_deferred()
 
 
+## The overlay's single teardown, and it is single on purpose: the keyboard the
+## Type entry puts up is a CHILD of the overlay, not a surface of its own, so
+## freeing the overlay frees it too. That is what makes the awkward path safe --
+## the application exiting while someone is mid-word arrives at
+## _on_launch_finished, which calls this, and the keys go with the menu, the
+## gamescope overlay flag and the pad-bridge pause. A sibling screen would have
+## needed its own branch here and would have been the branch that got missed.
 func _close_overlay() -> void:
 	if _overlay == null:
 		return
@@ -952,6 +1290,7 @@ func _close_overlay() -> void:
 	overlay.queue_free()
 	Kiosk.set_overlay(false)
 	Launcher.set_pad_keys_paused(false)
+	Launcher.set_splash_paused(false)
 
 
 ## The options menu for the selected card. Guarded rather than always available,

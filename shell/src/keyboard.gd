@@ -22,6 +22,13 @@ extends Control
 ## changes. Rebuilding the grid would drop focus to nowhere mid-word.
 ##
 ## The password is masked on screen and never logged. See wifi.gd.
+##
+## IT IS ALSO NOT ALWAYS A SCREEN. app_overlay.gd mounts this same node over a
+## RUNNING APPLICATION to type into it, and there the opaque background below
+## would be the app vanishing at the moment a person needs to see the field they
+## are filling in -- hence background_alpha. Nothing else about the keyboard
+## changes between the two uses, which is the point of it returning a string and
+## knowing nothing about its caller.
 
 signal submitted(text: String)
 signal cancelled()
@@ -61,6 +68,14 @@ var masked: bool = true
 ## title_text and masked.
 var initial_text: String = ""
 
+## How solid the surface behind the keys is. 1.0 -- the default -- makes this a
+## screen: the shell's own background, with nothing meant to show through it.
+## 0.0 makes it a layer, for the overlay case where what is behind the keys is
+## the running application and its text field. Only the alpha is a knob; the
+## colour stays TvTheme.BACKGROUND either way, so a partly-transparent keyboard
+## dims what it covers rather than tinting it. Set before add_child.
+var background_alpha: float = 1.0
+
 var _text: String = ""
 var _shift: bool = false
 
@@ -75,7 +90,8 @@ func _ready() -> void:
 	set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 
 	var background := ColorRect.new()
-	background.color = TvTheme.BACKGROUND
+	background.color = Color(TvTheme.BACKGROUND.r, TvTheme.BACKGROUND.g,
+		TvTheme.BACKGROUND.b, background_alpha)
 	background.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	background.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(background)

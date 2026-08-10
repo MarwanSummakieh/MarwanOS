@@ -92,15 +92,97 @@ const CARD_ICON_INSET := 34
 ## FocusRepeat's hold-repeat interval is the real ceiling on this.
 const RAIL_TWEEN_SECONDS := 0.18
 
-## The hero art behind everything, at rest. The art is a full-bleed wash of the
-## selected entry's accent; at full strength it would make white text illegible,
-## and the number is chosen so TEXT_PRIMARY stays above 4.5:1 against the
-## brightest accent in the placeholder catalogue.
+## The accent wash's strength -- the BASE layer of the home background now,
+## and the whole background only for an entry that ships no picture (the
+## HERO_ART_* block below is what draws over it when there is one). At full
+## strength the wash would make white text illegible; the number keeps
+## TEXT_PRIMARY above 4.5:1 against the brightest accent in the catalogue.
 const HERO_DIM := 0.22
 
 ## Height of the gradient that darkens the lower half, as a fraction of the
 ## surface. Text sits inside it; the wash is only visible above.
 const HERO_GRADIENT_FRACTION := 0.62
+
+# ---------------------------------------------------------------------------
+# The hero ART -- the selected entry's own picture as the WHOLE background
+#
+# Playnite and the PS5 both do the same thing and it is the reason either
+# screen feels like a library rather than a menu: moving the selection repaints
+# the entire surface, not a strip of it. The accent wash above stays as the base
+# layer and as the whole answer for an entry with no picture, because roughly
+# half a real rail (built-in surfaces, apps whose flatpak exports nothing) has
+# none.
+#
+# Everything below is chosen against llvmpipe, which is the renderer this
+# appliance actually has: no shader, no per-frame filter, nothing that costs
+# anything once the frame has settled.
+
+## How long after the selection settles before the picture is loaded.
+##
+## THE POINT IS THE HOLD. Leaning right across ten cards fires ten selections
+## in about a second, and without this each one would decode a JPEG and start a
+## fade -- ten loads and ten tweens for a rail nobody was looking at on the way
+## past. The timer is restarted by every selection, so only the card the thumb
+## comes to rest on pays. Deliberately shorter than the eye needs to read a card
+## (~0.25 s), so a deliberate single press still feels like it answered at once.
+const HERO_ART_DEBOUNCE_SECONDS := 0.15
+
+## The crossfade between the outgoing picture and the incoming one. A shade
+## longer than RAIL_TWEEN_SECONDS: the rail's slide is a small object moving and
+## reads as fast, while a full-screen image changing in the same time reads as a
+## flash.
+const HERO_ART_FADE_SECONDS := 0.22
+
+## The flat scrim over the picture, as an alpha of BACKGROUND.
+##
+## NOT A TASTE SETTING -- it is worked backwards from the worst art the machine
+## can be handed, which is a Steam portrait that is mostly white. At 0.70, white
+## art lands at ~0.36 luminance, and under the bottom gradient where the
+## SUBTITLE sits (~0.36 alpha there) that becomes ~0.26, which puts
+## TEXT_SECONDARY at ~3.4:1 and TEXT_PRIMARY at ~7:1. Drop the scrim to 0.55 and
+## the subtitle falls to ~2.4:1 -- unreadable over a white box shot, which is
+## exactly the case that has to work. What is left of the art at 30% is still
+## unmistakably a picture, which is all a backdrop is for.
+const HERO_ART_SCRIM := 0.70
+
+## A second gradient, at the TOP, only over the picture.
+##
+## The bottom gradient protects the title, the subtitle and the rail. Nothing
+## protected the top bar, because until there was art up there it had only the
+## dimmed wash under it -- and the wordmark, the clock and the controller line
+## over bright art were the one place the flat scrim alone did not carry.
+const HERO_ART_TOP_FRACTION := 0.26
+const HERO_ART_TOP_ALPHA := 0.88
+
+## THE BLUR, AND THERE IS NO BLUR. A picture at full sharpness behind text is
+## visual noise, and every real way to soften one -- a shader, a per-frame
+## filter, a repeated texture read -- is a per-frame cost on a machine whose
+## renderer is a CPU. So the image is resized DOWN to a handful of pixels once,
+## when the selection settles, and the linear filtering that would upscale any
+## texture smears it back across the screen for free. The cost is one CPU
+## resize per picture per boot; the per-frame cost is exactly that of drawing
+## any other texture.
+##
+## A 600x900 Steam portrait divided by 12 is 50x75 -- still recognisably the box
+## art, just soft. A SQUARE LOGO GETS TWICE THE TREATMENT, and the result is not
+## a mistake: a 256 px flatpak icon at 1/24 is a 10 px smear blown up to fill a
+## 2580 px ultrawide, which is abstract colour rather than a picture of
+## anything. That is the intended look and it is what Playnite does with
+## icon-only entries -- the card already shows the logo sharply, and the
+## background's job is to be the entry's colour, at the scale of a wall.
+const HERO_ART_BLUR_DIVISOR := 12
+const HERO_ART_BLUR_DIVISOR_SQUARE := 24
+const HERO_ART_BLUR_MIN := 8
+
+## How far from 1:1 an image may be and still count as a logo rather than key
+## art. Wide enough to catch icons that are a pixel or two off square, narrow
+## enough that a 600x900 portrait (0.67) is nowhere near it.
+const HERO_ART_SQUARE_TOLERANCE := 0.2
+
+## How many decoded backdrops are kept. The set is a rail's worth -- a dozen or
+## two cards, each a few kilobytes once resized -- so this is a cap against a
+## pathological rail rather than a working eviction policy anyone will hit.
+const HERO_ART_CACHE_MAX := 16
 
 const SIZE_HERO_TITLE := 72
 const SIZE_TOPBAR := 28
@@ -293,6 +375,31 @@ static func hero_gradient() -> GradientTexture2D:
 	texture.width = 2
 	texture.height = 256
 	return texture
+
+
+## The mirror of hero_gradient, at the top of the surface, drawn only where
+## there is key art to darken. See HERO_ART_TOP_FRACTION for why the top bar
+## needs its own band and the wash-only screen does not.
+static func hero_top_gradient() -> GradientTexture2D:
+	var gradient := Gradient.new()
+	gradient.set_color(0, Color(BACKGROUND.r, BACKGROUND.g, BACKGROUND.b, HERO_ART_TOP_ALPHA))
+	gradient.set_color(1, Color(BACKGROUND.r, BACKGROUND.g, BACKGROUND.b, 0.0))
+
+	var texture := GradientTexture2D.new()
+	texture.gradient = gradient
+	texture.fill_from = Vector2(0, 0)
+	texture.fill_to = Vector2(0, 1)
+	texture.width = 2
+	texture.height = 256
+	return texture
+
+
+## The flat scrim laid over key art, edge to edge. BACKGROUND rather than black,
+## so a dimmed picture tends towards the colour the rest of the shell is made of
+## rather than towards a hole in it. See HERO_ART_SCRIM for where the alpha
+## comes from.
+static func hero_scrim_color() -> Color:
+	return Color(BACKGROUND.r, BACKGROUND.g, BACKGROUND.b, HERO_ART_SCRIM)
 
 
 ## A row that is being pressed and has nothing else to say so. Brighter than

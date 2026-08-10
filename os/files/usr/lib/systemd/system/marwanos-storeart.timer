@@ -12,7 +12,22 @@
 # Fifteen minutes because icons are decoration: netcheck answers in fifteen
 # SECONDS because the top bar is live UI, but nobody is staring at a bare
 # store card timing how long the logo takes once the network heals.
-Description=Prefetch store artwork, retrying while anything is missing
+#
+# FIFTEEN STILL HOLDS now that the service also fetches Steam game portraits,
+# and that is a judgement rather than an oversight. The worst case moved: a
+# game installed one minute after a run shows a bare card for fourteen more,
+# where before this only mattered on a network that had just healed. It is
+# still the right number, because the person who just installed a game spent
+# minutes watching it download inside Steam and is going to play it from
+# there, not walk back to a rail to admire the artwork -- and by the next time
+# they come to the rail looking for it, the picture is on disk. Firing faster
+# would buy a nicer first glance at the cost of polling Valve's CDN four times
+# an hour forever, including for the appids that will never have art.
+#
+# The service's own cost per run does not change with the second job: a full
+# library is one stat per game and no requests, so this stays the same cheap
+# no-op it always was between the runs that have something to do.
+Description=Prefetch store and Steam game artwork, retrying while anything is missing
 
 [Timer]
 # Soon after boot rather than at it: the service orders itself after

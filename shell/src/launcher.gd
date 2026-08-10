@@ -64,6 +64,15 @@ var _splash: LaunchSplash = null
 # freed wherever the launch ends. See pad_keys.gd for what it is.
 var _pad_keys: PadKeys = null
 
+# REMEMBERED, not just forwarded. The overlay can be open before the bridge
+# exists -- press home during a slow desktop-Steam start, and the watchdog
+# births the bridge minutes later, under a menu or keyboard that owns the pad.
+# A bridge that starts life unpaused in that state left-clicks in Steam for
+# every A meant for the on-screen keyboard (found in review); the stored flag
+# is applied to the bridge at creation, so pause state is a property of the
+# SESSION, not of whichever object happened to exist when it was set.
+var _pad_keys_paused := false
+
 
 func is_busy() -> bool:
 	return not _current.is_empty()
@@ -154,7 +163,16 @@ func _spawn(exec: Array) -> void:
 	# the screen is whatever panel this stick was plugged into. Today's one
 	# consumer is Steam's nested gamescope; the tokens are generic because a
 	# second nested client will want exactly the same two numbers.
+	#
+	# Guarded, because headless reports zero screens and screen_get_size(0)
+	# answers (0, 0) there (measured on the pinned engine) -- and a
+	# `gamescope -W 0` is an instant argument error dressed as a launch. The
+	# window size is the next-best truth, and the design surface is the floor.
 	var screen := DisplayServer.screen_get_size(DisplayServer.get_primary_screen())
+	if screen.x <= 0 or screen.y <= 0:
+		screen = DisplayServer.window_get_size()
+	if screen.x <= 0 or screen.y <= 0:
+		screen = Vector2i(1920, 1080)
 	var program := str(exec[0])
 	var args := PackedStringArray()
 	for i in range(1, exec.size()):
@@ -259,6 +277,9 @@ func _check_window() -> void:
 			if _pad_keys == null and not mode.is_empty():
 				_pad_keys = PadKeys.new()
 				_pad_keys.mode = mode
+				# Born already respecting whatever surface owns the pad right
+				# now -- see _pad_keys_paused for the overlay-first race.
+				_pad_keys.paused = _pad_keys_paused
 				get_tree().root.add_child(_pad_keys)
 		Kiosk.Focus.SHELL:
 			if _watched_seconds >= WINDOW_DEADLINE_SECONDS \
@@ -300,11 +321,23 @@ func _remove_pad_keys() -> void:
 
 
 ## shell_root's lever for the home menu: the same press must not both move
-## the menu and type into the application behind it. A no-op while no bridge
-## exists, which is most launches.
+## the menu and type into the application behind it. The value is remembered
+## even while no bridge exists, so one created later starts in the right
+## state -- see _pad_keys_paused.
 func set_pad_keys_paused(value: bool) -> void:
+	_pad_keys_paused = value
 	if is_instance_valid(_pad_keys):
 		_pad_keys.set_paused(value)
+
+
+## The second lever, for the same two moments and the same reason: the splash
+## consumes the stick and the face buttons so a hidden rail cannot be driven
+## blind behind it, and while the app menu is up that consumption is what stops
+## A from choosing anything on the menu. A no-op once the splash is gone, which
+## is every launch that actually put a window on screen.
+func set_splash_paused(value: bool) -> void:
+	if is_instance_valid(_splash):
+		_splash.set_paused(value)
 
 
 ## Whether there is a running process this seam could stop. False for the
@@ -497,6 +530,10 @@ func _finish() -> void:
 	# direction. The escalation counter dies with the launch it was counting
 	# for, so a close pending on THIS app can never SIGKILL the next one.
 	_close_escalate_ticks = 0
+	# The remembered pause dies with the launch it described: the next launch
+	# starts with no overlay up, and inheriting a stale true would be a bridge
+	# that never speaks.
+	_pad_keys_paused = false
 	_stop_watchdog()
 	_remove_splash()
 	_remove_pad_keys()

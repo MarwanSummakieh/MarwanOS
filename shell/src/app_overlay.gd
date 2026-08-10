@@ -22,15 +22,36 @@ extends Control
 ## the same two presses, keeps the application whole behind it, and has somewhere
 ## obvious to put the third and fourth entries when they arrive.
 ##
-## ONE ENTRY FOR NOW, AND THAT IS THE POINT. MENU_ITEMS is the extension seam:
-## adding a line there and a case to _on_item_chosen is the entire change. The
-## menu deliberately ships with only what it can actually do.
+## MENU_ITEMS IS THE EXTENSION SEAM: adding a line there and a case to
+## _on_item_chosen is the entire change. The menu still ships with only what it
+## can actually do.
 ##
-## MINIMIZE IS GONE FROM THE MENU, NOT FROM THE SHELL. It was always the weaker
-## of the two controls -- it depends on gamescope handing focus back to the
-## shell, which is the compositor's decision and not something a client can
-## insist on. Launcher.minimize_current() is untouched and still wired; nothing
-## in the UI calls it today. When the menu grows, that is the first entry to
+## TYPE IS WHY THE MENU EXISTS RATHER THAN TWO BUTTONS. A person can point at
+## Zen's address bar with the pad -- pad_keys.gd moves a real cursor -- and then
+## has no way to put a single character in it, because the appliance has no
+## keyboard and the shell cannot see inside another application. Nothing here
+## can know that a text field just took focus in a foreign X client; there is no
+## protocol for it under gamescope and inventing one would mean an input method
+## the applications would have to opt into. So the trigger is honest and manual:
+## focus the field in the app, press home, choose Type, write, Done. The string
+## goes in through XTEST, which aims at whatever holds focus -- the same
+## mechanism, and the same reasoning, as the pad bridge next door.
+##
+## WHILE THE KEYBOARD IS UP THIS OVERLAY IS STILL AN OVERLAY. The menu panel
+## hides and the keyboard takes its place on the same surface, so
+## Kiosk.set_overlay stays on, the scrim stays drawn, the pad bridge stays
+## paused, and the application stays visible behind the keys with its cursor
+## still sitting in the field being filled. Swapping in a separate shell screen
+## would have covered the app -- and the field a person is typing into is the
+## one thing they must be able to see.
+##
+## MINIMIZE IS GONE FROM THE MENU, NOT FROM THE SHELL -- and honestly: the
+## function exists, nothing calls it, and nothing listens to its `minimized`
+## signal either (review confirmed the whole path is dead code today). It was
+## always the weaker of the two controls -- it depends on gamescope handing
+## focus back to the shell, which is the compositor's decision and not
+## something a client can insist on. It stays in launcher.gd as the shape a
+## future entry would take; when the menu grows, it is the first entry to
 ## reconsider, and the bench is what decides whether it earns its place.
 ##
 ## Navigation is the settings list's, verbatim: one axis, hard stops,
@@ -41,11 +62,20 @@ signal closed()
 
 const TvTheme = preload("res://src/tv_theme.gd")
 const AppMenuRow = preload("res://src/app_menu_row.gd")
+const Keyboard = preload("res://src/keyboard.gd")
 
 ## The menu, in order. Adding an entry here and a branch in _on_item_chosen is
 ## the whole of adding a menu item -- the panel sizes itself and the focus chain
 ## is wired from this list.
+##
+## TYPE IS FIRST BECAUSE CLOSE IS THE DESTRUCTIVE ONE. The cursor opens on the
+## first row, so whichever entry leads is the one an impatient home-then-A lands
+## on -- and that press should not be the one that kills the application and
+## whatever was unsaved in it. Typing is also simply the entry someone reaches
+## for more often: closing happens once per session, filling in an address bar
+## happens all through it.
 const MENU_ITEMS := [
+	{"id": "type", "label": "Type", "icon": "keyboard"},
 	{"id": "close", "label": "Close", "icon": "close"},
 ]
 
@@ -63,6 +93,10 @@ const SCRIM_ALPHA := 0.55
 var entry: Dictionary = {}
 
 var _rows: Array = []
+## The centred panel, kept so Type can hide it without taking the scrim -- or
+## the overlay itself -- down with it.
+var _menu: Control = null
+var _keyboard: Keyboard = null
 
 
 func _ready() -> void:
@@ -97,6 +131,7 @@ func _build() -> void:
 	centre.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	centre.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(centre)
+	_menu = centre
 
 	# PanelContainer, NOT Panel, and the Xvfb run is why this comment exists.
 	# Panel is not a Container: it takes its size from custom_minimum_size and
@@ -177,6 +212,14 @@ func _wire_focus_neighbours() -> void:
 func _on_item_chosen(id: String) -> void:
 	ShellLog.info("app menu: %s chosen" % id)
 	match id:
+		"type":
+			# NO closed.emit() ON THIS BRANCH, and that is the difference between
+			# it and every other entry. Closing the overlay would clear
+			# GAMESCOPE_EXTERNAL_OVERLAY and unpause the pad bridge -- so the
+			# keyboard would come up either instead of the application or with the
+			# stick typing arrows into it. The overlay stays exactly as it is and
+			# only its contents change.
+			_open_keyboard()
 		"close":
 			Launcher.close_current()
 			# The menu goes away immediately; the rail comes back when the launch
@@ -192,7 +235,128 @@ func _on_item_chosen(id: String) -> void:
 			ShellLog.error("app menu item \"%s\" has no action" % id)
 
 
+# ---------------------------------------------------------------------------
+# Typing into the application
+# ---------------------------------------------------------------------------
+
+## Swaps the menu panel for the keyboard on this same surface. See the header
+## for why it is a swap and not a screen.
+func _open_keyboard() -> void:
+	if _keyboard != null:
+		# A second press while it is up is a bounced button, the same rule the
+		# card menu and the other surfaces enforce.
+		return
+
+	var title := str(entry.get("title", ""))
+
+	_keyboard = Keyboard.new()
+	# Named, because the keyboard is drawn over the application rather than
+	# instead of it and "Enter password" would be the wrong sentence entirely --
+	# this says which window the characters are about to land in.
+	_keyboard.title_text = "Type into %s" % title
+	if title.is_empty():
+		_keyboard.title_text = "Type"
+	# NOT MASKED. A passphrase is hidden because the room can see the TV; an
+	# address or a search term is the opposite case -- the person cannot see the
+	# field they are filling in (it is behind the keys, in another application,
+	# possibly scrolled out of view) so this entry line is the only readback
+	# they get before the string is committed.
+	_keyboard.masked = false
+	# Transparent, so the application keeps showing through. This overlay's own
+	# scrim is the dimming; a second opaque background would simply be the app
+	# gone. See keyboard.gd's background_alpha.
+	_keyboard.background_alpha = 0.0
+	_keyboard.submitted.connect(_on_typed)
+	_keyboard.cancelled.connect(_on_typing_cancelled)
+	# Hidden before the keyboard is built, so the focus its _ready grabs is not
+	# immediately fought over by a menu row that is still on screen.
+	_menu.hide()
+	add_child(_keyboard)
+
+
+## What was typed goes into the application underneath.
+##
+## THE STRING IS ONE ARGV ELEMENT AND THERE IS NO SHELL, and on this engine
+## exactly one call has that property: OS.create_process, whose argv goes to
+## execvp literally. OS.execute does NOT -- with or without an output array,
+## 4.7.1's core_bind always hands it to popen, a real /bin/sh with the
+## arguments merely wrapped in double quotes and nothing escaped inside them
+## (measured against the pinned engine during review: `touch "A_$(id -u)"`
+## through OS.execute created A_0 both ways; through create_process it
+## created the literal filename). A person typing a `$`, a backtick or `$(`
+## into a search box would be writing shell syntax that runs as the session
+## user. So: create_process, argv, no shell -- and `--` ends xdotool's own
+## options for the same reason pad_keys.gd passes it before a negative
+## mousemove: a search term that starts with a dash is a word, not a flag.
+##
+## THE PRICE IS THE EXIT STATUS. create_process returns the forked pid before
+## execvp has had a chance to fail, so on Linux a missing xdotool still comes
+## back as a positive pid and the warn below is close to unreachable -- the
+## same honesty note pad_keys.gd carries. The real guarantee lives in the
+## Containerfile, which asserts xdotool into the image; the warn stays for
+## the desk-run case where spawning fails outright.
+##
+## NO TRAILING RETURN, DELIBERATELY. Submitting belongs to the application:
+## half the time the person wants to read back what the entry line shows, fix a
+## character, or add to it -- and an Enter sent from here would have committed a
+## half-typed address with no way to take it back. Whatever that application
+## binds submission to, the person presses it themselves once the overlay is
+## gone and the pad is talking to the app again.
+func _on_typed(text: String) -> void:
+	var title := str(entry.get("title", "<unknown>"))
+
+	if text.is_empty():
+		# Done on an empty line is a person changing their mind at the last key.
+		# Spawning xdotool to type nothing would still be a process and still be
+		# a journal line claiming something was typed.
+		ShellLog.info("nothing typed; returning to %s" % title)
+		closed.emit()
+		return
+
+	# The LENGTH, not the text, for wifi_screen's reason turned down a notch:
+	# this is not a secret, but a search term is nobody's business and the
+	# journal is read by whoever is debugging the machine.
+	ShellLog.info("typing into %s (%d characters)" % [title, text.length()])
+
+	var pid := OS.create_process("xdotool", ["type", "--clearmodifiers", "--", text])
+	if pid <= 0:
+		# Best effort only -- see the header for why this rarely fires on
+		# Linux. Naming the binary once and handing the screen back is the
+		# whole failure path: a desk run without xdotool must return to the
+		# application, not take the shell down.
+		ShellLog.warn("could not spawn xdotool; nothing was typed into %s" % title)
+
+	# Whether or not the injection took, the person is done with the keyboard and
+	# the application should have the screen back. shell_root's _close_overlay is
+	# what actually clears the gamescope overlay and unpauses the pad bridge.
+	closed.emit()
+
+
+func _on_typing_cancelled() -> void:
+	# B out of the keyboard types nothing at all -- not an empty string, not a
+	# stray keystroke. The application is exactly as it was left.
+	ShellLog.info("typing cancelled; nothing typed into %s"
+		% str(entry.get("title", "<unknown>")))
+	closed.emit()
+
+
 func _unhandled_input(event: InputEvent) -> void:
+	# THE KEYBOARD OWNS B WHILE IT IS UP. It consumes ui_cancel for its own
+	# cancel signal, and this handler must not treat the same press as a second
+	# dismissal -- checked explicitly rather than left to dispatch order, which
+	# is the assumption that breaks silently when a node is reparented.
+	#
+	# Home is still a way out from here, and it is the only one this node can
+	# offer: shell_root's home handler returns early while an overlay exists, so
+	# without this the button that opened all of it would do nothing on the one
+	# screen where a person is most likely to press it again. It types nothing --
+	# home means "get me out of this", never "commit what I have".
+	if _keyboard != null:
+		if InputMap.has_action("ui_shell_home") and event.is_action_pressed("ui_shell_home"):
+			get_viewport().set_input_as_handled()
+			_on_typing_cancelled()
+		return
+
 	# B returns to the application. The home button does the same, so the button
 	# that opened the menu also dismisses it -- which is what every console does
 	# and what a person will try first.

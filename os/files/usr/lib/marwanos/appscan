@@ -48,6 +48,14 @@
 # without Steam, or with Steam and no games, simply contributes zero rows: no
 # steamapps directory is the normal state of a fresh stick, not a warning.
 #
+# THE ART FOR THOSE CARDS ARRIVES FROM A SECOND SERVICE, and the seam between
+# them is a file rather than a call. Steam's local art cache only fills once
+# its own UI has drawn the game, so a freshly installed game is a row with an
+# empty icon column -- and that empty column is the request. marwanos-storeart
+# reads this TSV, downloads what is missing from Valve's CDN, and the next poll
+# here republishes the row with a path in it. See steam_art() for the full
+# choreography and why nothing has to be ordered against anything.
+#
 set -uo pipefail
 
 TAG=marwanos-appscan
@@ -97,6 +105,13 @@ ICON_SIZES_SMALL=(128x128 96x96 64x64 48x48)
 STEAM_DATA=/var/home/player/.var/app/com.valvesoftware.Steam/.local/share/Steam
 STEAM_APPS_DIR="$STEAM_DATA/steamapps"
 STEAM_LIBCACHE="$STEAM_DATA/appcache/librarycache"
+
+# Where marwanos-storeart lands artwork it fetched from the network, shared
+# with the shipped applications' Flathub icons. Read-only from here: this
+# scanner never downloads anything (the shell is not the only renderer in this
+# tree that opens no sockets -- see this file's header), it just notices when a
+# file has appeared. root-owned 0755, per tmpfiles.d/50-marwanos.conf.
+STORE_ICON_DIR=/var/marwanos/store/icons
 
 info() { printf '<6>%s: %s\n' "$TAG" "$*"; }
 err()  { printf '<3>%s: %s\n' "$TAG" "$*" >&2; }
@@ -338,15 +353,50 @@ acf_get() {
 ## both layouts the client has used for this cache: flat `<appid>_*.jpg`
 ## files, and the per-app subdirectory newer clients write instead. Which one
 ## exists depends on the Steam version that populated the cache, and checking
-## four paths costs four stats. Nothing found is nothing emitted -- the shell
-## already draws its accent wash for a card with no icon.
+## four paths costs four stats.
+##
+## THE FIFTH PATH IS THE ONE THAT MAKES THIS RELIABLE, and it comes from a
+## different process. Steam's librarycache is a CLIENT cache: it fills when
+## Steam's own UI has drawn the game, not when the game installs. Install
+## something from the couch, back out to the rail before the library view ever
+## rendered it, and all four paths above miss -- which is what put a card with
+## no picture on it on the bench. So marwanos-storeart fetches the same
+## portrait from Valve's public CDN into /var/marwanos/store/icons, and this
+## looks there last.
+##
+## THE CHOREOGRAPHY IS ENTIRELY IN THE FILES, and it is worth naming because
+## it looks like coordination and is not. This scanner publishes the GAP: it
+## emits the row with an empty icon column, which is a fact about the machine
+## and would be written that way whether or not anything were listening.
+## storeart, on its own fifteen-minute timer, reads that TSV, sees the empty
+## column, downloads the picture and writes the file. This scanner's next
+## ten-second poll stats the path here, finds it, and republishes the row with
+## art in it. The shell, polling the same TSV, redraws.
+##
+## No daemon calls another. Nothing is ordered against anything. Each of the
+## three only ever reads a file another one had already finished writing, so
+## any of them can be restarted, be slow, or not exist yet, and the worst
+## outcome is a card that stays a wash for one more cycle. Note that the local
+## cache still wins when it has an entry: Steam's own copy is the same asset
+## without a round trip, and it is the one that is already there on a machine
+## that has been used.
+##
+## Nothing found anywhere is nothing emitted -- the shell already draws its
+## accent wash for a card with no icon, and that empty column is also the
+## signal storeart is waiting for.
 steam_art() {
     local appid="$1" candidate
+    # The CDN pair comes after every local candidate, portrait before header:
+    # the header is storeart's last resort (a landscape capsule on a portrait
+    # card), kept under its own name precisely so the portrait stays wanted
+    # and replaces it the day Valve backfills -- see steam_fetch's note.
     for candidate in \
         "$STEAM_LIBCACHE/${appid}_library_600x900.jpg" \
         "$STEAM_LIBCACHE/$appid/library_600x900.jpg" \
         "$STEAM_LIBCACHE/${appid}_icon.jpg" \
-        "$STEAM_LIBCACHE/$appid/icon.jpg"; do
+        "$STEAM_LIBCACHE/$appid/icon.jpg" \
+        "$STORE_ICON_DIR/steam.$appid.jpg" \
+        "$STORE_ICON_DIR/steam.$appid.header.jpg"; do
         [ -f "$candidate" ] && { printf '%s' "$candidate"; return 0; }
     done
     return 0
@@ -498,8 +548,23 @@ dirs_signature() {
 ## manifest, so the file simply falls out of this listing and the value
 ## changes that way. A library holds tens of manifests at most, so this is
 ## tens of stats per cycle -- the same order of cheap as dirs_signature.
+##
+## THE ARTWORK DIRECTORY IS IN HERE TOO, and without it the whole storeart
+## handshake in steam_art() would be a story that never finishes. The library
+## does not change when storeart lands a portrait -- no manifest is touched --
+## so a signature built only from steamapps would hold the cached listing with
+## its empty icon column until the next time somebody installed or removed a
+## game, which could be never. A directory's mtime moves when an entry is
+## created in it, which is exactly what storeart's `mv` into that directory
+## does, so one more stat per cycle is the entire cost of the rail noticing.
+## The Flathub icons share that directory, so one landing re-runs scan_steam
+## as a side effect -- NOT the desktop-entry walk, whose own signature did
+## not move (installed apps resolve icons from the theme roots, never from
+## here). The re-run produces the same Steam rows and the atomic write
+## republishes them to nobody's harm; that is the entire cost of sharing.
 steam_signature() {
     local file
+    printf '%s:%s ' "$STORE_ICON_DIR" "$(stat -c %Y "$STORE_ICON_DIR" 2>/dev/null || echo 0)"
     [ -d "$STEAM_APPS_DIR" ] || return 0
     printf '%s:%s ' "$STEAM_APPS_DIR" "$(stat -c %Y "$STEAM_APPS_DIR" 2>/dev/null || echo 0)"
     for file in "$STEAM_APPS_DIR"/appmanifest_*.acf; do
