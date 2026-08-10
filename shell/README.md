@@ -44,8 +44,17 @@ shell/
     stores_screen.gd     side tabs + the store page they render
     store_tab.gd         one tab in that column
     files.gd             THE FILES SEAM                  (autoload Files)
-    files_screen.gd      the file manager: places, listings, five verbs
-    file_menu.gd         its options menu
+    files_screen.gd      the file manager -- Dolphin's shape, on a pad:
+                         composition, focus between regions, the clipboard,
+                         every file operation, both menus
+    places_panel.gd      the always-visible Places column
+    file_pane.gd         one view pane; there are two, which is split view
+    file_item.gd         one folder or file, in any of the three view modes
+    file_thumbs.gd       budgeted, cached, cancellable picture decoding
+    file_open.gd         what opens what: viewer, Kodi, Zen, or a sentence
+    image_viewer.gd      a picture fullscreen, folder under left/right
+    file_properties.gd   type, size, date, permissions, location
+    file_menu.gd         the row list both menus are drawn with
     media.gd             THE MEDIA SEAM: eject, and only eject
                                                         (autoload Media)
     glyphs.gd            the bar's icons, drawn from the icon font

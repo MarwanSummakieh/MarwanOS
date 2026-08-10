@@ -377,6 +377,45 @@ fi
 
 kill "$ticker_pid" 2>/dev/null
 
+# ---------------------------------------------------------------------------
+# LETTING THE FILE MANAGER HAND THIS APPLICATION A FILE.
+#
+# The Files screen opens a video by launching `flatpak run tv.kodi.Kodi
+# /run/media/player/STICK/film.mkv` (see shell/src/file_open.gd). A flatpak
+# cannot read a path outside its sandbox no matter who put it on the command
+# line, so without this the application starts, finds nothing at the path, and
+# reports a missing file from inside its own UI -- a failure that looks like a
+# broken stick rather than a permission the image forgot to grant.
+#
+# READ-ONLY, AND ONLY THE TWO PLACES A FILE CAN COME FROM. `:ro` is the whole
+# safety argument: these grants exist so an application can OPEN what the file
+# manager points it at, and nothing on this machine needs a media player able
+# to write to somebody's stick. Writing is the Files screen's job, and it runs
+# as the session user with no sandbox to widen.
+#
+# Applied per install rather than once at build time, because a flatpak
+# override lives in /var/lib/flatpak/overrides -- machine state, which in bootc
+# is populated at install and never touched by an image upgrade. An override
+# baked into the image would not reach a machine that installs the application
+# later, which is every machine.
+#
+# Best effort: a failed override is logged and does not fail the install. The
+# application is on the machine and works for everything except being handed a
+# path, and refusing to stamp a good install over a permission would turn a
+# degraded feature into no application at all.
+case "$APP" in
+    tv.kodi.Kodi|app.zen_browser.zen)
+        for grant in /run/media home; do
+            if flatpak override --system --filesystem="${grant}:ro" "$APP"; then
+                info "granted $APP read access to $grant"
+            else
+                err "could not grant $APP read access to $grant --"
+                err "opening a file from the Files screen in it will not work"
+            fi
+        done
+        ;;
+esac
+
 install -d /var/marwanos
 date -u +'%Y-%m-%dT%H:%M:%SZ' > "$STAMP"
 

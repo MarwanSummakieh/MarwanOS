@@ -1,11 +1,12 @@
 extends Node
 
-## The ten actions the shell is allowed to use, defined here rather than in
+## The twelve actions the shell is allowed to use, defined here rather than in
 ## project.godot.
 ##
 ## The tenth is ui_shell_options, on the pad's OPTIONS button -- see its
 ## _define below for why the options menu moved off Triangle and onto the
-## button that says what it does.
+## button that says what it does. The last two are the shoulders, and they
+## belong to the file manager's split view alone.
 ##
 ## It was six until the on-screen keyboard landed (ADR 0006, fifth amendment).
 ## Six was never a cap for its own sake -- it was the count that fell out of
@@ -20,8 +21,8 @@ extends Node
 ## one-line `Object(InputEventJoypadButton,"resource_name":"","device":0,...)`
 ## blob per event. Those are unreviewable in a diff and easy to corrupt by hand,
 ## in a repo whose entire discipline is hand-authored, LF-normalised, reviewable
-## text. Ten calls in a file anyone can read is the better trade, and each can
-## carry the comment explaining why that binding exists.
+## text. A dozen calls in a file anyone can read is the better trade, and each
+## can carry the comment explaining why that binding exists.
 ##
 ## Why redefine at all -- two things about the built-in map are not safe to
 ## inherit on this machine:
@@ -73,6 +74,12 @@ const REQUIRED_JOYPAD_ACTIONS := [
 	# way to uninstall an application, or to copy, rename or delete a file, on a
 	# machine with no terminal.
 	"ui_shell_options",
+	# Shortcuts again, like the keyboard's two: the file manager's panes can be
+	# crossed with left and right, so a pad with no shoulders loses a
+	# convenience rather than the split view. Listed for the same reason -- a
+	# binding that quietly vanished should be noticed by the startup check
+	# rather than by someone pressing L1 at the television.
+	"ui_shell_l1", "ui_shell_r1",
 ]
 
 
@@ -161,6 +168,31 @@ func _ready() -> void:
 	_define("ui_shell_options", [
 		_key(KEY_MENU),
 		_button(JOY_BUTTON_START),
+	], STICK_DEADZONE)
+
+	# THE SHOULDERS, and they exist for exactly one screen: the file manager's
+	# split view, where L1 and R1 jump between the two panes.
+	#
+	# Crossing at the panes' inner edges with left and right already works and is
+	# what a person discovers first. The shoulders are there because the gesture
+	# split view exists FOR is copy-from-one-side-to-the-other, which means
+	# crossing constantly -- and from the middle of a forty-row listing, "left
+	# until you fall out of this pane" is a dozen presses that also lose your
+	# place in the column. L1/R1 is one press and keeps both cursors.
+	#
+	# JOY_BUTTON_LEFT_SHOULDER / RIGHT_SHOULDER are L1/R1 on a DualSense and
+	# LB/RB on an Xbox pad; Godot's mapping database normalises both. The
+	# brackets are the desk equivalents and what the Xvfb harness drives them
+	# with -- chosen over Page_Up/Page_Down because a scroll container is
+	# entitled to those and a shortcut that also scrolls is two things per press.
+	_define("ui_shell_l1", [
+		_key(KEY_BRACKETLEFT),
+		_button(JOY_BUTTON_LEFT_SHOULDER),
+	], STICK_DEADZONE)
+
+	_define("ui_shell_r1", [
+		_key(KEY_BRACKETRIGHT),
+		_button(JOY_BUTTON_RIGHT_SHOULDER),
 	], STICK_DEADZONE)
 
 	# THE HOME BUTTON. JOY_BUTTON_GUIDE is the PS button on a DualSense and the

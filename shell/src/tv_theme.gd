@@ -247,6 +247,74 @@ const STORE_PAGE_PAD := 48
 ## key art the same way the rail's hero wash does.
 const STORE_PAGE_HERO_HEIGHT := 220
 
+# ---------------------------------------------------------------------------
+# The file manager
+#
+# Dolphin's shape, at TV scale and on a pad: a Places column on the left that
+# never goes away, one or two view panes beside it, and a view that can be
+# icons, compact or details. The numbers here are what make that layout land
+# inside the safe area at 1080p and stay legible at three metres -- which is
+# the whole reason this is a redraw of Dolphin rather than Dolphin.
+
+## The Places column. Wide enough for the longest name plus a free-space figure
+## on one line at SIZE_BODY -- "Home  737.5 GB free" is the case that sets it,
+## and it was 340 until a screenshot showed every value on the column rendering
+## as "737.5 G...". Narrow enough that a split view still gets two panes of real
+## width out of the remaining ~1100 px at the design size.
+const FILES_PLACES_WIDTH := 420
+
+## Between the Places column and the panes, and between the two panes. Larger
+## than SETTINGS_ROW_GAP because these are separate REGIONS of focus, not rows
+## in one list -- the gap is what says "left again leaves this pane".
+const FILES_PANE_GAP := 24
+
+## Padding inside a pane's frame, between its rounded edge and its content.
+const FILES_PANE_PAD := 20
+
+## A details row: name, size, date. Shorter than SETTINGS_ROW_HEIGHT's 88
+## because a file list is long and a settings list is not -- 72 fits fourteen
+## rows in the safe height where 88 fits eleven, and it is still comfortably
+## above the 64 px interactive floor in this file's header.
+const FILES_DETAILS_HEIGHT := 72
+
+## An icon-view cell. Square-ish: a thumbnail above, one or two lines of name
+## below. This is Dolphin's Icons mode, and the size is set by the thumbnail
+## being readable as a PICTURE from a sofa rather than by fitting a target
+## number of columns.
+const FILES_ICON_CELL := 210
+const FILES_ICON_CELL_HEIGHT := 240
+
+## Compact mode: Dolphin's third view -- name only, in narrow columns. The
+## height is exactly the interactive floor, because the whole point of the mode
+## is fitting the most rows on screen.
+const FILES_COMPACT_WIDTH := 340
+const FILES_COMPACT_HEIGHT := 64
+
+## The thumbnail inside an icon cell, and the glyph that stands in for a file
+## with no picture to show.
+const FILES_THUMB_SIZE := 132
+const FILES_ROW_GLYPH_SIZE := 34
+
+## THE DECODE CAP. A thumbnail is drawn at FILES_THUMB_SIZE, so nothing is
+## gained by keeping a 6000 px camera JPEG in memory at full size -- and a
+## directory of forty of them would be gigabytes. Every thumbnail is resized to
+## this on the long edge immediately after decode and the source image dropped.
+const FILES_THUMB_DECODE := 256
+
+## How many decoded thumbnails are kept, across every directory visited while
+## the screen is open. A directory of photos is the case this exists for;
+## sixty-four at 256 px is a few megabytes, and the eviction is oldest-first so
+## walking a big folder cannot grow without bound.
+const FILES_THUMB_CACHE_MAX := 64
+
+## How many thumbnails are decoded per frame while a directory is being
+## rendered. THE POINT IS THE CEILING, not the number: this machine's renderer
+## is llvmpipe and its decoder is one CPU thread, so a folder of eighty photos
+## decoded in one frame is a shell that stops answering the pad for several
+## seconds. Spreading the work leaves the list navigable while the pictures
+## fill in behind it, which is what every file manager does.
+const FILES_THUMBS_PER_FRAME := 2
+
 # The focus indicator runs on three channels at once, because colour alone is
 # unreliable on a TV and because WCAG 2.2 SC 2.4.13 asks for a >= 3:1 contrast
 # between the focused and unfocused states of the same pixels -- a state-change
@@ -298,6 +366,23 @@ const SURFACE_FOCUS := Color(0.290196, 0.321569, 0.376471, 1.0)
 ## One step brighter than SURFACE_FOCUS, for the moment a press is held on a
 ## row that has no scene change to acknowledge it -- see settings_row.gd.
 const SURFACE_PRESSED := Color(0.380392, 0.419608, 0.490196, 1.0)
+## A SELECTED item, which is a state the shell had no need for until the file
+## manager grew multi-select. It is deliberately a HUE change rather than
+## another step on the same grey ramp: an item can be selected and unfocused,
+## focused and unselected, or both, and three points on one brightness ramp
+## cannot be told apart at three metres. Selection is also carried by a check
+## mark on the item itself (see file_item.gd) -- colour alone is unreliable on
+## a TV, which is the same argument the focus ring's three channels rest on.
+const SURFACE_SELECTED := Color(0.152941, 0.250980, 0.372549, 1.0)
+const SURFACE_SELECTED_FOCUS := Color(0.250980, 0.396078, 0.549020, 1.0)
+
+## The frame around the pane that has focus, in a split view. Nothing else on
+## screen tells you which side a paste would land in, and "the one with the
+## focus ring in it" is not readable when the ring is on a row halfway down a
+## list you are not looking at.
+const PANE_ACTIVE_BORDER := Color(0.435294, 0.529412, 0.639216, 1.0)
+const PANE_BORDER_WIDTH := 3
+
 const FOCUS_RING := Color(0.909804, 0.917647, 0.933333, 1.0)
 const TEXT_PRIMARY := Color(0.886275, 0.901961, 0.921569, 1.0)
 const TEXT_SECONDARY := Color(0.588235, 0.619608, 0.666667, 1.0)
@@ -400,6 +485,33 @@ static func hero_top_gradient() -> GradientTexture2D:
 ## comes from.
 static func hero_scrim_color() -> Color:
 	return Color(BACKGROUND.r, BACKGROUND.g, BACKGROUND.b, HERO_ART_SCRIM)
+
+
+## A file-manager item's box, across the two states that can each be on or off.
+## One function rather than four constants so the four combinations are decided
+## in one place and cannot drift into "selected looks focused" -- which on a
+## screen where a delete acts on the SELECTION and not on the cursor would be
+## the most expensive possible confusion.
+static func file_item_box(selected: bool, focused: bool) -> StyleBoxFlat:
+	var box := StyleBoxFlat.new()
+	if selected:
+		box.bg_color = SURFACE_SELECTED_FOCUS if focused else SURFACE_SELECTED
+	else:
+		box.bg_color = SURFACE_FOCUS if focused else SURFACE
+	box.set_corner_radius_all(CARD_CORNER_RADIUS)
+	return box
+
+
+## The frame around a view pane. Only the ACTIVE pane draws a coloured border;
+## the other draws the same frame in the surface colour, so the two panes stay
+## the same size and nothing reflows when focus crosses between them.
+static func pane_frame(active: bool) -> StyleBoxFlat:
+	var box := StyleBoxFlat.new()
+	box.bg_color = BACKGROUND
+	box.set_border_width_all(PANE_BORDER_WIDTH)
+	box.border_color = PANE_ACTIVE_BORDER if active else SURFACE
+	box.set_corner_radius_all(CARD_CORNER_RADIUS)
+	return box
 
 
 ## A row that is being pressed and has nothing else to say so. Brighter than

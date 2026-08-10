@@ -1,127 +1,116 @@
 extends Control
 
-## The file manager: the shell's own, from the couch, on the pad.
+## THE FILE MANAGER: Dolphin's shape, drawn by the shell, read by the pad.
 ##
-## It replaces a plan to ship the Dolphin flatpak, and the difference is not
-## pride of authorship. Dolphin under the pad bridge is a mouse-first desktop
-## program being puppeted with injected arrow keys -- workable, and still a
-## foreign UI at desktop type sizes with verbs hidden in menus a stick cannot
-## reach. A file browser is rows, a focus chain, and five verbs; that is
-## exactly the furniture this shell already knows how to draw, at TV sizes,
-## with the buttons the pad actually has.
+## WHY A REDRAW AND NOT DOLPHIN. The Dolphin flatpak shipped here once and was
+## removed, and the reason it is not coming back is not pride of authorship. It
+## is a mouse-first desktop program: under the pad bridge it is puppeted with
+## injected arrow keys, at desktop type sizes, with its verbs behind a menu bar
+## and a right-click menu that a thumbstick cannot reach. What it has that this
+## screen wanted is its SHAPE -- a Places column that never goes away, panes
+## that can be split, three view modes, real sorting, multi-select, previews --
+## and a shape is exactly the thing that can be rebuilt at TV scale on buttons
+## the pad actually has. So: Dolphin's layout and feature set, none of its
+## chrome, every verb on a real button.
 ##
-## THE TOP LEVEL IS PLACES, NOT A PATH. "/" is an answer for people who
-## already know the answer; the two places a person on a couch means when they
-## say "my files" are their home and whatever stick they just plugged in. So
-## the screen opens on Home plus one row per mount under /run/media, and the
-## filesystem's plumbing (/proc, /sys, the ostree deployment) never appears
-## unless someone deliberately walks up out of home -- which they cannot,
-## because B at a place's root goes back to Places, not to its parent.
+## THE PIECES, and each is its own file for a reason worth keeping:
 ##
-## NAVIGATION IS THE SETTINGS LIST'S TABLE VERBATIM: one axis, hard stops,
-## perpendicular pointed at self, follow_focus scrolling for long directories.
-## Hold-to-repeat comes free from FocusRepeat like everywhere else -- nothing
-## here implements repetition. A descends into a folder; A on a file says,
-## honestly, that Phase 0 has nothing to open it with -- no fake viewer,
-## because a viewer that renders three formats badly is worse than a sentence
-## that is true about all of them. B ascends one level, and at Places it
-## closes the screen.
+##   places_panel.gd  the left column. Always on screen -- it used to be a
+##                    VIEW you backed out to, which made getting from a stick
+##                    to Downloads five presses.
+##   file_pane.gd     one pane: breadcrumb, listing, sort, view mode,
+##                    selection. There are two of them, which IS split view.
+##   file_item.gd     one folder or file, in whichever of the three modes.
+##   file_thumbs.gd   budgeted, cached, cancellable picture decoding.
+##   file_open.gd     what opens what: the built-in viewer, Kodi, Zen, or an
+##                    honest sentence.
+##   image_viewer.gd  a picture fullscreen, with the folder under left/right.
+##   file_properties.gd  Dolphin's properties dialog, at reading distance.
+##
+## THIS FILE IS THE COMPOSITION AND THE CONSEQUENCES. Layout, focus between
+## regions, the clipboard, every file operation, the two menus, the status
+## line. A pane renders and reports; nothing below this file writes to disk.
+##
+## THE PAD LAYOUT, and it is the answer to "use actual functioning buttons":
+##
+##   A         open -- descend, view a picture, launch a handler, or say why not
+##   B         up one level; at a place's root, out to the Places column
+##   X         select / deselect the thing under the cursor
+##   Y         the VIEW menu: mode, sort, hidden files, split, select all
+##   OPTIONS   the ACTIONS menu: open, copy, cut, paste, rename, delete,
+##             new folder, properties -- and eject, on a drive in Places
+##   L1 / R1   jump between the two panes in a split view
+##
+## THE VERBS ACT ON THE SELECTION IF THERE IS ONE AND ON THE CURSOR IF NOT.
+## That one rule (FilePane.target_entries) is what keeps multi-select from
+## being a mode: nothing has to be switched on, and X on nothing followed by
+## Delete does exactly what Delete alone would have done.
 ##
 ## EVERY OPERATION'S OUTCOME LANDS ON THE STATUS LINE AND IN ShellLog. This
 ## machine's user cannot see stderr, and a copy that silently did nothing is
 ## indistinguishable from a copy that worked until the file is needed.
 ##
-## THE PLACES LIST IS LIVE, and that is the fix for the one report this screen
-## has had from the couch: a stick was plugged in and "the files app did not
-## recognize it at all". Two things were wrong and both are addressed here and
-## in the OS. The OS half is that nothing mounted the stick -- an appliance with
-## no desktop session has no automounter, so /run/media never gained a directory
-## for this screen to find (see /usr/lib/marwanos/usbmount). The SHELL half is
-## this: the places list was built once, in _ready, so even a mount that did
-## appear was invisible until the screen was closed and reopened. A stick is
-## plugged in WHILE someone is looking at the screen -- that is the whole
-## gesture -- so the mount set is polled, and a drive arriving or leaving
-## redraws Places under the cursor. See _start_mount_watch.
+## WHAT DOLPHIN HAS THAT THIS DELIBERATELY DOES NOT. A filter/search bar: with
+## an on-screen keyboard, typing a filter costs more than scrolling past the
+## thing. Tabs: split view covers the case and a second axis of "which tab in
+## which pane" is not navigable blind. A terminal panel: this machine has no
+## terminal by design (D6). Undo: delete goes to the freedesktop trash and is
+## recoverable from any desktop, which is the property that made delete
+## offerable at all. Each is an omission with a reason, not a gap.
 
 signal closed()
 
 const TvTheme = preload("res://src/tv_theme.gd")
-const ActionRow = preload("res://src/action_row.gd")
 const FileMenu = preload("res://src/file_menu.gd")
+const FilePane = preload("res://src/file_pane.gd")
+const PlacesPanel = preload("res://src/places_panel.gd")
+const FileOpen = preload("res://src/file_open.gd")
+const FileItem = preload("res://src/file_item.gd")
+const ImageViewer = preload("res://src/image_viewer.gd")
+const FileProperties = preload("res://src/file_properties.gd")
 const Keyboard = preload("res://src/keyboard.gd")
 
-## The desk and harness override, in the spirit of MARWANOS_SHELL_STORE_DIR:
-## point it at any directory and the Home place browses that instead of $HOME.
-## The Xvfb harness needs it because its container pins HOME to an empty
-## tmpfs, and a file manager verified only against an empty folder is a file
-## manager whose listing code has never run.
-const FILES_HOME_ENV := "MARWANOS_SHELL_FILES_HOME"
+var _places: PlacesPanel = null
+var _panes: Array = []
+var _active: int = 0
+var _split := false
 
-## Where removable media lands on the appliance. marwanos-usbmount mounts under
-## /run/media/<user>/<label>, which is udisks2's own convention and therefore
-## the one a desktop would use on the same stick; the user directory is
-## enumerated rather than guessed from $USER because the shell does not get to
-## assume whose session mounted the stick.
-##
-## NO ENVIRONMENT OVERRIDE, unlike FILES_HOME above, and that is deliberate
-## rather than an omission: /run is a tmpfs in the Xvfb harness's container, so
-## a directory of fake drives can simply be bind-mounted at the REAL path (see
-## MEDIA_DIR in scripts/xvfb-shell-verify.sh). An override would be a second
-## code path that only the harness ever took, to reach a place the harness can
-## already reach.
-const MEDIA_ROOT := "/run/media"
+## Has the second pane ever been pointed somewhere on purpose? It is listed at
+## Home during _ready so that opening the split costs no listing (see the note
+## there), which means "where is it" cannot be used to tell a pane nobody has
+## touched from one somebody parked on Home deliberately. This flag is that
+## distinction, and it is what makes the first split mirror the first pane
+## while a later one remembers where the person left the second.
+var _pane_two_touched := false
 
-## How often the mount set is re-read while this screen is up. A directory
-## listing of /run/media/<user> is two getdents on a tmpfs -- cheap enough that
-## the interval is chosen by how long a person will hold a stick in a port
-## wondering whether it worked, not by cost. Two seconds is under that.
-const MOUNT_POLL_SECONDS := 2.0
-
-## Empty string means the Places view; anything else is the directory on
-## screen. The pair below is what B consults: at _place_root, back means
-## Places, not the parent -- see the header.
-var _current_path: String = ""
-var _place_root: String = ""
-
-## The clipboard: {"path": String, "cut": bool}, empty when nothing is armed.
-## SCREEN-LIFETIME ON PURPOSE: it survives navigating anywhere within the
-## screen (copy here, paste there is the whole point) and dies with the
-## screen, because a clipboard that outlives its UI is an invisible loaded
-## state the next opening would act on with no way to see it was armed.
-var _clipboard: Dictionary = {}
-
-var _rows: Array = []
-var _scroll: ScrollContainer = null
-var _list: VBoxContainer = null
-var _path_label: Label = null
+var _pane_row: HBoxContainer = null
+var _heading: Label = null
 var _status: Label = null
-var _empty: Label = null
 var _hints: HBoxContainer = null
+
+## The clipboard: {"paths": Array, "cut": bool}, empty when nothing is armed.
+## SCREEN-LIFETIME ON PURPOSE: it survives navigating anywhere within the
+## screen (copy here, paste there is the whole point) and dies with the screen,
+## because a clipboard that outlives its UI is an invisible loaded state the
+## next opening would act on with no way to see it was armed.
+var _clipboard: Dictionary = {}
 
 var _menu: FileMenu = null
 var _keyboard: Keyboard = null
-## What the open menu (and then the keyboard, for Rename) is about:
-## {"path", "name", "is_dir"}. Captured when OPTIONS is pressed, because by the
-## time a choice arrives the menu's row owns focus and the list cannot be asked.
-var _menu_target: Dictionary = {}
-## Where focus goes back to when the menu or keyboard closes, by entry name --
-## by name rather than by node, because operations rebuild the list.
+var _viewer: ImageViewer = null
+var _properties: FileProperties = null
+
+## What the open menu is about, captured when OPTIONS is pressed -- by the time
+## a choice arrives the menu's row owns focus and the panes cannot be asked.
+var _menu_targets: Array = []
+var _menu_place: Dictionary = {}
+var _keyboard_purpose: String = ""
 var _return_focus_name: String = ""
 
 ## Symlinks skipped by the last recursive copy, for the status line. A member
 ## rather than a return value because the copy is recursive and threading a
 ## count through every level buys nothing over resetting it at the top.
 var _skipped_links: int = 0
-
-## The mount set as of the last poll, so the redraw happens on CHANGE rather
-## than every two seconds -- a Places view that rebuilt itself on a timer would
-## drop the focus ring under the person's thumb for no reason at all.
-var _known_mounts: Array = []
-
-## What the keyboard is currently being used for: "rename" or "newfolder".
-## Both open the same Keyboard on the same slot, and the submit handler has to
-## know which question was asked.
-var _keyboard_purpose: String = ""
 
 
 func _ready() -> void:
@@ -146,55 +135,44 @@ func _ready() -> void:
 
 	var column := VBoxContainer.new()
 	column.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	column.add_theme_constant_override("separation", TvTheme.SECTION_GAP)
+	column.add_theme_constant_override("separation", TvTheme.SETTINGS_ROW_GAP)
 	safe.add_child(column)
 
-	var heading := Label.new()
-	heading.text = "Files"
-	heading.add_theme_font_size_override("font_size", TvTheme.SIZE_WORDMARK)
-	heading.add_theme_color_override("font_color", TvTheme.TEXT_PRIMARY)
-	heading.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	column.add_child(heading)
+	# The heading carries the SELECTION COUNT, and that is the one place it can
+	# go: with two panes up there is no single list to put "3 selected" at the
+	# top of, and the status line below is a sentence about the last operation.
+	_heading = Label.new()
+	_heading.text = "Files"
+	_heading.add_theme_font_size_override("font_size", TvTheme.SIZE_WORDMARK)
+	_heading.add_theme_color_override("font_color", TvTheme.TEXT_PRIMARY)
+	_heading.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	column.add_child(_heading)
 
-	# WHERE YOU ARE. One line, ellipsized from the LEFT, because the useful end
-	# of a deep path is its tail -- "…/Season 2/Episode 4" answers the question
-	# and "/run/media/marwan/USB Drive/Sho…" does not. Godot's overrun trimming
-	# only cuts the tail, so the eliding is done by hand in _elide_left.
-	_path_label = Label.new()
-	_path_label.add_theme_font_size_override("font_size", TvTheme.SIZE_BODY)
-	_path_label.add_theme_color_override("font_color", TvTheme.TEXT_SECONDARY)
-	_path_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	column.add_child(_path_label)
+	_pane_row = HBoxContainer.new()
+	_pane_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_pane_row.add_theme_constant_override("separation", TvTheme.FILES_PANE_GAP)
+	_pane_row.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	column.add_child(_pane_row)
 
-	# The settings screen's scrolling, for the settings screen's reason: a long
-	# directory reaches below the safe area, the focus chain does not care, and
-	# a focused row off the bottom of a TV is a screen that silently ends
-	# early. follow_focus plus the explicit ensure_control_visible on each
-	# row's focus (see _on_row_focused) covers both the steady state and the
-	# first grab before layout.
-	_scroll = ScrollContainer.new()
-	_scroll.follow_focus = true
-	_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-	_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	column.add_child(_scroll)
+	_places = PlacesPanel.new()
+	_places.place_chosen.connect(_on_place_chosen)
+	_places.became_active.connect(_on_places_active)
+	_places.mounts_changed.connect(_on_mounts_changed)
+	_pane_row.add_child(_places)
 
-	_list = VBoxContainer.new()
-	_list.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_list.add_theme_constant_override("separation", TvTheme.SETTINGS_ROW_GAP)
-	# Rows span the scroll viewport's width -- settings_screen's lesson about
-	# the VBox shrinking to its children's minimum.
-	_list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_scroll.add_child(_list)
-
-	# The honest empty state. A folder with nothing in it must say so: a blank
-	# pane on this machine reads as a render failure, not as emptiness.
-	_empty = Label.new()
-	_empty.text = "Nothing in this folder"
-	_empty.add_theme_font_size_override("font_size", TvTheme.SIZE_BODY)
-	_empty.add_theme_color_override("font_color", TvTheme.TEXT_SECONDARY)
-	_empty.visible = false
-	_empty.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_list.add_child(_empty)
+	# BOTH PANES ARE BUILT NOW AND THE SECOND IS HIDDEN. Building it on demand
+	# would mean the first split of a session pays a listing, a layout pass and
+	# a focus grab in one frame, on llvmpipe -- and split view is pressed
+	# mid-copy, which is the worst moment for the screen to stutter.
+	for _i in 2:
+		var pane := FilePane.new()
+		pane.activated.connect(_on_item_activated.bind(pane))
+		pane.became_active.connect(_on_pane_active.bind(pane))
+		pane.view_changed.connect(_refresh_chrome)
+		pane.exit_up.connect(_on_pane_exit_up)
+		_pane_row.add_child(pane)
+		_panes.append(pane)
+	_panes[1].visible = false
 
 	# The status line: what the last operation actually did. Above the hints
 	# rather than in them, because it is a sentence and they are a legend.
@@ -210,84 +188,210 @@ func _ready() -> void:
 	_hints.add_theme_constant_override("separation", TvTheme.HINT_GAP)
 	column.add_child(_hints)
 
-	_show_places()
-	_start_mount_watch()
+	_wire_regions()
+
+	# Open on Home, in the left pane, with the cursor in the pane rather than in
+	# the Places column: the person pressed Files to look at files.
+	var home := _places.home_path()
+	_point_pane(_panes[0], home, "Home")
+	if not _panes[0].show_directory(home):
+		_say("Could not open %s" % home, true)
+	_point_pane(_panes[1], home, "Home")
+	_panes[1].show_directory(home)
+
+	_set_active(0)
+	_panes[0].grab_pane_focus()
+	_refresh_chrome()
+
 	Media.state_changed.connect(_on_media_state_changed)
+	# DEAF WHILE A LAUNCH IS UP, the stores screen's rule and now this screen's
+	# too -- because this screen can start one. A opens a video in Kodi and
+	# leaves this listing in the tree underneath; both read the same evdev
+	# devices, so without this every arrow meant for Kodi would also walk the
+	# cursor down a directory nobody is looking at, and a B meant for Kodi
+	# would walk it up a folder.
+	Launcher.launch_started.connect(_on_launch_started)
+	Launcher.launch_finished.connect(_on_launch_finished)
 
-	ShellLog.info("files screen up at places with %d place(s)" % _rows.size())
+	ShellLog.info("files screen up at %s" % home)
+
+
+func _on_launch_started(_entry: Dictionary) -> void:
+	set_process_input(false)
+	set_process_unhandled_input(false)
+
+
+func _on_launch_finished(_entry: Dictionary) -> void:
+	# Not while a menu, the keyboard, the viewer or the properties panel is up:
+	# one of those owns input, and handing it back here would put two readers on
+	# the same button.
+	if _modal_open():
+		return
+	set_process_input(true)
+	set_process_unhandled_input(true)
+	# The launched application's window shuffle can leave the viewport with no
+	# focus owner at all, which is the rail's _ensure_focus lesson: a screen
+	# with nothing focused is a screen that ignores the pad.
+	if get_viewport().gui_get_focus_owner() == null:
+		_pane().grab_pane_focus(_return_focus_name)
+
+
+## Which region left and right reach from each edge. Re-applied whenever the
+## split opens or closes, because that is exactly when the answer changes.
+##
+## Not a loop: three regions with two different rules is clearer written out
+## than parameterised, and this is the table the whole screen's navigability
+## rests on -- the same argument the rail's neighbour table makes.
+func _wire_regions() -> void:
+	# The details view's columns are decided by whether a pane is sharing the
+	# screen, and this is the one place that knows.
+	for pane in _panes:
+		pane.set_narrow(_split)
+
+
+## LEFT AND RIGHT BETWEEN REGIONS, handled here rather than by a stored
+## neighbour path. Every region rebuilds its focusable controls -- the Places
+## rows when a drive appears, a pane's items on every listing -- so a NodePath
+## saved across that boundary is a path to a freed node. Inside a region the
+## explicit tables still do the work and still consume the press; they only
+## reach this function by pointing at self at the edge, which leaves the press
+## unconsumed. See FilePane._wire_focus.
+##
+## Returns true when it moved focus, so the caller knows to consume the event.
+func _cross_region(going_right: bool) -> bool:
+	if _places.has_focus_inside():
+		if not going_right:
+			return false
+		_focus_pane(_active)
+		return true
+
+	var pane := _pane()
+	if not pane.has_focus_inside():
+		return false
+
+	if going_right:
+		if not pane.at_right_edge():
+			return false
+		if _split and _active == 0:
+			_focus_pane(1)
+			return true
+		return false
+
+	if not pane.at_left_edge():
+		return false
+	if _split and _active == 1:
+		_focus_pane(0)
+		return true
+	_places.grab_places_focus()
+	return true
 
 
 # ---------------------------------------------------------------------------
-# Drives coming and going
+# Regions and focus
 # ---------------------------------------------------------------------------
 
-## Watch /run/media for a stick arriving or leaving, for as long as this screen
-## is up. See the class header for why a screen that only listed drives once
-## was the shell's half of "it did not recognize it at all".
-func _start_mount_watch() -> void:
-	_known_mounts = _mounts()
-	var timer := Timer.new()
-	timer.wait_time = MOUNT_POLL_SECONDS
-	timer.autostart = true
-	timer.timeout.connect(_poll_mounts)
-	add_child(timer)
+func _pane() -> FilePane:
+	return _panes[_active]
 
 
-func _poll_mounts() -> void:
-	# Not while a menu or the keyboard is up. Both are about a named row, and
-	# rebuilding the list underneath them would leave the choice that comes back
-	# pointing at a node that no longer exists.
-	if _menu != null or _keyboard != null:
+## THE FLOOR AND ITS NAME ALWAYS MOVE TOGETHER. A pane draws its floor as the
+## first breadcrumb, so a root set without its label renders as
+## "player" -- the last component of /var/home/player -- which is a directory
+## nobody recognises as their own home. One function, so the two cannot be set
+## apart by a branch that forgets the second.
+func _point_pane(pane: FilePane, root: String, label: String) -> void:
+	pane.place_root = root
+	pane.place_label = label
+
+
+## Send a pane home. The fallback for every "where it was looking no longer
+## exists" case -- a drive pulled, a drive ejected -- and the one place that
+## knows Home's label without asking the Places column for a list.
+func _send_home(pane: FilePane) -> void:
+	var home := _places.home_path()
+	_point_pane(pane, home, "Home")
+	pane.show_directory(home)
+
+
+func _set_active(index: int) -> void:
+	_active = index
+	for i in _panes.size():
+		_panes[i].set_active(_split and i == index)
+	_refresh_chrome()
+
+
+func _on_pane_active(pane: FilePane) -> void:
+	var index := _panes.find(pane)
+	if index == -1 or index == _active:
+		_refresh_chrome()
 		return
+	_set_active(index)
 
-	var now := _mounts()
-	if now == _known_mounts:
+
+func _on_places_active() -> void:
+	_refresh_chrome()
+
+
+## B at a pane's floor. Focus goes to the Places column, on the row for the
+## place this pane is showing -- so backing out of a stick lands on the stick,
+## not at the top of the list.
+func _on_pane_exit_up() -> void:
+	_places.grab_places_focus()
+	ShellLog.info("files: out of the pane to Places")
+
+
+func _on_place_chosen(place: Dictionary) -> void:
+	var pane := _pane()
+	var target := str(place.get("path", ""))
+	var root := str(place.get("root", target))
+	# The floor is set BEFORE the descent so a failed open leaves no half-armed
+	# root; the stale one is overwritten by the next successful choice.
+	_point_pane(pane, root, str(place.get("root_label", root.get_file())))
+	if not pane.show_directory(target):
+		_say("Could not open %s" % str(place.get("name", "")), true)
 		return
+	if pane == _panes[1]:
+		_pane_two_touched = true
+	_status.text = ""
+	pane.grab_pane_focus()
 
-	var arrived: Array = []
-	for path in now:
-		if not _known_mounts.has(path):
-			arrived.append(path)
-	var left: Array = []
-	for path in _known_mounts:
-		if not now.has(path):
-			left.append(path)
-	_known_mounts = now
 
-	for path in arrived:
-		ShellLog.info("files: drive appeared at %s" % path)
-	for path in left:
-		ShellLog.info("files: drive went away from %s" % path)
+# ---------------------------------------------------------------------------
+# Drives
+# ---------------------------------------------------------------------------
 
-	# THE DRIVE UNDER THE CURSOR WAS PULLED. Everything below _place_root is now
-	# a path to nowhere, and _enter_directory's failure branch would leave the
-	# screen showing a listing of a filesystem that is gone. Places is the only
-	# view that is still true.
-	if not _place_root.is_empty() and left.has(_place_root):
-		_say("%s was removed" % _place_root.get_file(), true)
-		_show_places()
-		return
+func _on_mounts_changed(arrived: Array, departed: Array) -> void:
+	# A PANE INSIDE A DRIVE THAT WAS PULLED is showing a listing of a
+	# filesystem that no longer exists, and every path in it is a path to
+	# nowhere. Home is the only place still guaranteed true.
+	for pane in _panes:
+		for gone in departed:
+			if pane.path == gone or pane.path.begins_with(str(gone) + "/"):
+				_send_home(pane)
+				_say("%s was removed" % str(gone).get_file(), true)
+				break
 
-	# Only Places renders the drive list, so only Places has to be redrawn. A
-	# stick arriving while someone is three folders deep in their home directory
-	# is news that can wait until they walk back out.
-	if not _current_path.is_empty():
-		return
+	# A clipboard naming something on a drive that left would paste an error
+	# later; disarm it now, while the connection between the two is still on
+	# screen.
+	if not _clipboard.is_empty():
+		for gone in departed:
+			for armed in _clipboard.get("paths", []):
+				if str(armed).begins_with(str(gone) + "/"):
+					_clipboard = {}
+					break
 
-	# Keep the cursor where it was by path -- _show_places' own focus_path
-	# argument -- so a drive appearing does not move the selection off Home.
-	var focused := _focused_entry()
-	_show_places(str(focused.get("path", "")))
 	if not arrived.is_empty():
 		var names := PackedStringArray()
-		for path in arrived:
-			names.append(path.get_file())
+		for mount_path in arrived:
+			names.append(str(mount_path).get_file())
 		_say("%s is ready" % ", ".join(names))
+	_refresh_chrome()
 
 
 ## The privileged half finished (or refused) an eject. The drive is already
-## gone from the poll by then in the happy case -- this is what puts the REASON
-## on screen when it did not go.
+## gone from the Places poll by then in the happy case -- this is what puts the
+## REASON on screen when it did not go.
 func _on_media_state_changed(state: String, mount_path: String, said: String) -> void:
 	match state:
 		"done":
@@ -300,166 +404,26 @@ func _on_media_state_changed(state: String, mount_path: String, said: String) ->
 
 
 # ---------------------------------------------------------------------------
-# Views
+# The chrome: heading, hints
 # ---------------------------------------------------------------------------
 
-## The top level: Home, then one row per mounted stick. Never empty -- Home is
-## always offered even if the directory behind it turns out hostile, because a
-## Places view with zero rows would be a screen with nothing to focus and
-## nothing to explain itself with.
-func _show_places(focus_path: String = "") -> void:
-	_current_path = ""
-	_place_root = ""
-	_path_label.text = "Places"
+func _refresh_chrome() -> void:
+	if _heading == null:
+		return
 
-	var entries: Array = []
-	# The folder glyph rather than the house: this row IS a folder -- the one
-	# the person owns -- and the icon language should say what a thing is, not
-	# where the metaphor came from.
-	var home := _home_path()
-	entries.append({
-		"name": "Home", "value": _free_space_text(home), "icon": "folder",
-		"meta": {"kind": "place", "path": home, "name": "Home", "removable": false},
-	})
-	for mount_path in _mounts():
-		# FREE SPACE ON THE ROW, because "will this fit" is the question a
-		# person asks of a stick before they copy anything to it, and the only
-		# alternative on this machine is copying and finding out. It is the one
-		# number a place row can carry that a directory listing cannot.
-		entries.append({
-			"name": mount_path.get_file(), "value": _free_space_text(mount_path), "icon": "usb",
-			"meta": {"kind": "place", "path": mount_path, "name": mount_path.get_file(),
-				"removable": true},
-		})
+	var selected := _pane().selection_count()
+	if selected > 0:
+		_heading.text = "Files  --  %d selected" % selected
+	else:
+		_heading.text = "Files"
 
-	_rebuild_rows(entries)
 	_refresh_hints()
 
-	# Coming back from inside a place, land on that place rather than the top.
-	var focused := false
-	if not focus_path.is_empty():
-		for row in _rows:
-			var meta: Dictionary = row.get_meta("entry")
-			if str(meta.get("path", "")) == focus_path:
-				row.grab_focus()
-				focused = true
-				break
-	if not focused and not _rows.is_empty():
-		var first: Control = _rows[0]
-		first.grab_focus()
 
-	ShellLog.info("files: at places (%d place(s), %d mount(s))"
-		% [_rows.size(), _rows.size() - 1])
-
-
-## One directory, as rows: folders first, then files, both alphabetical,
-## dotfiles skipped -- this is a TV, not a shell prompt, and .config is
-## plumbing nobody navigates to from a couch.
-func _enter_directory(path: String, focus_name: String = "") -> void:
-	var listing: Variant = _list_directory(path)
-	if listing == null:
-		# Stay where we are: a failed descent that also lost the current view
-		# would be two failures for one press.
-		_say("Could not open %s" % path.get_file(), true)
-		return
-
-	_current_path = path
-	_path_label.text = _elide_left(path)
-
-	var entries: Array = []
-	for dir_name in listing["dirs"]:
-		entries.append({
-			"name": dir_name, "value": "", "icon": "folder",
-			"meta": {"kind": "entry", "path": path.path_join(dir_name),
-				"name": dir_name, "is_dir": true},
-		})
-	for file_name in listing["files"]:
-		entries.append({
-			"name": file_name, "value": _file_size_text(path.path_join(file_name)),
-			"icon": "file",
-			"meta": {"kind": "entry", "path": path.path_join(file_name),
-				"name": file_name, "is_dir": false},
-		})
-
-	_rebuild_rows(entries)
-	_refresh_hints()
-
-	# Ascending focuses the folder just left; operations re-focus what they
-	# touched; a plain descent starts at the top.
-	var focused := false
-	if not focus_name.is_empty():
-		for row in _rows:
-			var meta: Dictionary = row.get_meta("entry")
-			if str(meta.get("name", "")) == focus_name:
-				row.grab_focus()
-				focused = true
-				break
-	if not focused and not _rows.is_empty():
-		var first: Control = _rows[0]
-		first.grab_focus()
-
-	ShellLog.info("files: entered %s (%d entries)" % [path, _rows.size()])
-
-
-## Re-list the current directory after an operation changed it, keeping focus
-## on a named entry where it survived.
-func _refresh_listing(focus_name: String = "") -> void:
-	if _current_path.is_empty():
-		_show_places()
-		return
-	_enter_directory(_current_path, focus_name)
-
-
-func _rebuild_rows(entries: Array) -> void:
-	for row in _rows:
-		_list.remove_child(row)
-		row.queue_free()
-	_rows.clear()
-
-	for entry in entries:
-		var row := ActionRow.new()
-		row.setup(str(entry["name"]), str(entry["value"]), str(entry["icon"]))
-		row.set_meta("entry", entry["meta"])
-		row.activated.connect(_on_row_pressed.bind(row))
-		row.focus_entered.connect(_on_row_focused.bind(row))
-		_list.add_child(row)
-		_rows.append(row)
-
-	_empty.visible = _rows.is_empty()
-	_wire_focus_neighbours()
-
-
-## The settings list's table verbatim: one axis, hard stops, perpendicular
-## pointed at self so Control's geometric search cannot wander to the hints.
-func _wire_focus_neighbours() -> void:
-	var count := _rows.size()
-	for index in count:
-		var row: Control = _rows[index]
-		var up := index - 1 if index > 0 else index
-		var down := index + 1 if index + 1 < count else index
-
-		row.focus_neighbor_top = row.get_path_to(_rows[up])
-		row.focus_neighbor_bottom = row.get_path_to(_rows[down])
-		row.focus_neighbor_left = row.get_path_to(row)
-		row.focus_neighbor_right = row.get_path_to(row)
-
-
-## Keep the focused row on screen. Deferred for settings_screen's reason: the
-## first call arrives from a grab_focus before the scroll container has been
-## laid out, and asking an unsized viewport to reveal a control scrolls it
-## nowhere.
-func _on_row_focused(row: Control) -> void:
-	if _scroll == null:
-		return
-	_scroll.ensure_control_visible.call_deferred(row)
-	# At Places the OPTIONS hint belongs to the ROW -- a drive has an eject and
-	# Home has nothing -- so moving the cursor has to redraw the legend. Inside
-	# a place every row has the same menu and the hints are already right, which
-	# is why this is not simply called on every focus change.
-	if _current_path.is_empty():
-		_refresh_hints()
-
-
+## THE LEGEND IS PER REGION AND PER ROW, and every entry in it is a press that
+## does something where it is shown. A hint advertising a button whose press is
+## correctly ignored is the exact shape of "broken input" on a machine with no
+## other feedback -- the rule every screen in this shell follows.
 func _refresh_hints() -> void:
 	if _hints == null:
 		return
@@ -467,190 +431,115 @@ func _refresh_hints() -> void:
 		_hints.remove_child(child)
 		child.queue_free()
 
-	_hints.add_child(TvTheme.hint("A", "Open"))
-	# OPTIONS only where it does something, and advertising a button whose press
-	# is correctly ignored is the exact shape of "broken input" on a machine
-	# with no other feedback. Inside a place that is always: there is a file or
-	# a folder to act on, or at minimum a folder to make a new one in. At PLACES
-	# it depends on the row -- a drive can be ejected, Home cannot be anything.
-	if not _current_path.is_empty() or _places_row_has_options():
-		_hints.add_child(TvTheme.hint("OPTIONS", "Options"))
-	_hints.add_child(TvTheme.hint("B", "Back"))
+	if _places.has_focus_inside():
+		_hints.add_child(TvTheme.hint("A", "Open"))
+		if bool(_places.focused_place().get("removable", false)):
+			_hints.add_child(TvTheme.hint("OPTIONS", "Eject"))
+		_hints.add_child(TvTheme.hint("B", "Back"))
+		return
+
+	var pane := _pane()
+	var entry := pane.focused_entry()
+	if not entry.is_empty():
+		if bool(entry.get("is_dir", false)):
+			_hints.add_child(TvTheme.hint("A", "Open"))
+		else:
+			# What A will actually do to THIS file, from the same function the
+			# press goes through -- so the caption and the behaviour can never
+			# disagree about whether Kodi is installed.
+			var plan := FileOpen.plan(str(entry.get("name", "")))
+			var caption := str(plan["detail"])
+			if str(plan["action"]) == "none" or str(plan["action"]) == "install":
+				caption = "Cannot open"
+			_hints.add_child(TvTheme.hint("A", caption))
+		_hints.add_child(TvTheme.hint("X",
+			"Deselect" if _focused_is_selected(pane) else "Select"))
+
+	_hints.add_child(TvTheme.hint("Y", "View"))
+	_hints.add_child(TvTheme.hint("OPTIONS", "Actions"))
+	if _split:
+		_hints.add_child(TvTheme.hint("L1/R1", "Other pane"))
+	_hints.add_child(TvTheme.hint("B", "Up"))
 
 
-## Does the focused Places row have a menu behind it? Only a removable drive
-## does -- Eject is the whole of it. Asked of the focus owner rather than of
-## the list, so the hint tracks the cursor moving between Home and a stick.
-func _places_row_has_options() -> bool:
-	if not _current_path.is_empty():
-		return false
-	return bool(_focused_entry().get("removable", false))
-
-
-# ---------------------------------------------------------------------------
-# Listing
-# ---------------------------------------------------------------------------
-
-func _home_path() -> String:
-	var override := OS.get_environment(FILES_HOME_ENV)
-	if not override.is_empty():
-		return override
-	var home := OS.get_environment("HOME")
-	if not home.is_empty():
-		return home
-	# The appliance's session always exports HOME; this is the desk fallback,
-	# and on the desks this repo runs on the desk user is root.
-	return "/root"
-
-
-## Every mount under /run/media/<any user>/. No /run/media at all -- a desk, a
-## container, a machine with nothing plugged in -- is the normal case and
-## returns the normal answer: nothing.
-func _mounts() -> Array:
-	var result: Array = []
-	var media := DirAccess.open(MEDIA_ROOT)
-	if media == null:
-		return result
-	for user_name in media.get_directories():
-		var user_dir := DirAccess.open(MEDIA_ROOT.path_join(user_name))
-		if user_dir == null:
-			continue
-		for mount_name in user_dir.get_directories():
-			result.append(MEDIA_ROOT.path_join(user_name).path_join(mount_name))
-	result.sort()
-	return result
-
-
-## {dirs: [...], files: [...]} sorted for the screen, or null when the
-## directory cannot be opened. get_directories/get_files skip hidden entries
-## by default, which is exactly the dotfile policy the header states -- no
-## filtering code, just the default left alone on purpose.
-func _list_directory(path: String) -> Variant:
-	var dir := DirAccess.open(path)
-	if dir == null:
-		ShellLog.warn("files: could not open %s (%s)"
-			% [path, error_string(DirAccess.get_open_error())])
-		return null
-
-	var dirs: Array = []
-	for entry_name in dir.get_directories():
-		dirs.append(entry_name)
-	var files: Array = []
-	for entry_name in dir.get_files():
-		files.append(entry_name)
-
-	# Case-insensitive, so "Downloads" and "docs" interleave the way a person
-	# alphabetises rather than the way ASCII does.
-	var by_name := func(a: String, b: String) -> bool:
-		return a.naturalnocasecmp_to(b) < 0
-	dirs.sort_custom(by_name)
-	files.sort_custom(by_name)
-
-	return {"dirs": dirs, "files": files}
-
-
-## A file's size, cheaply. FileAccess.open + get_length stats the file without
-## reading it; get_file_as_bytes would pull the whole thing through memory to
-## measure it, which on a 40 GB rip on a USB stick is not a size query, it is
-## an accident. Directories deliberately show nothing: their "size" would be
-## an entry count, and counting costs a directory read PER ROW -- a listing of
-## fifty folders would do fifty extra reads to decorate a column nobody asked
-## for. An unreadable file shows nothing too; the name still lists.
-func _file_size_text(path: String) -> String:
-	var file := FileAccess.open(path, FileAccess.READ)
-	if file == null:
-		return ""
-	return _human_size(file.get_length())
-
-
-## "12.4 GB free", or empty when the volume will not answer.
-##
-## DirAccess.get_space_left reports the free space of the filesystem the open
-## directory lives on -- a statvfs, not a walk -- so it costs the same on a
-## 2 GB stick and a 4 TB disk. A directory that will not open (a mount that
-## vanished between the listing and this call, which the poll makes a real
-## race) renders no number rather than a zero, because "0 B free" is a claim
-## and "nothing" is an absence.
-func _free_space_text(path: String) -> String:
-	var dir := DirAccess.open(path)
-	if dir == null:
-		return ""
-	var free := dir.get_space_left()
-	# Godot returns 0 for a filesystem it cannot stat as well as for a genuinely
-	# full one. Full is real and worth saying; the ambiguity is accepted here
-	# because the honest failure -- a drive that is actually out of room --
-	# is the one a person needs to be told about.
-	return "%s free" % _human_size(free)
-
-
-func _human_size(bytes: int) -> String:
-	if bytes < 1024:
-		return "%d B" % bytes
-	var value := float(bytes)
-	for unit in ["KB", "MB", "GB", "TB"]:
-		value /= 1024.0
-		if value < 1024.0 or unit == "TB":
-			return "%.1f %s" % [value, unit]
-	return ""
-
-
-## Ellipsize from the LEFT against the safe width, by hand -- Godot's overrun
-## trimming only cuts a string's tail. Measured against the design surface's
-## safe width rather than the label's own rect because the label may not be
-## laid out yet on the frame the path changes; the design width is known
-## always and errs conservative on the wider stretch-expanded panels.
-func _elide_left(path_text: String) -> String:
-	var font := _path_label.get_theme_font("font")
-	var font_size := TvTheme.SIZE_BODY
-	var budget := float(TvTheme.BASE_WIDTH - 2 * TvTheme.SAFE_MARGIN_X)
-	if font.get_string_size(path_text, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size).x <= budget:
-		return path_text
-	var tail := path_text
-	while tail.length() > 1 \
-			and font.get_string_size("…" + tail, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size).x > budget:
-		tail = tail.substr(1)
-	return "…" + tail
+func _focused_is_selected(pane: FilePane) -> bool:
+	for chosen in pane.selected_entries():
+		if str(chosen.get("path", "")) == str(pane.focused_entry().get("path", "")):
+			return true
+	return false
 
 
 # ---------------------------------------------------------------------------
 # Input
 # ---------------------------------------------------------------------------
 
-func _on_row_pressed(row: Control) -> void:
-	var entry: Dictionary = row.get_meta("entry")
-	var path := str(entry.get("path", ""))
-
-	if str(entry.get("kind", "")) == "place":
-		# Descending into a place sets the floor B stops at. Set BEFORE the
-		# descent so a failed open leaves no half-armed floor: _enter_directory
-		# bails without touching _current_path on failure, and the stale
-		# _place_root is overwritten by the next successful descent.
-		_place_root = path
-		_status.text = ""
-		_enter_directory(path)
+## LEFT AND RIGHT ARE TAKEN BEFORE THE GUI SEES THEM, and that is forced
+## rather than chosen. The obvious implementation is _unhandled_input: let each
+## region's neighbour table move focus, and pick up the presses it does not
+## use. It does not work, because a hard stop in this shell is a neighbour
+## pointed at SELF -- the viewport resolves that to a perfectly valid focusable
+## control, re-focuses it, and consumes the event. Nothing ever falls through,
+## which the Xvfb run showed as Left at the left-hand column doing nothing at
+## all instead of reaching the Places column.
+##
+## Leaving the neighbour UNSET would make it fall through, and would also hand
+## the press to Control's geometric search first -- which is the thing every
+## screen in this shell has an explicit table specifically to avoid.
+##
+## So the crossing is decided here, ahead of the GUI, and ONLY at an edge:
+## anywhere else this returns without consuming and the region's own table does
+## the work exactly as before.
+func _input(event: InputEvent) -> void:
+	if _modal_open():
 		return
-
-	if bool(entry.get("is_dir", false)):
-		_status.text = ""
-		_enter_directory(path)
+	var going_right := event.is_action_pressed("ui_right")
+	if not going_right and not event.is_action_pressed("ui_left"):
 		return
-
-	# A on a file. Phase 0 has no viewers, and the honest sentence beats a
-	# fake one: nothing opens, and the screen says why in terms of THIS file.
-	var file_name := str(entry.get("name", ""))
-	var ext := file_name.get_extension()
-	if ext.is_empty():
-		_say("Nothing on this machine opens \"%s\" yet" % file_name)
-	else:
-		_say("Nothing on this machine opens .%s yet" % ext)
+	if _cross_region(going_right):
+		get_viewport().set_input_as_handled()
 
 
 func _unhandled_input(event: InputEvent) -> void:
-	# OPTIONS opens the focused row's options -- checked before B for
-	# shell_root's reason: it is the door to the verbs, and B is the door out.
+	if _modal_open():
+		return
+
 	if InputMap.has_action("ui_shell_options") and event.is_action_pressed("ui_shell_options"):
 		get_viewport().set_input_as_handled()
-		_open_menu()
+		_open_actions_menu()
+		return
+
+	if InputMap.has_action("ui_shell_y") and event.is_action_pressed("ui_shell_y"):
+		get_viewport().set_input_as_handled()
+		_open_view_menu()
+		return
+
+	if InputMap.has_action("ui_shell_x") and event.is_action_pressed("ui_shell_x"):
+		if _places.has_focus_inside():
+			return
+		get_viewport().set_input_as_handled()
+		var pane := _pane()
+		pane.toggle_focused_selection()
+		# Logged rather than said on the status line: the count is already in
+		# the heading, and a sentence per press would overwrite the outcome of
+		# the operation the person is selecting things FOR. The journal is
+		# where the other end of an ssh session watches a bulk delete being
+		# assembled -- and it is what the Xvfb harness asserts selection on.
+		ShellLog.info("files: %s \"%s\" -- %d selected"
+			% ["selected" if _focused_is_selected(pane) else "deselected",
+				pane.focused_name(), pane.selection_count()])
+		return
+
+	# The shoulders are inert unless there is a second pane to reach. Advertised
+	# only then, too -- see _refresh_hints.
+	if _split and InputMap.has_action("ui_shell_l1") \
+			and event.is_action_pressed("ui_shell_l1"):
+		get_viewport().set_input_as_handled()
+		_focus_pane(0)
+		return
+	if _split and InputMap.has_action("ui_shell_r1") \
+			and event.is_action_pressed("ui_shell_r1"):
+		get_viewport().set_input_as_handled()
+		_focus_pane(1)
 		return
 
 	if not event.is_action_pressed("ui_cancel"):
@@ -658,69 +547,297 @@ func _unhandled_input(event: InputEvent) -> void:
 	# Consumed so the home rail underneath never sees the same press.
 	get_viewport().set_input_as_handled()
 
-	if _current_path.is_empty():
-		ShellLog.info("files: closed by B at places")
+	if _places.has_focus_inside():
+		ShellLog.info("files: closed by B at Places")
 		closed.emit()
 		return
 	_status.text = ""
-	if _current_path == _place_root:
-		# The floor: a place's root backs out to Places, never to its parent.
-		# /home and /run/media/<user> are plumbing, and B walking into them
-		# would put the whole filesystem one held button away from the couch.
-		ShellLog.info("files: back to places from %s" % _current_path)
-		_show_places(_place_root)
+	_pane().go_up()
+
+
+func _modal_open() -> bool:
+	return _menu != null or _keyboard != null or _viewer != null or _properties != null
+
+
+func _focus_pane(index: int) -> void:
+	if index == _active and _pane().has_focus_inside():
 		return
-	_enter_directory(_current_path.get_base_dir(), _current_path.get_file())
+	_set_active(index)
+	_panes[index].grab_pane_focus(_panes[index].focused_name())
 
 
 # ---------------------------------------------------------------------------
-# The options menu
+# Opening
 # ---------------------------------------------------------------------------
 
-func _open_menu() -> void:
-	if _menu != null or _keyboard != null:
-		return
-	if _current_path.is_empty():
-		_open_place_menu()
+## A on an item. Four outcomes and the plan decides which -- see file_open.gd.
+func _on_item_activated(entry: Dictionary, pane: FilePane) -> void:
+	if bool(entry.get("is_dir", false)):
+		_status.text = ""
+		if not pane.show_directory(str(entry["path"])):
+			_say("Could not open %s" % str(entry.get("name", "")), true)
+		elif pane == _panes[1]:
+			_pane_two_touched = true
 		return
 
-	var target := _focused_entry()
+	var file_name := str(entry.get("name", ""))
+	var plan := FileOpen.plan(file_name)
+	match str(plan["action"]):
+		"image":
+			_open_viewer(pane, str(entry["path"]))
+		"launch":
+			if Launcher.is_busy():
+				ShellLog.info("files: A while a launch is already up; ignoring")
+				return
+			var app := str(plan["app"])
+			_say("Opening %s in %s" % [file_name, FileOpen.handler_title(app)])
+			Launcher.launch(FileOpen.launch_entry(app, str(entry["path"])))
+		_:
+			# "install" and "none" both land here: nothing runs, and the screen
+			# says why in terms of THIS file. The install case names the
+			# application and where to get it, which is the difference between
+			# a dead end and an instruction.
+			_say(str(plan["detail"]), true)
+
+
+func _open_viewer(pane: FilePane, path: String) -> void:
+	if _viewer != null:
+		return
+	var pictures := pane.image_paths()
+	_viewer = ImageViewer.new()
+	_viewer.paths = pictures
+	_viewer.index = maxi(0, pictures.find(path))
+	_viewer.closed.connect(_on_viewer_closed, CONNECT_ONE_SHOT)
+	_return_focus_name = path.get_file()
+	# A child of this screen, wifi_screen's reason: closing the files screen can
+	# then never leave a viewer orphaned over the rail.
+	add_child(_viewer)
+	set_process_unhandled_input(false)
+
+
+func _on_viewer_closed() -> void:
+	_close_viewer.call_deferred()
+
+
+func _close_viewer() -> void:
+	if _viewer == null:
+		return
+	# The picture the person stopped on is where the cursor goes back to, not
+	# the one they opened. Walking six pictures forward and pressing B should
+	# leave the list on the sixth.
+	var landed := ""
+	if _viewer.index >= 0 and _viewer.index < _viewer.paths.size():
+		landed = str(_viewer.paths[_viewer.index]).get_file()
+	var viewer := _viewer
+	_viewer = null
+	remove_child(viewer)
+	viewer.queue_free()
+	set_process_unhandled_input(true)
+	_pane().grab_pane_focus(landed if not landed.is_empty() else _return_focus_name)
+
+
+# ---------------------------------------------------------------------------
+# The view menu (Y)
+# ---------------------------------------------------------------------------
+
+## Dolphin's View menu, as one screen of rows. Every entry states its CURRENT
+## value in its label -- "Sort by: Size" rather than "Sort by" -- because a
+## menu that only says what it will change is a menu you have to open twice to
+## find out where you are.
+func _open_view_menu() -> void:
+	if _modal_open():
+		return
+	var pane := _pane()
+	var items := [
+		{"id": "mode", "label": "View: %s" % _mode_label(pane.mode), "icon": "folder-open"},
+		{"id": "sort", "label": "Sort by: %s" % _sort_label(pane.sort_key), "icon": "more"},
+		{"id": "order", "label": "Order: %s"
+			% ("Descending" if pane.sort_descending else "Ascending"),
+			"icon": "caret-right"},
+		{"id": "hidden", "label": "Hidden files: %s"
+			% ("Shown" if pane.show_hidden else "Hidden"), "icon": "check"},
+		{"id": "split", "label": "Split view: %s" % ("On" if _split else "Off"),
+			"icon": "copy"},
+	]
+	if not pane.path.is_empty():
+		items.append({"id": "selectall",
+			"label": "Clear selection" if pane.selection_count() > 0 else "Select all",
+			"icon": "check"})
+
+	_menu_targets = []
+	_menu_place = {}
+	_return_focus_name = pane.focused_name()
+	_open_menu(items, "View", "")
+
+
+func _mode_label(mode: String) -> String:
+	match mode:
+		FileItem.MODE_ICONS:
+			return "Icons"
+		FileItem.MODE_COMPACT:
+			return "Compact"
+		_:
+			return "Details"
+
+
+func _sort_label(key: String) -> String:
+	match key:
+		FilePane.SORT_SIZE:
+			return "Size"
+		FilePane.SORT_DATE:
+			return "Date"
+		FilePane.SORT_TYPE:
+			return "Type"
+		_:
+			return "Name"
+
+
+## Cycling rather than a submenu, and it is the pad that decides that: a
+## submenu is a second screen to open, move in and back out of for a setting
+## with three values. One press advances it, the label says where it landed,
+## and the list is right there to see the effect on.
+func _cycle_mode(pane: FilePane) -> void:
+	var order := [FileItem.MODE_DETAILS, FileItem.MODE_ICONS, FileItem.MODE_COMPACT]
+	var next: int = (order.find(pane.mode) + 1) % order.size()
+	pane.set_view(str(order[next]), pane.sort_key, pane.sort_descending, pane.show_hidden)
+	_say("%s view" % _mode_label(pane.mode))
+
+
+func _cycle_sort(pane: FilePane) -> void:
+	var order := [FilePane.SORT_NAME, FilePane.SORT_SIZE,
+		FilePane.SORT_DATE, FilePane.SORT_TYPE]
+	var next: int = (order.find(pane.sort_key) + 1) % order.size()
+	pane.set_view(pane.mode, str(order[next]), pane.sort_descending, pane.show_hidden)
+	_say("Sorted by %s" % _sort_label(pane.sort_key).to_lower())
+
+
+## THE SECOND PANE OPENS ON THE SAME FOLDER, and that is deliberate rather than
+## lazy. Split view is pressed in order to copy something somewhere, and the
+## person has one of the two ends already on screen -- opening the new pane on
+## Home would throw that away half the time. Same folder means the next move is
+## always "point the other side somewhere", which is one visit to Places.
+func _toggle_split() -> void:
+	_split = not _split
+	_panes[1].visible = _split
+	if _split:
+		var source: FilePane = _panes[0]
+		if not _pane_two_touched:
+			_point_pane(_panes[1], source.place_root, source.place_label)
+			_panes[1].show_directory(source.path)
+		_wire_regions()
+		_set_active(1)
+		_panes[1].grab_pane_focus()
+		_say("Split view on -- L1 and R1 jump between the panes")
+	else:
+		_panes[1].clear_selection()
+		_wire_regions()
+		_set_active(0)
+		_panes[0].grab_pane_focus(_panes[0].focused_name())
+		_say("Split view off")
+
+
+# ---------------------------------------------------------------------------
+# The actions menu (OPTIONS)
+# ---------------------------------------------------------------------------
+
+func _open_actions_menu() -> void:
+	if _modal_open():
+		return
+
+	# On the Places column OPTIONS is about the PLACE, and a drive has exactly
+	# one verb: taking it out without losing what was just written to it. Home
+	# has none -- you cannot eject the disk the shell is running from.
+	if _places.has_focus_inside():
+		var place := _places.focused_place()
+		if not bool(place.get("removable", false)):
+			ShellLog.info("files: OPTIONS on a place with nothing to offer")
+			return
+		if Media.is_busy():
+			ShellLog.info("files: OPTIONS while an eject is already in flight; ignoring")
+			return
+		_menu_place = place
+		_menu_targets = []
+		_open_menu([{"id": "eject", "label": "Safely remove", "icon": "eject"}],
+			str(place.get("name", "")),
+			"Everything is written to the drive first. Wait for the message before unplugging it.")
+		return
+
+	var pane := _pane()
+	var targets := pane.target_entries()
+	var many := targets.size() > 1
 	var items: Array = []
-	if not target.is_empty():
-		items.append({"id": "copy", "label": "Copy", "icon": "copy"})
-		items.append({"id": "cut", "label": "Cut", "icon": "cut"})
+
+	if targets.size() == 1 and not bool(targets[0].get("is_dir", false)):
+		var plan := FileOpen.plan(str(targets[0].get("name", "")))
+		if str(plan["action"]) == "image" or str(plan["action"]) == "launch":
+			items.append({"id": "open", "label": str(plan["detail"]), "icon": "folder-open"})
+
+	if not targets.is_empty():
+		items.append({"id": "copy", "label": _count_label("Copy", targets), "icon": "copy"})
+		items.append({"id": "cut", "label": _count_label("Cut", targets), "icon": "cut"})
+
 	if not _clipboard.is_empty():
 		# Paste appears ONLY while armed: a permanent Paste that mostly says
 		# "nothing to paste" would train the button to mean nothing. The verb
-		# names its object so the menu carries its own state. "download" is
-		# the closest mark the vendored table has -- an arrow into a tray IS
+		# names its object so the menu carries its own state. "download" is the
+		# closest mark the vendored table has -- an arrow into a tray IS
 		# paste-into-here, and PROVENANCE.md forbids guessing new codepoints.
-		items.append({"id": "paste",
-			"label": "Paste %s" % str(_clipboard.get("path", "")).get_file(),
-			"icon": "download"})
-	if not target.is_empty():
+		var armed: Array = _clipboard.get("paths", [])
+		var what: String = str(armed[0]).get_file() if armed.size() == 1 \
+			else "%d items" % armed.size()
+		items.append({"id": "paste", "label": "Paste %s" % what, "icon": "download"})
+
+	if targets.size() == 1:
+		# Rename is single by nature: two files cannot both become one name,
+		# and a bulk rename needs a pattern language this screen has no way to
+		# type. Offering it on a multi-selection would be a menu entry that
+		# quietly acts on one of them.
 		items.append({"id": "rename", "label": "Rename", "icon": "rename"})
-		items.append({"id": "delete", "label": "Delete", "icon": "trash"})
-	# ALWAYS OFFERED, and it is the one item that is about the FOLDER rather
-	# than about a row in it -- which is also why it is last, under the verbs
-	# that act on the thing the cursor is on. It is what makes an empty folder
-	# have a menu at all: before it, OPTIONS in a folder with nothing in it and
-	# nothing on the clipboard opened nothing, and "a file manager you cannot
-	# make a folder with" is most of the distance between this screen and one.
+
+	if not targets.is_empty():
+		items.append({"id": "delete", "label": _count_label("Delete", targets), "icon": "trash"})
+
+	# ALWAYS OFFERED, and it is the one item about the FOLDER rather than about
+	# what the cursor is on -- which is why it is last, and why an empty folder
+	# has a menu at all.
 	items.append({"id": "newfolder", "label": "New folder", "icon": "folder"})
 
-	_menu_target = target
-	_return_focus_name = str(target.get("name", ""))
+	if targets.size() == 1:
+		items.append({"id": "properties", "label": "Properties", "icon": "more"})
+
+	_menu_place = {}
+	_menu_targets = targets
+	_return_focus_name = pane.focused_name()
+
+	var title := pane.path.get_file()
+	if targets.size() == 1:
+		title = str(targets[0].get("name", title))
+	elif many:
+		title = "%d items" % targets.size()
+
+	var note := ""
+	if not targets.is_empty():
+		# Named cost, card_menu's discipline: delete here is the trash, which is
+		# reversible from a desktop -- and saying "cannot be undone" about it
+		# would be the note lying in the scary direction.
+		note = "Delete moves things to the system's wastebasket, not into thin air."
+	_open_menu(items, title, note)
+
+
+func _count_label(verb: String, targets: Array) -> String:
+	if targets.size() == 1:
+		return verb
+	return "%s %d items" % [verb, targets.size()]
+
+
+func _open_menu(items: Array, title: String, note: String) -> void:
+	if items.is_empty():
+		ShellLog.info("files: nothing to offer here")
+		return
 	_menu = FileMenu.new()
-	# An empty-folder paste has no row to be about; the folder itself is the
-	# subject then.
-	_menu.title_text = str(target.get("name", _current_path.get_file()))
+	_menu.title_text = title
 	_menu.items = items
-	if not target.is_empty():
-		# Named cost, card_menu's discipline: delete here is the trash, which
-		# is reversible from a desktop -- and saying "cannot be undone" about
-		# it would be the note lying in the scary direction.
-		_menu.note_text = "Delete moves it to the system's wastebasket, not into thin air."
+	_menu.note_text = note
 	_menu.chosen.connect(_on_menu_chosen)
 	_menu.closed.connect(_on_menu_closed, CONNECT_ONE_SHOT)
 	# Deaf while the menu is up, so one B press cannot close both surfaces.
@@ -728,58 +845,43 @@ func _open_menu() -> void:
 	add_child(_menu)
 
 
-## OPTIONS at Places, which used to be a no-op with a journal line. A drive has
-## exactly one verb and it is the one that matters most: taking it out without
-## losing what was just written to it. Home has none -- you cannot eject the
-## disk the shell is running from -- so the menu simply does not open there,
-## and the hint row already said it would not (see _places_row_has_options).
-func _open_place_menu() -> void:
-	var target := _focused_entry()
-	if not bool(target.get("removable", false)):
-		ShellLog.info("files: OPTIONS on a place with nothing to offer")
-		return
-	if Media.is_busy():
-		ShellLog.info("files: OPTIONS while an eject is already in flight; ignoring")
-		return
-
-	_menu_target = target
-	_return_focus_name = str(target.get("name", ""))
-	_menu = FileMenu.new()
-	_menu.title_text = str(target.get("name", ""))
-	_menu.items = [{"id": "eject", "label": "Safely remove", "icon": "eject"}]
-	# The cost, named the way card_menu names a re-download: what the person
-	# gets for the extra press is the promise that the write finished.
-	_menu.note_text = "Everything is written to the drive first. Wait for the message before unplugging it."
-	_menu.chosen.connect(_on_menu_chosen)
-	_menu.closed.connect(_on_menu_closed, CONNECT_ONE_SHOT)
-	set_process_unhandled_input(false)
-	add_child(_menu)
-
-
-func _focused_entry() -> Dictionary:
-	var owner := get_viewport().gui_get_focus_owner()
-	for row in _rows:
-		if row == owner:
-			return row.get_meta("entry")
-	return {}
-
-
 func _on_menu_chosen(id: String) -> void:
+	var pane := _pane()
 	match id:
+		"mode":
+			_cycle_mode(pane)
+		"sort":
+			_cycle_sort(pane)
+		"order":
+			pane.set_view(pane.mode, pane.sort_key, not pane.sort_descending, pane.show_hidden)
+			_say("Order: %s" % ("descending" if pane.sort_descending else "ascending"))
+		"hidden":
+			pane.set_view(pane.mode, pane.sort_key, pane.sort_descending, not pane.show_hidden)
+			_say("Hidden files %s" % ("shown" if pane.show_hidden else "hidden"))
+		"split":
+			_toggle_split()
+		"selectall":
+			pane.toggle_select_all()
+			_say("%d selected" % pane.selection_count())
+		"open":
+			if not _menu_targets.is_empty():
+				_on_item_activated(_menu_targets[0], pane)
 		"copy":
 			_arm_clipboard(false)
 		"cut":
 			_arm_clipboard(true)
 		"paste":
-			_paste_into(_current_path)
+			_paste_into(pane.path)
 		"rename":
 			_open_rename()
 		"delete":
-			_delete_target()
+			_delete_targets()
 		"newfolder":
 			_open_new_folder()
+		"properties":
+			_open_properties()
 		"eject":
-			_eject_target()
+			_eject_place()
 		_:
 			ShellLog.error("file menu item \"%s\" has no action" % id)
 
@@ -795,24 +897,31 @@ func _close_menu() -> void:
 	_menu = null
 	remove_child(menu)
 	menu.queue_free()
-	# Rename opens the keyboard from the menu's chosen handler; when it did,
-	# the keyboard owns input and focus until it closes, and re-enabling here
-	# would let B reach this screen THROUGH it.
-	if _keyboard != null:
+	# Rename and New folder open the keyboard from the chosen handler, and
+	# Properties opens a panel; when they did, that surface owns input and focus
+	# until it closes, and re-enabling here would let B reach this screen
+	# THROUGH it.
+	if _keyboard != null or _properties != null or _viewer != null:
 		return
 	set_process_unhandled_input(true)
-	_focus_row_named(_return_focus_name)
 
+	# ONLY IF THE CHOICE DID NOT ALREADY PLACE THE CURSOR. Splitting the view
+	# grabs focus in the pane it just opened, and this running afterwards --
+	# deferred, so it always does -- would drag the cursor back to a name
+	# remembered from the pane the person was in BEFORE the split. Asking the
+	# viewport is the reliable test: the menu's own row held focus until it was
+	# freed, so anything focused inside this screen now was put there
+	# deliberately by the action.
+	var owner := get_viewport().gui_get_focus_owner()
+	if owner != null and is_ancestor_of(owner):
+		_refresh_chrome()
+		return
 
-func _focus_row_named(entry_name: String) -> void:
-	for row in _rows:
-		var meta: Dictionary = row.get_meta("entry")
-		if str(meta.get("name", "")) == entry_name:
-			row.grab_focus()
-			return
-	if not _rows.is_empty():
-		var first: Control = _rows[0]
-		first.grab_focus()
+	if _menu_place.is_empty():
+		_pane().grab_pane_focus(_return_focus_name)
+	else:
+		_places.grab_places_focus()
+	_refresh_chrome()
 
 
 # ---------------------------------------------------------------------------
@@ -820,62 +929,112 @@ func _focus_row_named(entry_name: String) -> void:
 # ---------------------------------------------------------------------------
 
 func _arm_clipboard(cut: bool) -> void:
-	var path := str(_menu_target.get("path", ""))
-	if path.is_empty():
+	var paths: Array = []
+	for entry in _menu_targets:
+		paths.append(str(entry.get("path", "")))
+	if paths.is_empty():
 		return
-	_clipboard = {"path": path, "cut": cut}
-	var target_name := str(_menu_target.get("name", ""))
+	_clipboard = {"paths": paths, "cut": cut}
+
+	var what: String = str(paths[0]).get_file() if paths.size() == 1 \
+		else "%d items" % paths.size()
 	_say("%s %s -- Paste puts it in the folder you are in"
-		% ["Cut" if cut else "Copied", target_name])
-	ShellLog.info("files: clipboard armed (%s) for %s" % ["cut" if cut else "copy", path])
+		% ["Cut" if cut else "Copied", what])
+	ShellLog.info("files: clipboard armed (%s) for %d path(s)"
+		% ["cut" if cut else "copy", paths.size()])
+	# The things just copied stop being selected: the selection's next job is
+	# choosing where they go, and leaving it armed makes the following Delete
+	# act on the source of a copy that has not landed yet.
+	_pane().clear_selection()
 
 
-## Paste the armed path into a directory. Copy leaves the clipboard armed --
+## Paste everything armed into a directory. Copy leaves the clipboard armed --
 ## pasting the same thing into three folders is a legitimate afternoon -- and
-## cut clears it, because the source the clipboard names no longer exists.
+## cut clears it, because the sources it names no longer exist.
+##
+## EACH ITEM IS INDEPENDENT. One failure reports itself and the rest continue,
+## which is the opposite of the rule INSIDE a single recursive copy (that stops
+## at the first error). The difference is what a partial result means: half a
+## directory tree is a corrupt copy, and three of four files is three files.
 func _paste_into(dest_dir: String) -> void:
-	var src := str(_clipboard.get("path", ""))
+	var armed: Array = _clipboard.get("paths", [])
 	var cut := bool(_clipboard.get("cut", false))
-	if src.is_empty():
+	if armed.is_empty() or dest_dir.is_empty():
 		return
+
+	var done := 0
+	var last_name := ""
+	# The FIRST failure's reason is what the line carries. Reporting every one
+	# would need a screen of its own, and the journal already has them all.
+	var first_error := ""
+	_skipped_links = 0
+
+	for source in armed:
+		var result := _paste_one(str(source), dest_dir, cut)
+		var problem := str(result.get("error", ""))
+		if problem.is_empty():
+			done += 1
+			last_name = str(result.get("name", ""))
+		elif first_error.is_empty():
+			first_error = problem
+
+	# A cut only disarms when EVERY source moved. Clearing it after a partial
+	# move would leave the person with no way to retry the ones that failed and
+	# nothing on screen naming them.
+	if cut and first_error.is_empty():
+		_clipboard = {}
+
+	if first_error.is_empty():
+		var line := "%s %s" % ["Moved" if cut else "Copied",
+			last_name if done == 1 else "%d items" % done]
+		if _skipped_links > 0:
+			line += " (%d link(s) skipped)" % _skipped_links
+		_say(line)
+	elif done > 0:
+		_say("%s %d of %d -- %s" % ["Moved" if cut else "Copied",
+			done, armed.size(), first_error], true)
+	else:
+		_say(first_error, true)
+
+	_refresh_panes_showing(dest_dir, last_name)
+
+
+## One source into one directory. Returns {"error": ""} on success, or an error
+## sentence ready for the status line. Every guard the single-file version had,
+## unchanged -- they are the rules that make this safe to point at a stick.
+func _paste_one(src: String, dest_dir: String, cut: bool) -> Dictionary:
 	var src_name := src.get_file()
 	var src_is_dir := DirAccess.dir_exists_absolute(src)
 
 	if not src_is_dir and not FileAccess.file_exists(src):
 		# The source left between the arm and the paste -- deleted, unmounted,
-		# renamed. The clipboard is now a claim about nothing; disarm it.
-		_say("%s is gone; nothing to paste" % src_name, true)
-		_clipboard = {}
-		return
+		# renamed. The clipboard is now a claim about nothing.
+		return {"error": "%s is gone; nothing to paste" % src_name}
 
 	if src_is_dir and (dest_dir == src or dest_dir.begins_with(src + "/")):
 		# A folder pasted into itself recurses forever, copying its own copy.
-		_say("Cannot paste %s into itself" % src_name, true)
-		return
+		return {"error": "Cannot paste %s into itself" % src_name}
 
 	if cut and src.get_base_dir() == dest_dir:
 		# Moving a thing into the folder it is already in is a no-op that the
 		# collision rule below would turn into a puzzling duplicate.
-		_say("%s is already here" % src_name)
-		return
+		return {"error": "", "name": src_name}
 
 	if _is_symlink(src):
-		# The copy machinery refuses links wholesale -- see _copy_directory
-		# for the policy -- and a link at the TOP of the request deserves a
+		# The copy machinery refuses links wholesale -- see _copy_directory for
+		# the policy -- and a link at the TOP of the request deserves a
 		# sentence, not a silent skip count.
-		_say("%s is a link; links are not copied" % src_name, true)
-		return
+		return {"error": "%s is a link; links are not copied" % src_name}
 
 	var dest := _unique_destination(dest_dir, src_name, src_is_dir)
 	var dest_name := dest.get_file()
-	_skipped_links = 0
 
 	var err: int = OK
 	if cut:
 		# rename_absolute is the move when both ends share a filesystem --
-		# instant, atomic, and it carries directories whole. Across
-		# filesystems (home to a USB stick, the common case here) the kernel
-		# refuses, and the honest fallback is copy-then-delete.
+		# instant, atomic, and it carries directories whole. Across filesystems
+		# (home to a USB stick, the common case here) the kernel refuses, and
+		# the honest fallback is copy-then-delete.
 		err = DirAccess.rename_absolute(src, dest)
 		if err != OK:
 			err = _copy_any(src, dest, src_is_dir)
@@ -883,42 +1042,29 @@ func _paste_into(dest_dir: String) -> void:
 				err = _remove_recursive(src)
 				if err != OK:
 					# The copy landed; the source would not go. Worse ways to
-					# fail exist -- the data now exists twice, not zero times
-					# -- but the person must hear it is still there.
-					_say("Moved %s, but the original would not delete" % dest_name, true)
+					# fail exist -- the data now exists twice, not zero times --
+					# but the person must hear it is still there.
 					ShellLog.error("files: cut of %s copied to %s but source removal failed (%s)"
 						% [src, dest, error_string(err)])
-					_clipboard = {}
-					_refresh_listing(dest_name)
-					return
+					return {"error": "Moved %s, but the original would not delete" % dest_name}
 	else:
 		err = _copy_any(src, dest, src_is_dir)
 
 	if err != OK:
-		_say("Could not paste %s (%s)" % [src_name, error_string(err)], true)
 		ShellLog.error("files: paste of %s into %s failed (%s)"
 			% [src, dest_dir, error_string(err)])
-		return
+		return {"error": "Could not paste %s (%s)" % [src_name, error_string(err)]}
 
-	if cut:
-		_clipboard = {}
-		ShellLog.info("files: moved %s to %s" % [src, dest])
-	else:
-		ShellLog.info("files: copied %s to %s" % [src, dest])
-
-	var line := "%s %s" % ["Moved" if cut else "Copied", dest_name]
-	if _skipped_links > 0:
-		line += " (%d link(s) skipped)" % _skipped_links
-	_say(line)
-	_refresh_listing(dest_name)
+	ShellLog.info("files: %s %s to %s" % ["moved" if cut else "copied", src, dest])
+	return {"error": "", "name": dest_name}
 
 
 ## A destination that exists nowhere yet. " (copy)" before the extension, then
 ## " (copy 2)" and up -- looping rather than stopping at one, because the rule
 ## is absolute: paste NEVER overwrites. Silently destroying the thing already
-## there to make room for its twin is the one behaviour a file manager is
-## never forgiven. Directories keep their whole name as the stem: get_basename
-## would read "Season.2" as a file called "Season" with an extension.
+## there to make room for its twin is the one behaviour a file manager is never
+## forgiven. Directories keep their whole name as the stem: get_basename would
+## read "Season.2" as a file called "Season" with an extension.
 func _unique_destination(dest_dir: String, source_name: String, is_dir: bool) -> String:
 	var dest := dest_dir.path_join(source_name)
 	if not _exists(dest):
@@ -960,21 +1106,21 @@ func _copy_any(src: String, dest: String, src_is_dir: bool) -> int:
 
 ## Recursive directory copy, written with the two rules that make it safe:
 ##
-## SYMLINKS ARE SKIPPED, NOT FOLLOWED. Following one can loop a copy forever
-## (a link up its own tree), silently drag in another filesystem, or turn one
+## SYMLINKS ARE SKIPPED, NOT FOLLOWED. Following one can loop a copy forever (a
+## link up its own tree), silently drag in another filesystem, or turn one
 ## stick's 2 GB into a full disk. Recreating links was considered and dropped:
 ## an absolute link copied to a USB stick points at a path the next machine
 ## does not have, which is a broken promise dressed as fidelity. Skipped links
 ## are counted into _skipped_links and the status line says so.
 ##
-## HIDDEN ENTRIES ARE COPIED even though the listing hides them. The listing's
-## dotfile policy is about what a couch needs to SEE; a copy that quietly
-## dropped a folder's .config would hand back a folder that looks identical
-## and is not, which is the listing's cosmetic choice corrupting data.
+## HIDDEN ENTRIES ARE COPIED even when the listing is hiding them. The dotfile
+## policy is about what a couch needs to SEE; a copy that quietly dropped a
+## folder's .config would hand back a folder that looks identical and is not,
+## which is a cosmetic choice corrupting data.
 ##
-## Stops at the first error rather than pressing on: a copy that continues
-## past a failure hands back a directory that LOOKS copied, and a partial tree
-## with a loud error beats a partial tree with a green tick.
+## Stops at the first error rather than pressing on: a copy that continues past
+## a failure hands back a directory that LOOKS copied, and a partial tree with
+## a loud error beats a partial tree with a green tick.
 func _copy_directory(src: String, dest: String) -> int:
 	var err := DirAccess.make_dir_recursive_absolute(dest)
 	if err != OK:
@@ -1005,9 +1151,9 @@ func _copy_directory(src: String, dest: String) -> int:
 ## Permanent recursive removal -- ONLY the tail end of a cross-filesystem cut,
 ## where the copy has already landed and the source is now the duplicate. The
 ## Delete verb never comes here: it goes to the trash or it reports, because
-## "reversible" is the property that makes delete offerable on a machine
-## where a thumb can slip. Links are removed AS links (remove on the link
-## name), never followed into.
+## "reversible" is the property that makes delete offerable on a machine where
+## a thumb can slip. Links are removed AS links (remove on the link name),
+## never followed into.
 func _remove_recursive(path: String) -> int:
 	if _is_symlink(path) or FileAccess.file_exists(path):
 		return DirAccess.remove_absolute(path)
@@ -1037,11 +1183,13 @@ func _remove_recursive(path: String) -> int:
 # Naming things: rename, and new folder
 # ---------------------------------------------------------------------------
 
-## The wifi screen's keyboard pattern, with the entry prefilled: renaming is
-## an edit, and starting from an empty field would make every rename a full
-## retype of the part being kept.
+## The wifi screen's keyboard pattern, with the entry prefilled: renaming is an
+## edit, and starting from an empty field would make every rename a full retype
+## of the part being kept.
 func _open_rename() -> void:
-	var target_name := str(_menu_target.get("name", ""))
+	if _menu_targets.size() != 1:
+		return
+	var target_name := str(_menu_targets[0].get("name", ""))
 	if target_name.is_empty():
 		return
 	_open_keyboard("rename", "Rename %s" % target_name, target_name)
@@ -1052,7 +1200,7 @@ func _open_rename() -> void:
 ## wanted, and clearing a 5x10 grid one backspace at a time from a sofa costs
 ## more than typing the name did.
 func _open_new_folder() -> void:
-	_open_keyboard("newfolder", "New folder in %s" % _current_path.get_file(), "")
+	_open_keyboard("newfolder", "New folder in %s" % _pane().path.get_file(), "")
 
 
 ## One keyboard, one slot, one purpose at a time. `_keyboard_purpose` is what
@@ -1071,8 +1219,6 @@ func _open_keyboard(purpose: String, title: String, initial: String) -> void:
 	_keyboard.initial_text = initial
 	_keyboard.submitted.connect(_on_name_submitted)
 	_keyboard.cancelled.connect(_on_name_cancelled)
-	# A child of this screen, wifi_screen's reason: closing the files screen
-	# can then never leave a keyboard orphaned over the rail.
 	add_child(_keyboard)
 	set_process_unhandled_input(false)
 
@@ -1086,12 +1232,12 @@ func _close_keyboard() -> void:
 	remove_child(keyboard)
 	keyboard.queue_free()
 	set_process_unhandled_input(true)
-	_focus_row_named(_return_focus_name)
+	_pane().grab_pane_focus(_return_focus_name)
 
 
 func _on_name_submitted(text: String) -> void:
-	var purpose := _keyboard_purpose
 	# Read BEFORE the close, which clears it.
+	var purpose := _keyboard_purpose
 	_close_keyboard()
 	match purpose:
 		"rename":
@@ -1135,10 +1281,11 @@ func _make_folder(text: String) -> void:
 	var name := _clean_name(text)
 	if name.is_empty():
 		return
-	if _current_path.is_empty():
+	var pane := _pane()
+	if pane.path.is_empty():
 		return
 
-	var path := _current_path.path_join(name)
+	var path := pane.path.path_join(name)
 	if _exists(path):
 		_say("Something called %s is already here" % name, true)
 		return
@@ -1151,24 +1298,23 @@ func _make_folder(text: String) -> void:
 
 	_say("Made %s" % name)
 	ShellLog.info("files: created folder %s" % path)
-	_return_focus_name = name
-	_refresh_listing(name)
+	_refresh_panes_showing(pane.path, name)
 
 
 func _rename_to(text: String) -> void:
-	var old_path := str(_menu_target.get("path", ""))
-	var old_name := str(_menu_target.get("name", ""))
+	if _menu_targets.size() != 1:
+		return
+	var old_path := str(_menu_targets[0].get("path", ""))
+	var old_name := str(_menu_targets[0].get("name", ""))
 	var new_name := _clean_name(text)
 
-	if new_name.is_empty():
-		return
-	if new_name == old_name:
+	if new_name.is_empty() or new_name == old_name:
 		return
 
 	var new_path := old_path.get_base_dir().path_join(new_name)
 	if _exists(new_path):
-		# Same rule as paste: never overwrite. rename_absolute would clobber
-		# an existing file without a murmur.
+		# Same rule as paste: never overwrite. rename_absolute would clobber an
+		# existing file without a murmur.
 		_say("Something called %s is already here" % new_name, true)
 		return
 
@@ -1180,13 +1326,14 @@ func _rename_to(text: String) -> void:
 		return
 
 	# The clipboard may name the path that just stopped existing; follow it.
-	if str(_clipboard.get("path", "")) == old_path:
-		_clipboard["path"] = new_path
+	var armed: Array = _clipboard.get("paths", [])
+	for index in armed.size():
+		if str(armed[index]) == old_path:
+			armed[index] = new_path
 
 	_say("Renamed %s to %s" % [old_name, new_name])
 	ShellLog.info("files: renamed %s to %s" % [old_path, new_path])
-	_return_focus_name = new_name
-	_refresh_listing(new_name)
+	_refresh_panes_showing(old_path.get_base_dir(), new_name)
 
 
 # ---------------------------------------------------------------------------
@@ -1195,30 +1342,81 @@ func _rename_to(text: String) -> void:
 
 ## OS.move_to_trash, and NOTHING ELSE on failure. The trash is the honest
 ## reversible delete -- freedesktop trash, recoverable from any desktop that
-## mounts the drive -- and a "helpful" fallback to permanent deletion would
-## mean the exact same button press destroys data or does not depending on
-## conditions the person cannot see. If the trash refuses, the file stays and
-## the screen says so.
-func _delete_target() -> void:
-	var path := str(_menu_target.get("path", ""))
-	var target_name := str(_menu_target.get("name", ""))
-	if path.is_empty():
+## mounts the drive -- and a "helpful" fallback to permanent deletion would mean
+## the exact same button press destroys data or does not depending on conditions
+## the person cannot see. If the trash refuses, the file stays and the screen
+## says so.
+##
+## Each item independently, for _paste_into's reason: three of four trashed is
+## three files gone and one still there, which is a true and useful outcome.
+func _delete_targets() -> void:
+	if _menu_targets.is_empty():
 		return
 
-	var err := OS.move_to_trash(path)
-	if err != OK:
-		_say("Could not move %s to the wastebasket (%s)" % [target_name, error_string(err)], true)
-		ShellLog.error("files: trash of %s failed (%s)" % [path, error_string(err)])
+	var done := 0
+	var first_error := ""
+	var where := ""
+	for entry in _menu_targets:
+		var path := str(entry.get("path", ""))
+		var target_name := str(entry.get("name", ""))
+		if path.is_empty():
+			continue
+		if where.is_empty():
+			where = path.get_base_dir()
+
+		var err := OS.move_to_trash(path)
+		if err != OK:
+			ShellLog.error("files: trash of %s failed (%s)" % [path, error_string(err)])
+			if first_error.is_empty():
+				first_error = "Could not move %s to the wastebasket (%s)" \
+					% [target_name, error_string(err)]
+			continue
+
+		done += 1
+		ShellLog.info("files: trashed %s" % path)
+		# A clipboard naming a trashed path would paste an error later; disarm
+		# it now, while the connection between the two is still on screen.
+		var armed: Array = _clipboard.get("paths", [])
+		if armed.has(path):
+			_clipboard = {}
+
+	if not first_error.is_empty():
+		_say(first_error, true)
+	elif done == 1:
+		_say("Moved %s to the wastebasket" % str(_menu_targets[0].get("name", "")))
+	else:
+		_say("Moved %d items to the wastebasket" % done)
+
+	_refresh_panes_showing(where, "")
+
+
+# ---------------------------------------------------------------------------
+# Properties
+# ---------------------------------------------------------------------------
+
+func _open_properties() -> void:
+	if _menu_targets.size() != 1 or _properties != null:
 		return
+	_properties = FileProperties.new()
+	_properties.entry = _menu_targets[0]
+	_properties.closed.connect(_on_properties_closed, CONNECT_ONE_SHOT)
+	add_child(_properties)
+	set_process_unhandled_input(false)
 
-	# A clipboard naming a trashed path would paste an error later; disarm it
-	# now, while the connection between the two is still on screen.
-	if str(_clipboard.get("path", "")) == path:
-		_clipboard = {}
 
-	_say("Moved %s to the wastebasket" % target_name)
-	ShellLog.info("files: trashed %s" % path)
-	_refresh_listing()
+func _on_properties_closed() -> void:
+	_close_properties.call_deferred()
+
+
+func _close_properties() -> void:
+	if _properties == null:
+		return
+	var panel := _properties
+	_properties = null
+	remove_child(panel)
+	panel.queue_free()
+	set_process_unhandled_input(true)
+	_pane().grab_pane_focus(_return_focus_name)
 
 
 # ---------------------------------------------------------------------------
@@ -1229,35 +1427,61 @@ func _delete_target() -> void:
 ## needs root, the shell runs as player, and every other privileged thing this
 ## appliance does goes through a request file that a root service consumes --
 ## see media.gd and /usr/lib/marwanos/usbmount. So this writes and waits.
-##
-## The clipboard is disarmed first if it named anything on the drive. A paste
-## after the drive is gone would fail with a message about a missing file,
-## which describes the symptom rather than the thing the person just did.
-func _eject_target() -> void:
-	var path := str(_menu_target.get("path", ""))
-	var target_name := str(_menu_target.get("name", ""))
+func _eject_place() -> void:
+	var path := str(_menu_place.get("path", ""))
+	var place_name := str(_menu_place.get("name", ""))
 	if path.is_empty():
 		return
 
-	var armed := str(_clipboard.get("path", ""))
-	if armed == path or armed.begins_with(path + "/"):
-		_clipboard = {}
+	# A pane still inside the drive would be showing a listing of a filesystem
+	# that is about to go. Walk both of them home first, so the unmount is not
+	# refused by the shell's own open directory handles.
+	for pane in _panes:
+		if pane.path == path or pane.path.begins_with(path + "/"):
+			_send_home(pane)
+
+	var armed: Array = _clipboard.get("paths", [])
+	for source in armed:
+		if str(source).begins_with(path + "/"):
+			_clipboard = {}
+			break
 
 	Media.request_eject(path)
 	# Said now rather than when the state file changes, for the store page's
 	# reason: the request is consumed within half a second, and a screen that
 	# does not change for two seconds is a screen that did not hear the press.
 	# The outcome arrives on _on_media_state_changed and overwrites this.
-	_say("Finishing writes to %s" % target_name)
+	_say("Finishing writes to %s" % place_name)
 
 
 # ---------------------------------------------------------------------------
-# The status line
+# Shared
 # ---------------------------------------------------------------------------
 
-## Every outcome, on screen and in the journal, always together: the person
-## on the couch reads the line, and the person on the other end of ssh reads
-## the journal, and neither should ever know more than the other.
+## Re-list every pane that is looking at a directory an operation just changed.
+##
+## BOTH PANES, and that is the whole reason this is a function. In a split view
+## the destination of a paste is very often the folder the OTHER pane is
+## showing -- that is what split view is for -- and a pane that did not redraw
+## would be a directory listing that is quietly wrong about what is in it.
+func _refresh_panes_showing(dir_path: String, focus_name: String) -> void:
+	if dir_path.is_empty():
+		_refresh_chrome()
+		return
+	for pane in _panes:
+		if pane.path != dir_path:
+			continue
+		# The cursor is only aimed in the pane the person is in. The other one
+		# redraws in place and keeps its own cursor, which is what makes a
+		# paste into the far side of a split view not steal the selection you
+		# were building on this side.
+		pane.refresh(focus_name if pane == _pane() else "")
+	_refresh_chrome()
+
+
+## Every outcome, on screen and in the journal, always together: the person on
+## the couch reads the line, and the person on the other end of ssh reads the
+## journal, and neither should ever know more than the other.
 func _say(text: String, alert: bool = false) -> void:
 	if _status != null:
 		_status.text = text
