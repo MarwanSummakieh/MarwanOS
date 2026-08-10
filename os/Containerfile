@@ -671,6 +671,8 @@ RUN set -euxo pipefail; \
     chmod 0644 /usr/lib/systemd/system/marwanos-storeart.service; \
     chmod 0644 /usr/lib/systemd/system/marwanos-storeart.timer; \
     chmod 0644 /usr/lib/systemd/system/sshd.service.d/50-marwanos-persist.conf; \
+    chmod 0644 /usr/lib/systemd/system/marwanos-flightrec.service; \
+    chmod 0755 /usr/lib/marwanos/flightrec; \
     chmod 0644 "/usr/lib/systemd/system/marwanos-flatpak-install@.service"; \
     chmod 0755 /usr/lib/marwanos/session/marwanos-session; \
     chmod 0755 /usr/lib/marwanos/display/panel-policy; \
@@ -749,6 +751,11 @@ RUN set -euxo pipefail; \
     mkdir -p /usr/lib/systemd/system/timers.target.wants; \
     ln -sf ../marwanos-storeart.timer \
         /usr/lib/systemd/system/timers.target.wants/marwanos-storeart.timer; \
+    : "The flight recorder -- diagnostics into ~player/Downloads, because the"; \
+    : "2026-08-10 sshd lockout proved the journal is unreachable exactly when"; \
+    : "it matters most. See the script's header."; \
+    ln -sf ../marwanos-flightrec.service \
+        /usr/lib/systemd/system/multi-user.target.wants/marwanos-flightrec.service; \
     systemctl --no-reload mask getty@tty1.service autovt@tty1.service \
                                serial-getty@ttyS0.service; \
     ln -sf /dev/null /usr/lib/systemd/user/xdg-desktop-portal-gtk.service; \
@@ -866,6 +873,8 @@ RUN set -euxo pipefail; \
     test -f /usr/lib/systemd/system/sshd.service; \
     test -L /usr/lib/systemd/system/multi-user.target.wants/sshd.service; \
     test -s /usr/lib/systemd/system/sshd.service.d/50-marwanos-persist.conf; \
+    test -x /usr/lib/marwanos/flightrec; \
+    test -L /usr/lib/systemd/system/multi-user.target.wants/marwanos-flightrec.service; \
     : "xdotool is how pad presses reach applications with no gamepad support"; \
     : "of their own (the pad-keys bridge); without it any app the bridge"; \
     : "drives would launch fine and then ignore every button on the pad."; \

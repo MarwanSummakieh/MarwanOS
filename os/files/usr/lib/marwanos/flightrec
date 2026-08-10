@@ -1,0 +1,74 @@
+#!/usr/bin/env bash
+#
+# The flight recorder: what the machine knew about its own doors, written
+# where a person with no terminal can reach it.
+#
+# WHY THIS EXISTS. On 2026-08-10 sshd stopped listening across two image
+# updates while the same image's sshd ran cleanly in a container -- a
+# machine-local failure on a machine whose only diagnostic surface (the
+# journal) is only reachable THROUGH the thing that failed. Every theory
+# needed one look at `systemctl status sshd` and nobody could take it. This
+# closes that loop without the network: every boot, the state of the doors
+# and the tail of their journals lands in ~player/Downloads as a plain text
+# file, which the Files screen can copy onto a USB stick, which any other
+# computer can read. The escape hatch for the escape hatch.
+#
+# APPEND-ONLY PER BOOT, ONE FILE, BOUNDED. The newest report is prepended so
+# the file reads newest-first the way a person opens it; older reports fall
+# off past ~200 KB. Owned by player so the Files screen's copy can read it.
+#
+# This is diagnostic exhaust, not a seam: nothing reads this file
+# programmatically, and marwand replaces it with real remote observability in
+# Phase 1.
+set -uo pipefail
+
+TAG=marwanos-flightrec
+OUT_DIR=/var/home/player/Downloads
+OUT="$OUT_DIR/marwanos-diagnostics.txt"
+KEEP_BYTES=200000
+
+info() { printf '<6>%s: %s\n' "$TAG" "$*"; }
+
+install -d -o player -g player "$OUT_DIR" 2>/dev/null || true
+
+report="$(
+    echo "==================================================================="
+    echo "MarwanOS flight record  $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    grep MARWANOS_VERSION /usr/share/marwanos/build-info 2>/dev/null
+    echo
+    echo "--- sshd unit, this boot ---"
+    systemctl status sshd --no-pager 2>&1 | head -12
+    systemctl is-enabled sshd 2>&1 | head -1
+    echo
+    echo "--- machine-local ssh overrides in /etc ---"
+    # stat/find rather than ls-pipelines, and not only for shellcheck: a MASK
+    # is a symlink to /dev/null, and `stat -c` prints the target where ls
+    # would need a human to notice the arrow.
+    stat -c '%N' /etc/systemd/system/sshd.service /etc/systemd/system/sshd.socket 2>&1 | head -4
+    find /etc/systemd/system/multi-user.target.wants /etc/systemd/system/sockets.target.wants \
+        -iname '*ssh*' 2>/dev/null
+    echo
+    echo "--- firewall ---"
+    systemctl is-active firewalld 2>&1
+    firewall-cmd --list-all 2>/dev/null | head -12
+    echo
+    echo "--- listeners on 22 ---"
+    ss -tlnp 2>/dev/null | head -8
+    echo
+    echo "--- sshd journal, this boot ---"
+    journalctl -b -u sshd -u sshd.socket --no-pager 2>/dev/null | tail -15
+    echo
+    echo "--- sshd journal, previous boot ---"
+    journalctl -b -1 -u sshd -u sshd.socket --no-pager 2>/dev/null | tail -15
+    echo
+    echo "--- selinux denials mentioning ssh, this and previous boot ---"
+    journalctl -b --no-pager 2>/dev/null | grep -i 'avc.*ssh' | tail -5
+    journalctl -b -1 --no-pager 2>/dev/null | grep -i 'avc.*ssh' | tail -5
+)"
+
+# Newest first, bounded, atomic, player-readable.
+{ printf '%s\n\n' "$report"; head -c "$KEEP_BYTES" "$OUT" 2>/dev/null; } > "$OUT.tmp"
+chown player:player "$OUT.tmp" 2>/dev/null || true
+chmod 0644 "$OUT.tmp"
+mv -f "$OUT.tmp" "$OUT"
+info "flight record written to $OUT"
