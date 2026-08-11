@@ -231,16 +231,11 @@ func _rebuild() -> void:
 		restored.grab_focus()
 
 
+## The shared one-axis table -- see TvTheme.wire_column. Kept as a named
+## function because this screen rebuilds its list on every scan and calls it
+## from more than one place.
 func _wire_focus_neighbours() -> void:
-	var count := _rows.size()
-	for index in count:
-		var row: Control = _rows[index]
-		var up := index - 1 if index > 0 else index
-		var down := index + 1 if index + 1 < count else index
-		row.focus_neighbor_top = row.get_path_to(_rows[up])
-		row.focus_neighbor_bottom = row.get_path_to(_rows[down])
-		row.focus_neighbor_left = row.get_path_to(row)
-		row.focus_neighbor_right = row.get_path_to(row)
+	TvTheme.wire_column(_rows)
 
 
 # ---------------------------------------------------------------------------

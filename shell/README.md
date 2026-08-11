@@ -33,7 +33,8 @@ shell/
     launcher.gd          THE LAUNCH SEAM                 (autoload Launcher)
     launch_placeholder.gd  what "launch" shows in Phase 0
     settings.gd          THE SETTINGS SEAM               (autoload Settings)
-    settings_screen.gd   the settings page (read-only except Wi-Fi)
+    settings_screen.gd   the settings page: one row per thing you can DO
+    info_screen.gd       what the machine can say about itself, all read-only
     settings_row.gd      one row on it
     action_row.gd        a row that does something rather than answering
     wifi.gd              THE WIFI SEAM: the only one that also WRITES
@@ -59,7 +60,8 @@ shell/
     file_open.gd         what opens what: viewer, the browser, or a sentence
     image_viewer.gd      a picture fullscreen, folder under left/right
     file_properties.gd   type, size, date, permissions, location
-    file_menu.gd         the row list both menus are drawn with
+    list_menu.gd         THE options menu -- one titled panel of rows, used for
+                         a rail card, a store card and a file alike
     media.gd             THE MEDIA SEAM: eject, and only eject
                                                         (autoload Media)
     glyphs.gd            the bar's icons, drawn from the icon font

@@ -2,15 +2,22 @@ extends Control
 
 ## The settings page -- the first screen in the shell that is not the home rail.
 ##
-## READ-ONLY ON PURPOSE. There is no marwand yet, and the shell is a renderer:
-## a row that could CHANGE something would need somewhere to send the change,
-## and building a second, temporary path for that -- the shell shelling out, or
-## writing config -- is exactly the growth launcher.gd's header says belongs in
-## the daemon. So Phase 0's settings screen answers questions instead of taking
-## orders, and the questions are the ones this project has so far had to answer
-## with journalctl: what image is this, which adapter drew it, what mode, which
-## display server, is the pad claimed. On an appliance with no terminal, a
-## screen that says those five things is a diagnostic surface, not filler.
+## EVERY ROW HERE DOES SOMETHING, and that is new. This screen began read-only
+## (Phase 0 had no marwand to send a change to, so it answered questions
+## instead) and then grew rows that act, one at a time, each for a specific bad
+## afternoon: Display and Steam for the flicker, Wi-Fi for a machine that could
+## not join a network from the couch, Updates, and the devmode Terminal. By the
+## fourteenth row the screen was two screens wearing one coat -- nine facts to
+## scroll past to reach the five controls -- and the facts were where the
+## duplicates were hiding: three rows about the picture above a Display row that
+## changes it, three about the network above a Wi-Fi row that joins one.
+##
+## So the facts left, whole, for info_screen.gd, which merged them on the way
+## (see its header). What is left is one row per thing a person can DO, plus
+## Info at the top as the way back to what the machine knows about itself: five
+## rows on a shipped machine and six with the devmode Terminal, where there were
+## fourteen. Nothing scrolls on any panel this appliance has been run on, and
+## the A hint means one thing again.
 ##
 ## NAVIGATION IS THE RAIL'S ARGUMENT ROTATED 90 DEGREES. One axis -- up and
 ## down are the only moves, the ends are hard stops, left and right are pointed
@@ -24,21 +31,19 @@ extends Control
 signal closed()
 
 const TvTheme = preload("res://src/tv_theme.gd")
-const SettingsRow = preload("res://src/settings_row.gd")
 const ActionRow = preload("res://src/action_row.gd")
 const WifiScreen = preload("res://src/wifi_screen.gd")
 const UpdateScreen = preload("res://src/update_screen.gd")
+const InfoScreen = preload("res://src/info_screen.gd")
 const Catalogue = preload("res://src/catalogue.gd")
 
 var _rows: Array = []
 var _scroll: ScrollContainer = null
-var _controller_row: SettingsRow = null
-var _network_row: SettingsRow = null
-var _connection_row: SettingsRow = null
-var _address_row: SettingsRow = null
 ## Typed as the SUBCLASS, not as SettingsRow: `activated` is declared on
 ## ActionRow, and GDScript resolves signal access against the static type --
 ## a SettingsRow-typed variable would fail to parse on `.activated.connect`.
+var _info_row: ActionRow = null
+var _info_screen: InfoScreen = null
 var _display_row: ActionRow = null
 var _window_row: ActionRow = null
 var _wifi_row: ActionRow = null
@@ -109,37 +114,21 @@ func _ready() -> void:
 	list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_scroll.add_child(list)
 
-	_add_row(list, "System", _system_value())
-	_add_row(list, "Engine", _engine_value())
-	# "Display server", not "Display", and the rename is the price of the row
-	# below. This one reports DisplayServer.get_name() and a window size -- it is
-	# about which display SERVER drew the shell, which is a different question
-	# from the one an owner with a flickering panel is asking. Two rows both
-	# called Display, one answering "X11, 3440 x 1440" and one taking the button
-	# press that changes the picture, is the kind of screen somebody presses the
-	# wrong thing on. The neighbouring Surface row already carries the geometry.
-	_add_row(list, "Display server", _display_value())
-	_add_row(list, "Surface", _surface_value())
-	_add_row(list, "Renderer", RenderingServer.get_video_adapter_name())
-	_controller_row = _add_row(list, "Controller", _controller_value())
-	# The network rows answer from the status seam, live -- the same files the
-	# top bar's wifi glyph renders, at more length. Read-only like every row:
-	# JOINING a network needs a keyboard UI and somewhere to send credentials,
-	# and both are marwand's (the per-stick NetworkManager profile is the
-	# Phase 0 mechanism -- see docs/handoff.md). The Wi-Fi row says so instead
-	# of pretending.
-	_network_row = _add_row(list, "Network", _network_value())
-	_connection_row = _add_row(list, "Connection", _connection_value())
-	# The one row that exists because of a specific afternoon: the bench came
-	# up, joined nothing, and there was no way to ask it where it was -- so
-	# finding it meant sweeping a /24 from another machine. A box with no
-	# terminal has to be able to say its own address.
-	_address_row = _add_row(list, "Address", _address_value())
-	# THE ONE ROW THAT DOES SOMETHING. Every other row on this screen answers a
-	# question; this one opens the Wi-Fi screen, because an appliance that
-	# cannot join a network cannot be fixed from the couch at all. See ADR
-	# 0006's fifth amendment for why that exception was made and where the
-	# line now sits.
+	# FIRST, AND IT IS THE ONLY ROW HERE THAT CHANGES NOTHING. Everything this
+	# machine can say about itself -- the image, the renderer, the window, the
+	# pad, the network, the address -- is one press behind this row instead of
+	# nine rows in front of the controls. See info_screen.gd for what merged on
+	# the way there.
+	#
+	# Top rather than bottom because it is the safe row: the screen opens with
+	# focus on it, so a first press from a cold start reads the machine rather
+	# than cycling the display profile of a television somebody was happy with.
+	_info_row = ActionRow.new()
+	_info_row.setup("Info", "About this machine -- press A")
+	_info_row.activated.connect(_on_info_row_pressed)
+	list.add_child(_info_row)
+	_rows.append(_info_row)
+
 	# THE ROW THAT EXISTS BECAUSE OF A HEADACHE. On 2026-08-10 the owner said
 	# the screen was "so flickery it's giving me a headache", and the bench was
 	# unreachable over SSH -- so the one person who could see the problem was
@@ -231,8 +220,10 @@ func _ready() -> void:
 		var first: Control = _rows[0]
 		first.grab_focus()
 
-	PlayerOne.player_one_present.connect(_on_player_one_present)
-	PlayerOne.player_one_absent.connect(_on_player_one_absent)
+	# NO PlayerOne CONNECTS HERE ANY MORE: the Controller row went to the Info
+	# page and took its own subscriptions with it. The network seams stay,
+	# because the Wi-Fi row's value is a live description of the network and not
+	# just a label on a door.
 	SystemStatus.network_changed.connect(_on_network_changed)
 	SystemStatus.network_info_changed.connect(_on_network_info_changed)
 	# The Wi-Fi row's value tracks the seam too, so joining a network updates
@@ -277,42 +268,25 @@ func _on_row_focused(row: Control) -> void:
 	_scroll.ensure_control_visible.call_deferred(row)
 
 
-func _add_row(list: Control, name_text: String, value_text: String) -> SettingsRow:
-	var row := SettingsRow.new()
-	row.setup(name_text, value_text)
-	list.add_child(row)
-	_rows.append(row)
-	return row
-
-
-## The vertical mirror of the rail's table: hard stops at both ends, and the
-## perpendicular axis pointed at self so focus cannot leave the list sideways.
+## The shared one-axis table (TvTheme.wire_column), plus the scroll-follow
+## connect that is this screen's own. Kept as a named function rather than
+## inlined at the call site because the focus_entered connect has to happen for
+## every row in one place -- the rows are built in several spots and a per-site
+## connect would be several chances to add a row that scrolls off the bottom.
 func _wire_focus_neighbours() -> void:
-	var count := _rows.size()
-	for index in count:
-		var row: Control = _rows[index]
-		# Every row, wired in the one place that already walks the whole list --
-		# the rows are built in three different spots and a per-site connect
-		# would be three chances to add a row that scrolls off the bottom.
+	TvTheme.wire_column(_rows)
+	for row in _rows:
 		row.focus_entered.connect(_on_row_focused.bind(row))
-		var up := index - 1 if index > 0 else index
-		var down := index + 1 if index + 1 < count else index
-
-		row.focus_neighbor_top = row.get_path_to(_rows[up])
-		row.focus_neighbor_bottom = row.get_path_to(_rows[down])
-		row.focus_neighbor_left = row.get_path_to(row)
-		row.focus_neighbor_right = row.get_path_to(row)
 
 
 func _build_hints() -> Control:
 	var hints := HBoxContainer.new()
 	hints.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	hints.add_theme_constant_override("separation", TvTheme.HINT_GAP)
-	# A is here now that some rows do something. "Select" rather than "Open",
-	# because A no longer means one thing on this screen: Wi-Fi and Updates open
-	# a page, Display steps to the next value in place, and the rest still log
-	# "read-only in Phase 0". A hint that promised "Open" would be wrong on the
-	# one row somebody presses hardest.
+	# "Select", still, and now it is true of every row rather than most of them:
+	# Info, Wi-Fi and Updates open a page, Display and Steam step to the next
+	# value in place, Terminal launches. Nothing here answers A with a log line
+	# saying it is read-only any more, because nothing here is.
 	hints.add_child(TvTheme.hint("A", "Select"))
 	hints.add_child(TvTheme.hint("B", "Back"))
 	return hints
@@ -321,106 +295,13 @@ func _build_hints() -> Control:
 # ---------------------------------------------------------------------------
 # Values
 # ---------------------------------------------------------------------------
-
-## PRETTY_NAME from os-release, which on the appliance is the image name and
-## version the build stamped -- the same string that identifies a stick in the
-## handoff notes. On a desk run it truthfully names whatever the container is.
-func _system_value() -> String:
-	var file := FileAccess.open("/etc/os-release", FileAccess.READ)
-	if file == null:
-		return "Unknown"
-	while not file.eof_reached():
-		var line := file.get_line()
-		if line.begins_with("PRETTY_NAME="):
-			return line.trim_prefix("PRETTY_NAME=").trim_prefix("\"").trim_suffix("\"")
-	return "Unknown"
-
-
-func _engine_value() -> String:
-	var info := Engine.get_version_info()
-	return "Godot %s.%s.%s" % [info.get("major", 0), info.get("minor", 0), info.get("patch", 0)]
-
-
-## Server name and window size, the two things Kiosk logs that a person might
-## want without ssh. get_name() says X11 under gamescope's XWayland -- see the
-## README's display-driver section for why that is not evidence about the
-## compositor.
-func _display_value() -> String:
-	var window := get_window()
-	if window == null:
-		return DisplayServer.get_name()
-	return "%s, %d x %d" % [DisplayServer.get_name(), window.size.x, window.size.y]
-
-
-## The compositor verdict, phrased for a phone photo. SSH to the bench has
-## been down for days and the journal is unreachable without it, so the one
-## diagnostic that keeps mattering -- does the shell's window match a real
-## screen, or did the compositor hand it something else -- is rendered where
-## a camera can reach it. This is kiosk.gd's spanning check re-said as a
-## settings value; the journal still carries the full geometry.
-func _surface_value() -> String:
-	var window_size := DisplayServer.window_get_size()
-	var count := DisplayServer.get_screen_count()
-	for index in count:
-		if DisplayServer.screen_get_size(index) == window_size:
-			return "matches screen %d of %d" % [index, count]
-	if count == 0:
-		return "no screens reported"
-	var first := DisplayServer.screen_get_size(0)
-	return "MISMATCH: window %d x %d on screen %d x %d" \
-		% [window_size.x, window_size.y, first.x, first.y]
-
-
-func _controller_value() -> String:
-	if PlayerOne.has_controller():
-		return PlayerOne.pad_name
-	return "Not connected"
-
-
-func _network_value() -> String:
-	match SystemStatus.network:
-		"online":
-			return "Online -- Flathub answers"
-		"offline":
-			return "Offline"
-		_:
-			return "Unknown -- the system has not said"
-
-
-## netcheck's one-line link description, made readable: "wifi HomeNet" becomes
-## "Wi-Fi -- HomeNet". The raw first word decides the family; everything after
-## it is the connection's name and passes through untouched.
-## The address netcheck reports for whichever device carries the link, or a
-## plain statement that there is none -- which on a fresh install is the true
-## answer and the one that tells someone to go and join a network.
-func _address_value() -> String:
-	var info := SystemStatus.network_info
-	if not info.contains("\t"):
-		return "Not connected"
-	var address := info.substr(info.find("\t") + 1).strip_edges()
-	return address if not address.is_empty() else "No address"
-
-
-func _connection_value() -> String:
-	var info := SystemStatus.network_info
-	# The address rides after a tab; the connection name is everything before.
-	if info.contains("\t"):
-		info = info.get_slice("\t", 0)
-	if info.is_empty():
-		return "Unknown"
-	var kind := info.get_slice(" ", 0)
-	var name := info.substr(kind.length()).strip_edges()
-	match kind:
-		"wifi":
-			return "Wi-Fi -- %s" % name if not name.is_empty() else "Wi-Fi"
-		"ethernet":
-			return "Ethernet -- %s" % name if not name.is_empty() else "Ethernet"
-		"link":
-			return "Link on %s" % name if not name.is_empty() else "Link up"
-		"none":
-			return "No link"
-		_:
-			return info
+#
+# THE READ-ONLY ONES ARE NOT HERE ANY MORE. System, Engine, Display server,
+# Surface, Renderer, Controller, Network, Connection and Address moved to
+# info_screen.gd whole -- and Surface merged into Display server and Connection
+# into Network on the way, which is why looking for those two by name here or
+# there finds one row rather than two. Every value below belongs to a row that
+# acts.
 
 
 ## What a wifi SETTINGS row can honestly say in Phase 0: the network's name
@@ -536,6 +417,38 @@ func _on_wifi_row_pressed() -> void:
 	ShellLog.info("wifi screen opened from settings")
 
 
+## Opens the Info page as a child of this one -- the Wi-Fi and Updates screens'
+## arrangement exactly, for their reason: it is a page WITHIN settings, it
+## returns here when it closes, and the home rail underneath must keep seeing
+## exactly one surface come and go.
+func _on_info_row_pressed() -> void:
+	if _info_screen != null:
+		return
+	_info_screen = InfoScreen.new()
+	_info_screen.closed.connect(_on_info_screen_closed)
+	add_child(_info_screen)
+	# Deaf while it is up, so one B press does not close both screens.
+	set_process_unhandled_input(false)
+	ShellLog.info("info screen opened from settings")
+
+
+func _on_info_screen_closed() -> void:
+	_close_info_screen.call_deferred()
+
+
+func _close_info_screen() -> void:
+	if _info_screen == null:
+		return
+	var screen := _info_screen
+	_info_screen = null
+	remove_child(screen)
+	screen.queue_free()
+	set_process_unhandled_input(true)
+	if _info_row != null:
+		_info_row.grab_focus()
+	ShellLog.info("info screen closed")
+
+
 func _updates_value() -> String:
 	match Updates.state:
 		"available":
@@ -599,7 +512,7 @@ func _on_launch_finished(_entry: Dictionary) -> void:
 	# screen's guard said the other way round. A launch cannot be started from
 	# under one today -- the row is unreachable while a child screen holds focus
 	# -- so this is a guard against a future arrangement rather than a live case.
-	if _wifi_screen == null and _update_screen == null:
+	if _wifi_screen == null and _update_screen == null and _info_screen == null:
 		set_process_unhandled_input(true)
 	# Nothing is focused after a hide, and a settings screen with no focus owner
 	# is a settings screen the pad cannot move -- the rail's _ensure_focus
@@ -649,13 +562,11 @@ func _close_wifi_screen() -> void:
 	ShellLog.info("wifi screen closed")
 
 
+## ONE ROW LEFT TO REFRESH, where there were four. The Network, Connection and
+## Address rows now live on the Info page and track the same seams from there;
+## what remains here is the Wi-Fi row, whose value doubles as its affordance and
+## therefore has to follow the network as closely as it ever did.
 func _refresh_network_rows() -> void:
-	if _network_row != null:
-		_network_row.set_value(_network_value())
-	if _connection_row != null:
-		_connection_row.set_value(_connection_value())
-	if _address_row != null:
-		_address_row.set_value(_address_value())
 	if _wifi_row != null:
 		_wifi_row.set_value(_wifi_value())
 
@@ -670,19 +581,6 @@ func _on_network_info_changed(_info: String) -> void:
 
 func _on_wifi_state_changed(_state: String, _detail: String) -> void:
 	_refresh_network_rows()
-
-
-func _refresh_controller() -> void:
-	if _controller_row != null:
-		_controller_row.set_value(_controller_value())
-
-
-func _on_player_one_present(_device: int, _pad_name: String) -> void:
-	_refresh_controller()
-
-
-func _on_player_one_absent() -> void:
-	_refresh_controller()
 
 
 func _unhandled_input(event: InputEvent) -> void:

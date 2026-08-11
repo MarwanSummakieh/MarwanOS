@@ -194,20 +194,12 @@ func _build() -> void:
 	column.add_child(hints)
 
 
-## The settings list's table, verbatim: one axis, hard stops, perpendicular
-## pointed at self. Vertical here where the circles were horizontal, which is
-## the one navigational consequence of the menu replacing them.
+## The shared one-axis table (TvTheme.wire_column), which this file's comment
+## already described as "the settings list's table, verbatim". Vertical here
+## where the circles were horizontal, which is the one navigational consequence
+## of the menu having replaced them.
 func _wire_focus_neighbours() -> void:
-	var count := _rows.size()
-	for index in count:
-		var row: Control = _rows[index]
-		var up := index - 1 if index > 0 else index
-		var down := index + 1 if index + 1 < count else index
-
-		row.focus_neighbor_top = row.get_path_to(_rows[up])
-		row.focus_neighbor_bottom = row.get_path_to(_rows[down])
-		row.focus_neighbor_left = row.get_path_to(row)
-		row.focus_neighbor_right = row.get_path_to(row)
+	TvTheme.wire_column(_rows)
 
 
 func _on_item_chosen(id: String) -> void:

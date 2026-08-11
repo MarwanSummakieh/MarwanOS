@@ -745,6 +745,34 @@ const HINT_SHAPES := {
 }
 
 
+## THE ONE-AXIS FOCUS TABLE, which every vertical list in this shell was
+## carrying its own byte-identical copy of.
+##
+## Up and down move, both ends are hard stops, and left and right are pointed at
+## self so Control's geometric search cannot wander sideways out of the list --
+## into the hint row, into the top bar behind a menu panel, into whatever else
+## happens to be findable. Nine files had spelled that out identically (settings,
+## info, the two menus that are now one, services, power, wifi, updates, places,
+## the app overlay), each with its own paraphrase of the same comment, and
+## service_menu's copy had got as far as calling itself "the settings list's
+## table, a fourth time".
+##
+## Rows that need a DIFFERENT table still write their own: places_panel has an
+## argument about its right edge, keyboard is a grid, details_panel is one
+## control that closes on up. Those are decisions, not copies, and this helper
+## deliberately does not try to express them.
+static func wire_column(rows: Array) -> void:
+	var count := rows.size()
+	for index in count:
+		var row: Control = rows[index]
+		var up := index - 1 if index > 0 else index
+		var down := index + 1 if index + 1 < count else index
+		row.focus_neighbor_top = row.get_path_to(rows[up])
+		row.focus_neighbor_bottom = row.get_path_to(rows[down])
+		row.focus_neighbor_left = row.get_path_to(row)
+		row.focus_neighbor_right = row.get_path_to(row)
+
+
 ## One glyph-plus-caption hint, e.g. cross + "Open". Built here rather than in
 ## each screen because the settings screen made it the first duplicated control
 ## in the project, and a third fullscreen surface copying the pattern would

@@ -67,6 +67,27 @@ func is_busy() -> bool:
 	return state == "installing" or state == "uninstalling"
 
 
+## WHAT THE OPTIONS MENU OFFERS FOR AN APPLICATION, defined once for the two
+## screens that offer it: OPTIONS on a rail card (shell_root) and Y on a store
+## page (stores_screen). It lived in card_menu.gd as a hard-coded const, which
+## is why deleting that file in favour of the shared list_menu needed somewhere
+## for it to go -- and this is the honest somewhere, beside request_uninstall,
+## which is the thing the one item actually does.
+##
+## Uninstall is still the only entry, and it is the one that cannot be done any
+## other way on a machine with no terminal. Adding a second is a line here and a
+## branch in each caller's chosen-handler.
+const OPTIONS_ITEMS := [
+	{"id": "uninstall", "label": "Uninstall", "icon": "trash"},
+]
+
+## The sentence under the rows. NAMED, not "this cannot be undone": uninstalling
+## is reversible -- the store page offers it back -- and the honest cost is the
+## download, which is what somebody on a domestic line wants warned about.
+const OPTIONS_NOTE := \
+	"Removing frees the disk space. Installing it again means downloading it again."
+
+
 func request_uninstall(app_id: String) -> void:
 	ShellLog.info("apps: uninstall requested for %s" % app_id)
 	_write_request("uninstall", app_id)

@@ -1,25 +1,28 @@
 extends Control
 
-## The options menu for a row in the file manager: what you can do to a file
-## or folder that is just sitting there.
+## THE options menu: a titled panel of rows over a dimmed screen, one axis, B
+## closes. Used for a rail card, a store card and a file, and there is no
+## fourth kind waiting to be special.
 ##
-## A SIBLING OF card_menu.gd, NOT A PARAMETER ON IT, and the precedent is
-## card_menu's own header: it and app_overlay share the row type and the
-## navigation table and nothing else, "which is why this is fifty lines rather
-## than a parameter on the other". The same fork happens here. card_menu knows
-## about applications -- its one item is Uninstall, its note prices the
-## re-download, and its chosen-branch writes through the apps seam. None of
-## that is true of a file, and threading "unless it is a file" through it
-## would cost more lines than this file is.
+## THIS FILE IS card_menu.gd AND file_menu.gd, WHICH WERE THE SAME FILE TWICE.
+## Both built the same scrim, the same CenterContainer, the same PanelContainer
+## at the same 720, the same padding, the same title label, the same row box,
+## the same optional note, the same two hints and the same focus table -- about
+## a hundred lines that differed in a log string. file_menu's own header argued
+## the fork was right ("card_menu knows about applications... threading 'unless
+## it is a file' through it would cost more lines than this file is"), and that
+## was true of the version it was looking at, because card_menu hard-coded its
+## one item and acted on it internally. The fix was not to thread a condition
+## through: it was to take card_menu's decisions OUT -- the items arrive as
+## data, the choice leaves as an id -- at which point the two files were
+## textually the same object and one of them was deleted.
 ##
-## What IS shared is the row: AppMenuRow, reused as-is, because tabs, rows,
-## cards and menu items are one family of focusable rectangles (store_tab.gd's
-## argument) and a second menu-row class would be the same rectangle twice.
-##
-## THE MENU DECIDES NOTHING. The items arrive as data and the choice leaves as
-## an id; the files screen owns the clipboard, the paths and the consequences.
-## That is what lets the same fifty lines serve "options on this file" and
-## "paste into this empty folder" without knowing the difference.
+## THE MENU DECIDES NOTHING, which is file_menu's rule and now everyone's. The
+## caller owns the items, the consequences and the wording: shell_root and
+## stores_screen pass Uninstall and price the re-download, files_screen passes
+## whatever the clipboard state allows. That is what lets one panel serve
+## "options on this application" and "paste into this empty folder" without
+## knowing the difference between them.
 
 signal closed()
 signal chosen(id: String)
@@ -29,19 +32,24 @@ const AppMenuRow = preload("res://src/app_menu_row.gd")
 
 const MENU_WIDTH := 720
 
-## card_menu's scrim, for card_menu's reason: there is nothing live underneath
-## worth keeping visible -- only the file list the person just came from.
+## Heavier than the app overlay's scrim, and for the reason card_menu gave: no
+## live application is underneath worth keeping visible -- only the rail or the
+## file list the person just came from and is about to come back to. The app
+## overlay is the one that must stay see-through, and it is a different file
+## because it is composited over a running client by gamescope.
 const SCRIM_ALPHA := 0.82
 
-## What the menu is about -- a file name, a folder name. Set before add_child.
+## What the menu is about -- an application title, a file name. Set before
+## add_child.
 var title_text: String = ""
 
-## The rows, as [{id, label, icon}] dictionaries. Set before add_child; which
-## items exist (Paste only when the clipboard is armed) is the caller's call.
+## The rows, as [{id, label, icon}] dictionaries. Set before add_child. Which
+## items exist is the caller's call: Paste only when the clipboard is armed,
+## Uninstall only for something actually installed.
 var items: Array = []
 
-## One optional sentence under the rows, same slot card_menu uses to price a
-## re-download. Empty means none.
+## One optional sentence under the rows -- the slot the card menu prices a
+## re-download in. Empty means none.
 var note_text: String = ""
 
 var _rows: Array = []
@@ -52,13 +60,13 @@ func _ready() -> void:
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
 
 	_build()
-	_wire_focus_neighbours()
+	TvTheme.wire_column(_rows)
 
 	if not _rows.is_empty():
 		var first: Control = _rows[0]
 		first.grab_focus()
 
-	ShellLog.info("file menu up for %s with %d item(s)" % [title_text, _rows.size()])
+	ShellLog.info("menu up for %s with %d item(s)" % [title_text, _rows.size()])
 
 
 func _build() -> void:
@@ -132,24 +140,11 @@ func _build() -> void:
 	column.add_child(hints)
 
 
-func _wire_focus_neighbours() -> void:
-	var count := _rows.size()
-	for index in count:
-		var row: Control = _rows[index]
-		var up := index - 1 if index > 0 else index
-		var down := index + 1 if index + 1 < count else index
-
-		row.focus_neighbor_top = row.get_path_to(_rows[up])
-		row.focus_neighbor_bottom = row.get_path_to(_rows[down])
-		row.focus_neighbor_left = row.get_path_to(row)
-		row.focus_neighbor_right = row.get_path_to(row)
-
-
 func _on_item_chosen(id: String) -> void:
-	ShellLog.info("file menu: %s chosen" % id)
-	# The choice first, the close second: the screen's handler may open the
-	# keyboard (Rename), and its close handler checks for that to decide who
-	# gets input back.
+	ShellLog.info("menu: %s chosen" % id)
+	# The choice first, the close second: the files screen's handler may open the
+	# keyboard (Rename), and its close handler checks for that to decide who gets
+	# input back.
 	chosen.emit(id)
 	closed.emit()
 

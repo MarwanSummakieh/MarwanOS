@@ -57,7 +57,7 @@ signal closed()
 const TvTheme = preload("res://src/tv_theme.gd")
 const Catalogue = preload("res://src/catalogue.gd")
 const StoreTab = preload("res://src/store_tab.gd")
-const CardMenu = preload("res://src/card_menu.gd")
+const ListMenu = preload("res://src/list_menu.gd")
 const StoreFrontTile = preload("res://src/store_front_tile.gd")
 const ActionRow = preload("res://src/action_row.gd")
 const Keyboard = preload("res://src/keyboard.gd")
@@ -286,7 +286,7 @@ var _keyboard: Keyboard = null
 
 var _page_spacer: Control = null
 
-var _card_menu: CardMenu = null
+var _card_menu: ListMenu = null
 
 
 func _ready() -> void:
@@ -2049,20 +2049,33 @@ func _open_card_menu() -> void:
 		ShellLog.info("Y on a store page whose application is not installed; nothing to offer")
 		return
 
-	_card_menu = CardMenu.new()
-	# The menu acts on the APPLICATION, so the entry it gets carries the
-	# desktop-entry id appctl matches -- not the tab's own name for itself.
-	_card_menu.entry = {
-		"id": str(_selected.get("app_id", "")),
-		"title": str(_selected.get("title", "")),
-		"state": "installed",
-	}
+	# The shared options panel (list_menu.gd), the same one the rail's OPTIONS
+	# opens, offering the same items from the same place -- Apps owns that
+	# definition so this page and the rail cannot drift into offering different
+	# things for the same application.
+	_card_menu = ListMenu.new()
+	_card_menu.title_text = str(_selected.get("title", ""))
+	_card_menu.items = Apps.OPTIONS_ITEMS
+	_card_menu.note_text = Apps.OPTIONS_NOTE
+	_card_menu.chosen.connect(_on_card_menu_chosen)
 	_card_menu.closed.connect(_on_card_menu_closed, CONNECT_ONE_SHOT)
 	# Deaf while the menu is up, for the launch case's reason: the menu is a
 	# later sibling and consumes what it handles, but this screen must not be
 	# one reparent away from B doing two things at once.
 	set_process_unhandled_input(false)
 	get_tree().root.add_child(_card_menu)
+
+
+## The menu acts on the APPLICATION, so the id it writes is the store page's
+## app_id -- the desktop-entry id appctl matches -- and not the tab's own name
+## for itself. The page's status line narrates the removal from the apps seam;
+## see _refresh_status.
+func _on_card_menu_chosen(id: String) -> void:
+	match id:
+		"uninstall":
+			Apps.request_uninstall(str(_selected.get("app_id", "")))
+		_:
+			ShellLog.error("store card menu item \"%s\" has no action" % id)
 
 
 func _on_card_menu_closed() -> void:

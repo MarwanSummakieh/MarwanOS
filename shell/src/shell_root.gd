@@ -41,7 +41,7 @@ const Catalogue = preload("res://src/catalogue.gd")
 const Tile = preload("res://src/tile.gd")
 const IconButton = preload("res://src/icon_button.gd")
 const AppOverlay = preload("res://src/app_overlay.gd")
-const CardMenu = preload("res://src/card_menu.gd")
+const ListMenu = preload("res://src/list_menu.gd")
 const DetailsPanel = preload("res://src/details_panel.gd")
 const ErrorScreen = preload("res://src/error_screen.gd")
 const MosMark = preload("res://src/mos_mark.gd")
@@ -99,7 +99,7 @@ var _app_alert_timer: Timer = null
 var _open_hint: Control = null
 var _options_hint: Control = null
 var _overlay: AppOverlay = null
-var _card_menu: CardMenu = null
+var _card_menu: ListMenu = null
 ## The details panel, and the card it was opened from. The card is kept because
 ## the panel's Play button asks that card to act (see Tile.activate) rather than
 ## reaching into the launch seam on its own.
@@ -1947,14 +1947,37 @@ func _open_card_menu() -> void:
 		ShellLog.info("OPTIONS while another install or removal is in flight; ignoring")
 		return
 
-	_card_menu = CardMenu.new()
-	_card_menu.entry = _selected_entry
+	# The shared options panel (list_menu.gd), TOLD what to offer rather than
+	# knowing: the items and the note are Apps' -- one definition serving this
+	# menu and the store page's identical one -- and the choice comes back as an
+	# id for _on_card_menu_chosen to act on.
+	_card_menu = ListMenu.new()
+	_card_menu.title_text = str(_selected_entry.get("title", ""))
+	_card_menu.items = Apps.OPTIONS_ITEMS
+	_card_menu.note_text = Apps.OPTIONS_NOTE
+	_card_menu.chosen.connect(_on_card_menu_chosen)
 	_card_menu.closed.connect(_on_card_menu_closed, CONNECT_ONE_SHOT)
 	# Focus is saved and restored the way the other surfaces do it: the rail is
 	# still in the tree underneath, so without this the card loses its ring when
 	# the menu closes.
 	_hand_screen_over()
 	get_tree().root.add_child(_card_menu)
+
+
+## The one item the menu offers today. The desktop-entry id is what appctl
+## matches against its allow-list, and it is the rail entry's own id --
+## marwanos-appscan built that record from the .desktop file's basename.
+##
+## NOTHING WAITS FOR THE REMOVAL. The request is written and returns; appctl
+## does the work, and the installed seam notices the application is gone within
+## a poll, at which point the rail rebuilds without it. Blocking here would mean
+## a menu sitting over a rail that has already changed underneath it.
+func _on_card_menu_chosen(id: String) -> void:
+	match id:
+		"uninstall":
+			Apps.request_uninstall(str(_selected_entry.get("id", "")))
+		_:
+			ShellLog.error("card menu item \"%s\" has no action" % id)
 
 
 func _on_card_menu_closed() -> void:

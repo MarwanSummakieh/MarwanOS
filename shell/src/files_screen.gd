@@ -61,7 +61,7 @@ extends Control
 signal closed()
 
 const TvTheme = preload("res://src/tv_theme.gd")
-const FileMenu = preload("res://src/file_menu.gd")
+const ListMenu = preload("res://src/list_menu.gd")
 const FilePane = preload("res://src/file_pane.gd")
 const PlacesPanel = preload("res://src/places_panel.gd")
 const FileOpen = preload("res://src/file_open.gd")
@@ -95,7 +95,7 @@ var _hints: HBoxContainer = null
 ## next opening would act on with no way to see it was armed.
 var _clipboard: Dictionary = {}
 
-var _menu: FileMenu = null
+var _menu: ListMenu = null
 var _keyboard: Keyboard = null
 var _viewer: ImageViewer = null
 var _properties: FileProperties = null
@@ -834,7 +834,7 @@ func _open_menu(items: Array, title: String, note: String) -> void:
 	if items.is_empty():
 		ShellLog.info("files: nothing to offer here")
 		return
-	_menu = FileMenu.new()
+	_menu = ListMenu.new()
 	_menu.title_text = title
 	_menu.items = items
 	_menu.note_text = note

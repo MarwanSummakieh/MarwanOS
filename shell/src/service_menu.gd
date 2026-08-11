@@ -135,22 +135,12 @@ func _build_rows() -> void:
 		_rows.append(row)
 		_ids.append(id)
 
-	_wire_focus_neighbours()
-
-
-## The settings list's table, a fourth time: one axis, hard stops at both ends,
-## left and right pointed at self so Control's geometric search cannot wander
-## out of the panel and into the bar behind it.
-func _wire_focus_neighbours() -> void:
-	var count := _rows.size()
-	for index in count:
-		var row: Control = _rows[index]
-		var up := index - 1 if index > 0 else index
-		var down := index + 1 if index + 1 < count else index
-		row.focus_neighbor_top = row.get_path_to(_rows[up])
-		row.focus_neighbor_bottom = row.get_path_to(_rows[down])
-		row.focus_neighbor_left = row.get_path_to(row)
-		row.focus_neighbor_right = row.get_path_to(row)
+	# The shared one-axis table. This file's own copy is the one that had got as
+	# far as calling itself "the settings list's table, a fourth time"; it was
+	# the ninth. What it wanted is what TvTheme.wire_column does -- hard stops at
+	# both ends, left and right pointed at self so Control's geometric search
+	# cannot wander out of the panel and into the bar behind it.
+	TvTheme.wire_column(_rows)
 
 
 ## What the row says on the right. The pending words win, because they are the
