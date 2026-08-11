@@ -18,6 +18,13 @@ extends Control
 ## axis: left and right are the only moves, the ends are hard stops, and there is
 ## nothing left to tabulate.
 ##
+## THREE ROWS, TWO OF THEM FOCUSABLE. Top is the bar (hidden until Up asks for
+## it), middle is the selected entry's title block, bottom is the rail. The
+## middle row is prose about whatever the cursor is on and never takes focus,
+## so the vertical axis is exactly two stops: Up from a card reveals the bar,
+## Down from the bar goes back to the cards, PAST the title block. Both moves
+## are explicit and consumed -- see _handle_bar_reveal and _handle_bar_return.
+##
 ## THE SELECTION IS ANCHORED, NOT THE STRIP. The selected card sits at a fixed x
 ## and the rail slides underneath it. That is the property that stops the eye
 ## re-finding the cursor after every press, and it is why _scroll_to_selected
@@ -48,6 +55,14 @@ const QuickSettings = preload("res://src/quick_settings.gd")
 ## kind of entry with a background of its own.
 const STEAM_PREFIX := "steam."
 
+## How long after Down carried focus off the bar a card refuses to open its
+## details panel -- see _on_details_requested. Comfortably past
+## FocusRepeat.INITIAL_DELAY (0.40 s), because the press this is defending
+## against is exactly the one that has been held that long; short enough that
+## a deliberate second press, aimed at a card the person can now see, still
+## opens the panel.
+const BAR_RETURN_GRACE_MSEC := 550
+
 var _hero: ColorRect = null
 ## The key-art layer and its two stacked pictures. See _build_art_layer.
 var _art_layer: Control = null
@@ -74,6 +89,10 @@ var _bar_row: Control = null
 ## seen -- see _on_apps_state_changed. Cleared the moment the person moves into
 ## the bar themselves, because then it is up for them.
 var _bar_revealed_for_alert := false
+## When the last Down carried focus off the bar and onto a card, in msec. See
+## _handle_bar_return and BAR_RETURN_GRACE_MSEC: the press that brings someone
+## back down to the rail must not also open the card's details panel.
+var _left_bar_msec := -1
 var _status: Label = null
 var _app_alert: Label = null
 var _app_alert_timer: Timer = null
@@ -707,10 +726,15 @@ func _populate() -> void:
 ## up, from any card, lands on the store icon, the PS5 shape -- survives the
 ## bar hiding (#12), but it is _handle_bar_reveal's move now rather than a row
 ## in this table: a neighbour path cannot reveal a hidden control, so within
-## the table every card's up is a hard stop. Down from the bar returns to the
-## rail; _scroll_to_selected keeps the buttons' down-neighbour pointed at the
-## selected card, so the round trip up-and-down lands where the person left
-## rather than at the rail's start -- and the card taking focus is what re-hides
+## the table every card's up is a hard stop.
+##
+## DOWN FROM THE BAR IS EXPLICIT NOW TOO (_handle_bar_return), for a different
+## reason: the press had to be consumed before it could reach the arriving
+## card and open its details panel. The buttons' down-neighbour is still set
+## here and still kept on the selected card by _scroll_to_selected -- it is
+## what that function READS, so the round trip up-and-down still lands where
+## the person left rather than at the rail's start, and B in the bar resolves
+## its way home through the same field. The card taking focus is what re-hides
 ## the bar (see _on_card_selected).
 ##
 ## Everything is still an explicit table someone can read. Down from a card and
@@ -1498,7 +1522,9 @@ func _on_network_changed(state: String) -> void:
 func _input(event: InputEvent) -> void:
 	if _handle_home_button(event):
 		return
-	_handle_bar_reveal(event)
+	if _handle_bar_reveal(event):
+		return
+	_handle_bar_return(event)
 
 
 func _handle_home_button(event: InputEvent) -> bool:
@@ -1526,23 +1552,71 @@ func _handle_home_button(event: InputEvent) -> bool:
 ## runs before both, which makes it the one hook that can show the bar and
 ## move focus into it on the same press.
 ##
-## Every guard is a surface that owns the pad while it is up. `visible` covers
-## the fullscreen surfaces, the card menu and a running application, all of
-## which hide this node; the panel and the two drop menus do not hide it, so
-## they are named. The focus owner must be a card: Up means "to the bar" only
-## from the rail, and anywhere else this consumes nothing.
-func _handle_bar_reveal(event: InputEvent) -> void:
-	if not visible or _bar_row == null:
-		return
-	if _details != null or _service_menu != null or _quick_settings != null:
-		return
+## The focus owner must be a card: Up means "to the bar" only from the rail,
+## and anywhere else this consumes nothing. See _bar_input_live for the
+## surfaces that switch both of the bar's moves off.
+func _handle_bar_reveal(event: InputEvent) -> bool:
+	if not _bar_input_live():
+		return false
 	if not event.is_action_pressed("ui_up"):
-		return
+		return false
 	var owner := get_viewport().gui_get_focus_owner()
 	if owner == null or not _tiles.has(owner):
-		return
+		return false
 	get_viewport().set_input_as_handled()
 	_reveal_bar(true)
+	return true
+
+
+## THE HOME SCREEN IS THREE ROWS: the bar, the selected entry's title block,
+## and the card rail. Only two of them are focusable -- the title block is
+## prose about whatever the cursor is on -- so DOWN FROM THE BAR GOES TO THE
+## CARDS, past the middle row, and that is the whole of this function.
+##
+## HANDLED HERE RATHER THAN LEFT TO THE NEIGHBOUR TABLE, which is a change from
+## how the bar's Down worked before the bar could hide, and the reason is a
+## defect the owner hit on the first build: a card's own Down opens its details
+## panel (tile.gd's _gui_input), so the press that carries somebody off the bar
+## arrives at the card they just landed on and opens the panel over the rail --
+## "down gets the info and skips the cards". Worse on a pad than in a harness,
+## because FocusRepeat turns a Down held a third of a second too long into a
+## second press aimed at the card.
+##
+## So the move is made here and the event is CONSUMED: no viewport traversal,
+## no _gui_input on the arriving card, one press one move. The destination is
+## still read from the focused button's own focus_neighbor_bottom, which
+## _scroll_to_selected keeps pointed at the selected card -- one source of
+## truth for "where the person's place is", not two.
+func _handle_bar_return(event: InputEvent) -> void:
+	if not _bar_input_live():
+		return
+	if not event.is_action_pressed("ui_down"):
+		return
+	if _tiles.is_empty():
+		# Nothing below the bar to go back to; the bar is the whole screen.
+		return
+	var owner := get_viewport().gui_get_focus_owner() as Control
+	if owner == null or not _bar_buttons.has(owner):
+		return
+	var below := owner.get_node_or_null(owner.focus_neighbor_bottom) as Control
+	if below == null or not _tiles.has(below):
+		return
+	get_viewport().set_input_as_handled()
+	# Stamped BEFORE the grab, because the grab is what fires the card's
+	# selected signal and everything that hangs off it.
+	_left_bar_msec = Time.get_ticks_msec()
+	below.grab_focus()
+
+
+## The states in which the bar's own two moves mean anything: this surface is
+## on screen, and nothing is layered over it. `visible` covers the fullscreen
+## surfaces, the card menu and a running application, all of which hide this
+## node; the details panel and the two drop menus do not hide it, so they are
+## named.
+func _bar_input_live() -> bool:
+	if not visible or _bar_row == null:
+		return false
+	return _details == null and _service_menu == null and _quick_settings == null
 
 
 ## Show the bar. With `take_focus`, also land on the store icon -- the same
@@ -1655,6 +1729,19 @@ func _on_details_requested(tile: Control) -> void:
 	if _details != null:
 		# A second press is the hold-repeat (FocusRepeat sends eight a second) or
 		# a bounced button, not a request for two panels.
+		return
+	# THE DOWN THAT LEFT THE BAR DOES NOT ALSO OPEN A PANEL. _handle_bar_return
+	# consumes the press that makes the move, so a single press can never reach
+	# here -- but a Down HELD across the move repeats (FocusRepeat, eight a
+	# second after INITIAL_DELAY), and the first repeat lands on a card that has
+	# only just taken focus. That is the owner's report: down from the bar
+	# showing the info instead of the cards. A window rather than a flag
+	# because the repeat's synthetic press carries its own release, so there is
+	# no held-state this could read instead; BAR_RETURN_GRACE_MSEC is sized off
+	# the same INITIAL_DELAY the repeat waits.
+	if _left_bar_msec >= 0 \
+			and Time.get_ticks_msec() - _left_bar_msec < BAR_RETURN_GRACE_MSEC:
+		ShellLog.info("details ignored: still the Down that came back from the top bar")
 		return
 	if Settings.is_open() or Stores.is_open() or Power.is_open() or Files.is_open() \
 			or Launcher.is_busy():
