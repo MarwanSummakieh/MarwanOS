@@ -267,11 +267,31 @@ readonly PROFILE_FALLBACK="native"
 # fix through the two discriminators and ends at today's behaviour and the bare
 # baseline. Kept identical to the PROFILES list in /usr/lib/marwanos/display/
 # profile so "the next one" means the same thing on both sides of the seam.
-readonly PROFILE_LIST="steady sixty-raw flat native raw"
+readonly PROFILE_LIST="hundred steady sixty-raw flat native raw"
 
 # 60 because it is the one refresh every panel ever made supports and the one no
 # NVIDIA flip path can find exotic. This is a headache, not a frame-rate budget.
+#
+# EXCEPT THAT 60 TURNED OUT TO BE THE HEADACHE, which is what `hundred` exists
+# to test. Measured over SSH on 2026-08-11, the first day the bench was
+# reachable during the investigation: the panel is a 240 Hz QD-OLED (Odyssey
+# G85SD) whose EDID prefers 3440x1440@60 and ALSO advertises 3440x1440@100 in
+# its CTA extension -- and every profile below either takes the preferred mode
+# or pins -r 60, so all five ran the panel at 60 Hz and the 100 Hz mode has
+# never once been scanned out. The flicker correlates with modesets and link
+# state, not with any client; an OLED driven at the bottom of its range is the
+# standing suspect.
+#
+# `hundred` is also a MEASUREMENT, not just a hope: whether -r moves the DRM
+# mode (rather than only pacing frames) has never been observed -- the karg
+# route (`video=HDMI-A-1:3440x1440@100`) was tried the same day and proved
+# INERT, gamescope took the preferred mode regardless. The shell's own
+# "screen 0: ... refresh" journal line is the verdict either way: 100.00 means
+# -r selects modes and this panel finally runs in its designed range; 59.90
+# means -r is frame pacing only, and the next lever is --generate-drm-mode or
+# the DisplayPort connector this panel actually wants.
 readonly PROFILE_REFRESH=60
+readonly PROFILE_REFRESH_FAST=100
 
 # ---------------------------------------------------------------------------
 # THE STEAM PROFILE
@@ -1132,6 +1152,12 @@ start_gamescope() {
     # Each profile is chosen to kill a DIFFERENT theory, so that whichever one
     # the owner stops on names the cause:
     #
+    #   hundred    100 Hz + composited. FIRST IN THE CYCLE because it is the
+    #              only mode this panel advertises that has never been scanned
+    #              out (see PROFILE_REFRESH_FAST) -- every other profile here
+    #              is 60 Hz one way or another, which is why cycling them
+    #              never changed anything. Differs from steady by exactly the
+    #              rate, so its verdict is about one variable.
     #   steady     60 Hz + composited.  Kills (a) and (b) while keeping the
     #              ghosting fix. THE DEFAULT: the most likely fix, shipped.
     #   sixty-raw  60 Hz, NOT composited. Differs from steady by exactly one
@@ -1152,13 +1178,21 @@ start_gamescope() {
     # Adaptive sync appears in none of them because it cannot: --adaptive-sync is
     # an enable-only flag and this session has never passed it, so VRR has been
     # off at the compositor the whole time. See the PROFILE_FILE block.
+    # A rate rather than a flag now, because the profiles no longer agree on
+    # WHICH refresh to pin: `hundred` asks for the panel's fast mode and the
+    # 60 Hz trio keep their number. Zero still means "not specified -- the
+    # panel's preferred mode".
     case "$DISPLAY_PROFILE" in
-        steady|sixty-raw|flat) _profile_refresh=1 ;;
+        hundred)               _profile_refresh="$PROFILE_REFRESH_FAST" ;;
+        steady|sixty-raw|flat) _profile_refresh="$PROFILE_REFRESH" ;;
         *)                     _profile_refresh=0 ;;
     esac
+    # `hundred` composites, like steady: it exists to change exactly one thing
+    # against steady -- the rate -- so a difference in scanout path would make
+    # its verdict about two variables.
     case "$DISPLAY_PROFILE" in
-        steady|flat|native) _profile_composite=1 ;;
-        *)                  _profile_composite=0 ;;
+        hundred|steady|flat|native) _profile_composite=1 ;;
+        *)                          _profile_composite=0 ;;
     esac
     case "$DISPLAY_PROFILE" in
         flat) _profile_planes=1 ;;
@@ -1171,10 +1205,10 @@ start_gamescope() {
     # pick a mode. What it certainly does is deliver frames at a constant 60
     # instead of at whatever rate a UI that idles and then animates happens to
     # produce, and a constant delivery rate is what theory (a) needs removed.
-    if [ "$_profile_refresh" = 1 ]; then
+    if [ "$_profile_refresh" != 0 ]; then
         if gamescope_has_option "--nested-refresh"; then
-            set -- "$@" -r "$PROFILE_REFRESH"
-            log "refresh: -r ${PROFILE_REFRESH} (fixed; no adaptive sync is asked for, so VRR stays off)"
+            set -- "$@" -r "$_profile_refresh"
+            log "refresh: -r ${_profile_refresh} (fixed; no adaptive sync is asked for, so VRR stays off)"
         else
             warn "gamescope --help ran and does NOT list --nested-refresh;"
             warn "the '$DISPLAY_PROFILE' profile cannot pin a refresh rate and the panel keeps its preferred mode"

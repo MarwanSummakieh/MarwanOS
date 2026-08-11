@@ -63,7 +63,7 @@ PROFILE="$VAR_DIR/display.profile"
 # Kept in the session's cycle order so "the next one" means the same thing on
 # both sides of the seam. See marwanos-session's own profile block for what each
 # one actually passes to gamescope and which theory of the flicker it kills.
-PROFILES=(steady sixty-raw flat native raw)
+PROFILES=(hundred steady sixty-raw flat native raw)
 
 # Matches marwanos-session's PROFILE_DEFAULT. Duplicated rather than shared
 # because the two halves must survive each other: a session that cannot read

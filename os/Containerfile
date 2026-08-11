@@ -930,9 +930,9 @@ RUN set -euxo pipefail; \
     : "would be a settings row offering a profile the session then refuses."; \
     : "Both are grepped for the default and for the last profile in the"; \
     : "cycle, which is the pair that catches a truncated or reordered list."; \
-    grep -q 'PROFILE_LIST="steady sixty-raw flat native raw"' \
+    grep -q 'PROFILE_LIST="hundred steady sixty-raw flat native raw"' \
         /usr/lib/marwanos/session/marwanos-session; \
-    grep -q 'PROFILES=(steady sixty-raw flat native raw)' \
+    grep -q 'PROFILES=(hundred steady sixty-raw flat native raw)' \
         /usr/lib/marwanos/display/profile; \
     test -x /usr/lib/marwanos/window/profile; \
     : "The window profiles, asserted from both ends for the same reason and"; \

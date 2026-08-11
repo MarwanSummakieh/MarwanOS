@@ -55,7 +55,7 @@ const STATUS_DIR_ENV := "MARWANOS_SHELL_STATUS_DIR"
 ## tell the remaining causes apart, to today's behaviour and the bare baseline.
 ## Somebody cycling from the couch therefore meets the good answer first and can
 ## always keep going round to where they started.
-const PROFILES := ["steady", "sixty-raw", "flat", "native", "raw"]
+const PROFILES := ["hundred", "steady", "sixty-raw", "flat", "native", "raw"]
 
 ## What each one is called on a television. Deliberately not the profile word:
 ## "sixty-raw" is a name for a configuration, and the row has to be readable at
@@ -64,6 +64,12 @@ const PROFILES := ["steady", "sixty-raw", "flat", "native", "raw"]
 ## whether anything is being forced -- because that is what they will be
 ## comparing against the flicker in front of them.
 const LABELS := {
+	# First in the ring since 2026-08-11: the panel is a 240 Hz OLED that every
+	# other profile drives at 60, and an OLED at the bottom of its range is the
+	# standing flicker suspect. The parenthetical is the honest part -- whether
+	# gamescope's -r actually moves the mode is exactly what choosing this
+	# measures, and Settings > Display server shows the number that answers it.
+	"hundred": "Fast 100 Hz (this panel's own mode)",
 	"steady": "Steady 60 Hz",
 	"sixty-raw": "60 Hz, direct",
 	"flat": "60 Hz, flat",
