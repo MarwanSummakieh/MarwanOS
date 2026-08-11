@@ -96,30 +96,19 @@ const STEAM_STORE := {
 }
 
 
-## Steam's OTHER face: the desktop client, launched deliberately from the
-## shell rather than reached through Big Picture's own "Switch to Desktop".
-## The in-client switch can never work here and is not a bug in this shell's
-## power to fix: it restarts the client into the tray-centric multi-window
-## desktop UI mid-session, under a compositor built to seat one fullscreen
-## window -- the exact shape that ran invisibly for days. Launching desktop
-## mode FROM THE SHELL is different in the two ways that matter: gamescope's
-## --force-windows-fullscreen manages the windows from their first map, and
-## the launch seam attaches the pad bridge in pointer mode (see pad_keys.gd)
-## from the first frame -- because the desktop client is a mouse UI and this
-## machine's only mouse is the right stick.
+## STEAM'S DESKTOP FACE IS GONE, and this comment is its headstone rather than
+## its home. steam_desktop_entry() lived here: X on the store page launched the
+## bare desktop client with the right stick as a mouse, the shell's one
+## deliberately mouse-first surface. Removed on the owner's word -- "kill I do
+## not want any desktop mode this is a pure console system" (2026-08-11).
 ##
-## A separate id, not a flag on STEAM_STORE: the launch seam, the splash and
-## the bridge all key on the entry id, and "Steam as a storefront" and "Steam
-## as a desktop program" want different treatment from every one of them.
-static func steam_desktop_entry() -> Dictionary:
-	return {
-		"id": "store.steam.desktop",
-		"title": "Steam",
-		"accent": str(STEAM_STORE["accent"]),
-		"exec": ["flatpak", "run", "com.valvesoftware.Steam"],
-		"app_id": str(STEAM_STORE["app_id"]),
-		"icon": store_icon_path(str(STEAM_STORE["app_id"])),
-	}
+## What its long rationale established still holds and is kept in one line
+## each, because the constraints outlive the feature: Big Picture's own
+## "Switch to Desktop" can never work under this compositor (it restarts the
+## client into a tray-centric multi-window UI mid-session), and the pad
+## bridge's "pointer" dialect it pioneered survives in PAD_KEY_APPS for the
+## browser's buy page, which is now the only mouse-driven surface the shell
+## ever raises.
 
 
 ## THE APPS SHELF IS GONE FROM THE STORES SCREEN, on the owner's word, and
@@ -328,9 +317,9 @@ static func devmode() -> bool:
 	return FileAccess.file_exists(DEVMODE_FLAG)
 
 
-## The launch entry for the terminal. A function rather than a const for
-## steam_desktop_entry()'s reason -- it is built per press, and nothing holding
-## it can write back into a shared dictionary.
+## The launch entry for the terminal. A function rather than a const so it is
+## built per press, and nothing holding it can write back into a shared
+## dictionary.
 ##
 ## No "app_id": there is no desktop entry and no icon to resolve, because this
 ## is not an installed application and must never appear on the rail. It is a
@@ -365,7 +354,6 @@ static func terminal_entry() -> Dictionary:
 ## together are the whole input story for a terminal on a machine with no
 ## keyboard: press home, choose Type, write the command, press A to run it.
 const PAD_KEY_APPS := {
-	"store.steam.desktop": "pointer",
 	# THE BUY PAGE, and it is here because a web page has no controller support
 	# of its own. The store screen's purchase action opens Valve's store page in
 	# the browser rather than in Big Picture (see stores_screen's

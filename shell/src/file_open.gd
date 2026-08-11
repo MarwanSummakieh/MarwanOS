@@ -129,7 +129,7 @@ static func plan(file_name: String) -> Dictionary:
 ## The launch-seam entry for opening a path in an application.
 ##
 ## A SEPARATE ID FROM THE APPLICATION'S OWN CARD, "open.<app>", for the reason
-## Catalogue.steam_desktop_entry has one: the launch seam, the splash and the
+## the store's buy entry has one: the launch seam, the splash and the
 ## pad bridge all key on the entry id, and "Kodi as a library you browse" and
 ## "Kodi opened on one file" want different treatment from at least the first
 ## of them. It also keeps a file-open out of the pad-bridge table, which is

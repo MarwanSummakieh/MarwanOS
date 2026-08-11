@@ -687,12 +687,11 @@ func _refresh_hints() -> void:
 	# face button is not something anybody guesses at on a television.
 	if _front_available():
 		_hints.add_child(TvTheme.hint("Y", HINT_SEARCH))
-	# The desktop client is a second, deliberate way to open the same store
-	# application -- see Catalogue.steam_desktop_entry for why the in-client
-	# switch cannot be that way. Offered only while installed: X on a store
-	# that is not here would be a second Install with a stranger name.
-	if _selected_installed() and str(_selected.get("id", "")) == "store.steam":
-		_hints.add_child(TvTheme.hint("X", "Desktop mode"))
+	# DESKTOP MODE IS GONE, on the owner's word: "kill I do not want any desktop
+	# mode this is a pure console system" (2026-08-11). X on this page used to
+	# open Steam's desktop client with the stick as a mouse -- a deliberate
+	# second door once, and the last mouse-first surface the shell could put on
+	# the television. A console has no desktop to switch to.
 	# Uninstall, advertised for the rail's reason turned around: a store's
 	# application deliberately has no rail card (one thing, one home), which
 	# without this line would make the ONE application everyone installs the
@@ -1624,7 +1623,7 @@ func _on_detail_store_action() -> void:
 		return
 
 	var entry := {
-		# A distinct id, for steam_desktop_entry's reason: the launch seam, the
+		# A distinct id, because the launch seam, the
 		# splash and the pad bridge all key on this, and "the browser showing one
 		# game's store page" wants the splash to say the game's name. It is also
 		# why this id had to be ADDED to Catalogue.PAD_KEY_APPS as "pointer": a
@@ -1820,10 +1819,10 @@ func _unhandled_input(event: InputEvent) -> void:
 	# else for the rail's reason: it is the only way to remove this
 	# application on a machine with no terminal.
 	#
-	# Only while the selection is on the STORE, though. Options and Desktop mode
-	# both act on the Steam application, and pressing either while standing on a
-	# game would be a button doing something to a different thing than the one
-	# with the ring around it.
+	# Only while the selection is on the STORE, though: Options acts on the
+	# Steam application, and pressing it while standing on a game would be a
+	# button doing something to a different thing than the one with the ring
+	# around it.
 	if event.is_action_pressed("ui_shell_options"):
 		if _mode != MODE_PAGE:
 			return
@@ -1848,26 +1847,11 @@ func _unhandled_input(event: InputEvent) -> void:
 		_open_search()
 		return
 
-	# X on the Steam page: the desktop client, with the stick as a mouse. The
-	# entry's icon prefers appscan's resolved path -- the same art the tab
-	# draws -- so the launch splash shows the real logo, not the cache's
-	# maybe-stale copy.
-	if event.is_action_pressed("ui_shell_x"):
-		if _mode != MODE_PAGE:
-			return
-		if str(_selected.get("id", "")) != "store.steam" or not _selected_installed():
-			return
-		get_viewport().set_input_as_handled()
-		if Launcher.is_busy():
-			return
-		var entry := Catalogue.steam_desktop_entry()
-		var app_id := str(entry.get("app_id", ""))
-		for app in Installed.apps:
-			if str(app.get("id", "")) == app_id and not str(app.get("icon", "")).is_empty():
-				entry["icon"] = str(app.get("icon", ""))
-				break
-		Launcher.launch(entry)
-		return
+	# X does nothing on this screen any more. It was Desktop mode -- Steam's
+	# desktop client with the stick as a mouse -- removed on the owner's word:
+	# a pure console system has no desktop to switch to. The handler is gone
+	# rather than guarded, so the button falls through to whatever the engine
+	# does with an unbound action, which is nothing.
 
 	if not event.is_action_pressed("ui_cancel"):
 		return
