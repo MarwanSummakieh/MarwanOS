@@ -1,0 +1,17 @@
+[Unit]
+# The flight recorder's settle delay, moved out of the boot transaction.
+#
+# 75 seconds from boot lands the report at roughly the same uptime the old
+# in-unit sleep did (multi-user at ~5s plus 60s of sleep), so sshd's
+# retry-forever drop-in still gets its minute of attempts on the record
+# before the state is photographed. The margin over the old 65 is deliberate
+# slack for a slow cold boot, not precision.
+#
+# A timer rather than a sleeping service, because the sleep was being billed
+# to the boot: see the service's own header for the measured minute this
+# removed from `systemd-analyze`.
+Description=Run the flight recorder once the doors have had time to settle
+Documentation=file:///usr/lib/marwanos/flightrec
+
+[Timer]
+OnBootSec=75s

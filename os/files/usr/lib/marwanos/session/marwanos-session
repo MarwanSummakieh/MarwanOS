@@ -1332,6 +1332,50 @@ start_gamescope() {
     return 0
 }
 
+# ---------------------------------------------------------------------------
+# THE PLYMOUTH HANDOFF, or M2's flash hunt, session side.
+#
+# The image no longer runs plymouth-quit at boot. Instead
+# marwanos-plymouth-hold.service runs `plymouth deactivate` just before greetd:
+# the splash's last frame stays in the framebuffer (nothing repaints it until
+# a modeset) while plymouthd releases DRM master so gamescope can take it. The
+# TV therefore shows a frozen splash -- not black, not text -- for the whole
+# of gamescope's cold start, which the 2026-08-11 audit measured in the tens
+# of seconds after the old quit point at t~9.7s.
+#
+# This function is the session's half: permission to actually QUIT. It cannot
+# be a `plymouth quit` here, because this session runs as `player` and
+# plymouthd's socket answers root only (measured on the bench, 2026-08-11:
+# `sudo -u player plymouth --ping` fails silently against a plymouthd that
+# answers root fine). So the same seam as the display/window profiles: touch a
+# file in our own runtime directory, and a root-side path unit
+# (marwanos-plymouth-quit.path) does the quitting. The path is watched at
+# /run/user/1000/marwanos/plymouth-quit -- $RUNTIME by another name, with the
+# uid the Containerfile asserts.
+#
+# CALLED FROM EXACTLY TWO PLACES, and the second is the one that keeps this
+# honest:
+#
+#   * after the ready handshake succeeds -- gamescope's own modeset is what
+#     ends the frozen frame's usefulness, so the moment the compositor is
+#     provably up, plymouthd is a stray process and nothing more;
+#   * in compositor_dead_end -- the hold is this appliance's designed failure
+#     state, and a live plymouthd left behind it would be a daemon nobody can
+#     reach behind a screen nobody can read. Quitting it cannot bring the
+#     picture back (only a modeset changes the panel now), but it means the
+#     hold owns the machine's state instead of sharing it with a boot screen
+#     that thinks the boot is still happening.
+#
+# Idempotent and unconditional on purpose: touching the flag twice is a no-op
+# (the root unit runs once per boot), and touching it when plymouth never ran
+# triggers one `-`-prefixed no-op quit. The redirect-and-true guard is for the
+# container smoke run, where $RUNTIME exists but nothing must be able to make
+# this script exit -- a session that could die telling plymouth to leave would
+# be a worse defect than the flash it fixes.
+release_splash() {
+    : > "$RUNTIME/plymouth-quit" 2>/dev/null || true
+}
+
 # gamescope could not take the display. Returning here would hand control back to
 # greetd, which would start the session again, which would fail again: an
 # unbounded loop that buries its own diagnosis in repeated log spam. Hold
@@ -1346,6 +1390,9 @@ compositor_dead_end() {
     err "gamescope could not take the display -- the session is holding rather than looping"
     err "there is no fallback compositor by design (docs/adr/0005)"
     err "read the first failure above; recover over tty2 or devmode ssh"
+    # See release_splash: without this, the designed hold would share the
+    # machine with a plymouthd still claiming the boot is in progress.
+    release_splash
     hold_forever
 }
 
@@ -1544,6 +1591,12 @@ start_gamescope_or_fall_back() {
 }
 
 if start_gamescope_or_fall_back; then
+    # The compositor is provably up (ready fd read, process alive), so the
+    # frozen splash has covered everything it can -- see release_splash. Before
+    # the client starts, deliberately: the splash's frame ends at gamescope's
+    # modeset regardless, and a quit signalled before the shell's first frame
+    # cannot be starved by a slow shell or a crash-looping one.
+    release_splash
     supervise_client
 else
     compositor_dead_end

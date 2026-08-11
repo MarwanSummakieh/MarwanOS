@@ -2,20 +2,26 @@
 # Writes the doors' post-mortem where the Files screen can reach it -- see
 # the script's header for the 2026-08-10 lockout this exists because of.
 #
-# After multi-user so sshd has had its chance to start (or visibly fail)
-# before the report reads its state; a report written at second two would
-# always say "inactive" and mean nothing. After the netcheck too, so the
-# firewall answer reflects a settled network. Never blocks anything: nothing
-# is ordered after this, and the shell neither knows nor cares that it ran.
+# STARTED BY ITS TIMER, NEVER BY A TARGET, and that is a measured fix rather
+# than a preference. This used to sit in multi-user.target.wants with an
+# `ExecStartPre=/usr/bin/sleep 60` as its settle delay -- and a oneshot's job
+# stays in the boot transaction until ExecStart finishes, so systemd counted
+# the whole minute as boot: `systemd-analyze` read 1min 5s of userspace on a
+# boot whose graphical.target was reached in 5, and blame named this unit at
+# 1min 0.5s. The delay was always the point (sshd's retry loop needs its
+# minute of attempts on the record before the state is photographed); a timer
+# is that same delay expressed where systemd does not mistake it for startup.
+#
+# The After= lines stay even though the timer alone makes them true on any
+# healthy boot: on a pathological one where multi-user is still converging at
+# 75 seconds, a report that reads sshd mid-transaction would say "inactive"
+# and mean nothing -- the exact lie the old ordering existed to prevent.
 Description=Write door diagnostics to ~player/Downloads (flight recorder)
 Documentation=file:///usr/lib/marwanos/flightrec
 After=multi-user.target marwanos-netcheck.service
 
 [Service]
 Type=oneshot
-# A settle delay, then the report: sshd's retry loop (see its drop-in) gets
-# a minute of attempts on the record before the state is photographed.
-ExecStartPre=/usr/bin/sleep 60
 ExecStart=/usr/lib/marwanos/flightrec
 StandardOutput=journal
 StandardError=journal

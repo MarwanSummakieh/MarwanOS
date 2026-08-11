@@ -1,0 +1,37 @@
+[Unit]
+# Half one of M2's flash hunt: keep the splash on screen after plymouth's
+# default quit point, without keeping the GPU from gamescope.
+#
+# Stock Fedora runs `plymouth quit` here (plymouth-quit.service, whose wants
+# link this image removes): the splash dies at t~10s and the TV shows black
+# until gamescope's first modeset, measured in the tens of seconds on a cold
+# boot -- the exact gap the phase-0 plan's "flash hunt" item is about.
+#
+# `deactivate` instead of `quit` is the whole trick. A deactivated plymouthd
+# stops animating and RELEASES DRM MASTER -- which gamescope must be able to
+# take, so this cannot simply be "don't quit plymouth" -- but the splash's
+# last frame stays in the framebuffer, and nothing repaints it until the
+# compositor's own modeset. Frozen spinner, no black, no text.
+#
+# The ordering is plymouth-quit.service's own (rc-local/plymouth-start/
+# systemd-user-sessions) plus Before=greetd.service, which is the half that
+# matters: greetd starts the session, the session starts gamescope, and a
+# gamescope that races plymouthd for DRM master loses -- its ready handshake
+# times out and the session declares a dead end on a machine that was merely
+# mid-handoff.
+#
+# The other half of the handoff -- who finally runs `plymouth quit`, and why
+# the session cannot do it itself -- is marwanos-plymouth-quit.path.
+Description=Freeze the boot splash and release the GPU for the session
+Documentation=file:///usr/lib/marwanos/session/marwanos-session
+After=rc-local.service plymouth-start.service systemd-user-sessions.service
+Before=greetd.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+# `-` because a boot with no plymouthd (splash karg stripped, details mode)
+# must not put a failed unit at err priority in the only triage surface this
+# machine has. Nothing here is worth failing over: no plymouth means no
+# splash to hold, and the session works identically either way.
+ExecStart=-/usr/bin/plymouth deactivate

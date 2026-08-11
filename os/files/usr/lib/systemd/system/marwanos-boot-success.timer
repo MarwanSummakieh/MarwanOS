@@ -1,0 +1,11 @@
+[Unit]
+# Two minutes is Fedora's own definition of "the session held" (its
+# gnome-session flag runs on the same delay), and it is comfortably past
+# this machine's whole boot: a session still up at 2min is one somebody
+# could be using. Earlier would vouch for boots that die at the shell's
+# first frame; later just widens the window where a power cut costs one
+# visible menu next boot, which is harmless.
+Description=Record boot success once the session has held for two minutes
+
+[Timer]
+OnBootSec=2min

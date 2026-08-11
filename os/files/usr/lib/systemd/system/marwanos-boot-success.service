@@ -1,0 +1,27 @@
+[Unit]
+# The OS's half of GRUB's auto-hidden menu: record that this boot was good.
+#
+# 12_menu_auto_hide.cfg (and the bench's hand-written custom.cfg) hides the
+# menu only when grubenv says the previous boot succeeded, and GRUB clears
+# that flag on every boot -- so somebody has to keep re-asserting it, and on
+# a desktop that somebody is gnome-session two minutes into a login. This
+# appliance has no user session bus and no desktop, so the equivalent lives
+# here: a root oneshot fired by its timer two minutes after boot.
+#
+# ExecCondition, not blind recording: a boot whose greetd is not running two
+# minutes in did NOT succeed by this machine's definition -- there is no
+# session, so there is no shell, so the TV is black -- and recording success
+# anyway would hide the menu on the boot after a failure, which is the one
+# boot the visible menu exists for. ExecCondition's non-zero is a clean
+# skip, not a failed unit in the journal.
+Description=Record a successful boot for GRUB's auto-hidden menu
+ConditionPathExists=/boot/grub2/grubenv
+
+[Service]
+Type=oneshot
+ExecCondition=/usr/bin/systemctl is-active --quiet greetd.service
+# menu_auto_hide is written alongside boot_success so a fresh install
+# converges on its own: the first good session turns hiding on, no
+# machine-local grub2-editenv step required (the bench needed one only
+# because its grub.cfg predates the reader).
+ExecStart=/usr/bin/grub2-editenv - set boot_success=1 menu_auto_hide=1

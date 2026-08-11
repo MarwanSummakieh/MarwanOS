@@ -1,0 +1,31 @@
+[Unit]
+# Half two of M2's flash hunt: the session says when the splash may die,
+# and this is how the message crosses the privilege boundary.
+#
+# The session runs as `player`, and plymouthd's control socket answers root
+# only -- measured on the bench 2026-08-11: `sudo -u player plymouth --ping`
+# fails silently against a live plymouthd that answers root fine. So the
+# session cannot run `plymouth quit` itself, and the same seam shape as the
+# display/window profiles is used instead: the unprivileged side writes a
+# file, a root-side consumer acts on it.
+#
+# The path is player's own runtime directory, hardcoded at uid 1000 because
+# a path unit takes no variables. 1000 is not a guess: 50-marwanos.conf
+# declares it and the Containerfile asserts `id -u player` = 1000 at build
+# time, so a drifted uid fails the build rather than this watch.
+#
+# The session touches the flag in exactly two places: after gamescope's
+# ready-fd handshake succeeds (the splash has covered everything it can --
+# the compositor's own modeset ends its usefulness), and in
+# compositor_dead_end (so a plymouthd that outlived a failed handoff cannot
+# sit as a live daemon behind a dead session forever). If the session dies
+# before either -- crash-looped by greetd, killed mid-start -- the flag is
+# never written and a deactivated plymouthd idles harmlessly: it holds no
+# DRM, draws nothing, and costs one process until shutdown reaps it. That
+# is why there is no timeout-based backstop here: the failure it would
+# guard is already inert.
+Description=Watch for the session's permission to quit the boot splash
+Documentation=file:///usr/lib/marwanos/session/marwanos-session
+
+[Path]
+PathExists=/run/user/1000/marwanos/plymouth-quit

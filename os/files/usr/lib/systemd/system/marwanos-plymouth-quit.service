@@ -1,0 +1,19 @@
+[Unit]
+# The root half of the splash handoff: runs `plymouth quit` when the path
+# unit sees the session's flag. See marwanos-plymouth-quit.path for the
+# whole story; this file is only the muscle.
+Description=Quit the boot splash on the session's signal
+Documentation=file:///usr/lib/marwanos/session/marwanos-session
+
+[Service]
+Type=oneshot
+# RemainAfterExit is what stops the path unit retriggering: the flag file
+# persists in /run for the rest of the boot (the session has no reason to
+# remove it, and a greetd-restarted session may touch it again), and a path
+# unit re-fires whenever its condition holds while the triggered unit is
+# inactive. Staying active makes this once per boot, which is exactly how
+# many times plymouth can be quit.
+RemainAfterExit=yes
+# `-` for marwanos-plymouth-hold's reason: quitting a plymouthd that is
+# already gone is a no-op, not a failure worth an err line.
+ExecStart=-/usr/bin/plymouth quit

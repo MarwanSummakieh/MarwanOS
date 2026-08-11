@@ -734,6 +734,17 @@ RUN set -euxo pipefail; \
     chmod 0644 /usr/lib/systemd/system/marwanos-steamfront.service; \
     chmod 0644 /usr/lib/systemd/system/sshd.service.d/50-marwanos-persist.conf; \
     chmod 0644 /usr/lib/systemd/system/marwanos-flightrec.service; \
+    chmod 0644 /usr/lib/systemd/system/marwanos-flightrec.timer; \
+    chmod 0644 /usr/lib/systemd/system/marwanos-plymouth-hold.service; \
+    chmod 0644 /usr/lib/systemd/system/marwanos-plymouth-quit.service; \
+    chmod 0644 /usr/lib/systemd/system/marwanos-plymouth-quit.path; \
+    chmod 0644 /usr/lib/systemd/system/marwanos-boot-success.service; \
+    chmod 0644 /usr/lib/systemd/system/marwanos-boot-success.timer; \
+    : "By name rather than via the find list, like the sshd drop-in: the"; \
+    : "find list's directories are all wholly ours, and these two live in"; \
+    : "directories the base image populates."; \
+    chmod 0644 /usr/lib/systemd/system/flatpak-system-update.timer.d/50-marwanos-defer.conf; \
+    chmod 0644 /usr/lib/bootupd/grub2-static/configs.d/12_menu_auto_hide.cfg; \
     chmod 0755 /usr/lib/marwanos/flightrec; \
     chmod 0644 "/usr/lib/systemd/system/marwanos-flatpak-install@.service"; \
     chmod 0755 /usr/lib/marwanos/session/marwanos-session; \
@@ -859,9 +870,39 @@ RUN set -euxo pipefail; \
         /usr/lib/systemd/system/timers.target.wants/marwanos-storeart.timer; \
     : "The flight recorder -- diagnostics into ~player/Downloads, because the"; \
     : "2026-08-10 sshd lockout proved the journal is unreachable exactly when"; \
-    : "it matters most. See the script's header."; \
-    ln -sf ../marwanos-flightrec.service \
-        /usr/lib/systemd/system/multi-user.target.wants/marwanos-flightrec.service; \
+    : "it matters most. Enabled through its TIMER like storeart, and the"; \
+    : "switch from a multi-user wants link is a measured boot fix: as a"; \
+    : "wanted oneshot with a 60-second ExecStartPre sleep, its job kept the"; \
+    : "boot transaction open and systemd-analyze billed the whole minute to"; \
+    : "userspace (1min 0.5s of a 1min 5s total, bench, 2026-08-11). The"; \
+    : "timer is the same minute, off the boot's books."; \
+    ln -sf ../marwanos-flightrec.timer \
+        /usr/lib/systemd/system/timers.target.wants/marwanos-flightrec.timer; \
+    : "GRUB's auto-hidden menu needs the OS to vouch for each good boot --"; \
+    : "grub clears boot_success every boot and 12_menu_auto_hide.cfg only"; \
+    : "hides the menu while it is 1 -- and with no desktop session to do"; \
+    : "the vouching (gnome's two-minute flag is where Fedora does it), a"; \
+    : "root timer is the appliance equivalent."; \
+    ln -sf ../marwanos-boot-success.timer \
+        /usr/lib/systemd/system/timers.target.wants/marwanos-boot-success.timer; \
+    : "THE PLYMOUTH HANDOFF (M2's flash hunt). Stock plymouth quits the"; \
+    : "splash at systemd-user-sessions -- t~9.7s on the bench -- and the TV"; \
+    : "then shows black until gamescope's first modeset, tens of seconds"; \
+    : "later. Both stock links come OUT: the quit because it is what kills"; \
+    : "the splash early, and quit-WAIT because with no quit scheduled its"; \
+    : "'plymouth --wait' would never return, and greetd's After= on it"; \
+    : "would hold the session forever -- removing one without the other is"; \
+    : "a machine that never boots a session again."; \
+    rm -f /usr/lib/systemd/system/multi-user.target.wants/plymouth-quit.service \
+          /usr/lib/systemd/system/multi-user.target.wants/plymouth-quit-wait.service; \
+    : "In their place: deactivate (frozen splash, DRM released) before"; \
+    : "greetd, and a root-side path unit that runs the real quit when the"; \
+    : "session -- which runs as player and cannot speak to plymouthd --"; \
+    : "signals the compositor is up. See the units' own headers."; \
+    ln -sf ../marwanos-plymouth-hold.service \
+        /usr/lib/systemd/system/multi-user.target.wants/marwanos-plymouth-hold.service; \
+    ln -sf ../marwanos-plymouth-quit.path \
+        /usr/lib/systemd/system/multi-user.target.wants/marwanos-plymouth-quit.path; \
     : "The devmode sudo rule's installer. Enabled UNCONDITIONALLY and gated"; \
     : "inside the script instead, because the boot that matters most is the"; \
     : "one where the flag has just been REMOVED -- a unit conditioned on the"; \
@@ -1093,7 +1134,54 @@ RUN set -euxo pipefail; \
     test ! -e /usr/lib/systemd/system/sockets.target.wants/sshd.socket; \
     test -s /usr/lib/systemd/system/sshd.service.d/50-marwanos-persist.conf; \
     test -x /usr/lib/marwanos/flightrec; \
-    test -L /usr/lib/systemd/system/multi-user.target.wants/marwanos-flightrec.service; \
+    test -L /usr/lib/systemd/system/timers.target.wants/marwanos-flightrec.timer; \
+    : "And the old direct enablement must be GONE: a wants link on the"; \
+    : "service alongside the timer would put the sleepless report back in"; \
+    : "the boot transaction at second five, photographing sshd before its"; \
+    : "retry loop has said anything."; \
+    test ! -e /usr/lib/systemd/system/multi-user.target.wants/marwanos-flightrec.service; \
+    : "THE PLYMOUTH HANDOFF, asserted from both directions: the stock quit"; \
+    : "links must be gone (the base image ships them, so a base bump can"; \
+    : "resurrect them -- and quit-wait coming back without quit is a boot"; \
+    : "that hangs before greetd forever), and the replacement pair must be"; \
+    : "wired. The path unit's watched file is player's runtime directory"; \
+    : "hardcoded at uid 1000, which the id assertion below makes safe."; \
+    test ! -e /usr/lib/systemd/system/multi-user.target.wants/plymouth-quit.service; \
+    test ! -e /usr/lib/systemd/system/multi-user.target.wants/plymouth-quit-wait.service; \
+    test -L /usr/lib/systemd/system/multi-user.target.wants/marwanos-plymouth-hold.service; \
+    test -L /usr/lib/systemd/system/multi-user.target.wants/marwanos-plymouth-quit.path; \
+    grep -q '^PathExists=/run/user/1000/marwanos/plymouth-quit$' \
+        /usr/lib/systemd/system/marwanos-plymouth-quit.path; \
+    : "The session's half of the same handshake: the flag it touches must"; \
+    : "be the file the path unit watches, or the splash is never quit and"; \
+    : "a stray plymouthd idles behind every session. String-matched from"; \
+    : "both files because nothing at runtime checks the seam."; \
+    grep -q 'plymouth-quit' /usr/lib/marwanos/session/marwanos-session; \
+    command -v plymouth; \
+    : "GRUB'S SILENT MENU, asserted at its three load-bearing points."; \
+    : "One: bootupd still assembles grub.cfg the way this fix assumes --"; \
+    : "a pre.cfg that hardcodes the visible menu/1s fallback, then"; \
+    : "configs.d in name order. If a bootupd bump moves the timeout lines"; \
+    : "or stops concatenating, the build must say so here rather than a"; \
+    : "fresh install flashing a menu forever."; \
+    grep -q '^set timeout_style=menu$' /usr/lib/bootupd/grub2-static/grub-static-pre.cfg; \
+    grep -q '^set timeout=1$' /usr/lib/bootupd/grub2-static/grub-static-pre.cfg; \
+    : "Two: the reader this image adds, with both halves present -- the"; \
+    : "hide condition and the boot_success clear that makes a failed boot"; \
+    : "show the menu again."; \
+    grep -q 'timeout_style=hidden' /usr/lib/bootupd/grub2-static/configs.d/12_menu_auto_hide.cfg; \
+    grep -q 'save_env boot_success' /usr/lib/bootupd/grub2-static/configs.d/12_menu_auto_hide.cfg; \
+    : "Three: the writer the reader depends on. grub2-editenv comes from"; \
+    : "the base's grub2-tools, not from any dnf line here, so a base bump"; \
+    : "dropping it would silently leave boot_success at 0 and the menu"; \
+    : "visible on every boot."; \
+    command -v grub2-editenv; \
+    test -L /usr/lib/systemd/system/timers.target.wants/marwanos-boot-success.timer; \
+    : "The flatpak deferral drop-in: non-empty and actually turning the"; \
+    : "boot-time catch-up off, or the 15.7s update run lands back in the"; \
+    : "first minute the next time somebody boots a machine that slept"; \
+    : "through its 04:00."; \
+    grep -q '^Persistent=false$' /usr/lib/systemd/system/flatpak-system-update.timer.d/50-marwanos-defer.conf; \
     : "xdotool is how pad presses reach applications with no gamepad support"; \
     : "of their own (the pad-keys bridge); without it any app the bridge"; \
     : "drives would launch fine and then ignore every button on the pad."; \
