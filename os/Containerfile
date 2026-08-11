@@ -407,6 +407,20 @@ RUN --mount=type=cache,dst=/var/cache/libdnf5,sharing=locked \
 #                            portal, no desktop. Every prettier emulator wants
 #                            at least one of those, and foot wants a Wayland
 #                            display the shell deliberately does not use.
+#                            ITS DESKTOP ENTRY DOES NOT SURVIVE THE INSTALL:
+#                            the rm below takes /usr/share/applications/
+#                            xterm.desktop out, because marwanos-appscan walks
+#                            that directory with the freedesktop rules and
+#                            xterm's entry passes every one of them -- so the
+#                            terminal, which ADR 0009 admits ONLY as a devmode
+#                            settings row, was also sitting on every machine's
+#                            rail as an ordinary "xterm" card (seen live on
+#                            the bench, 2026-08-11). Deleting the entry is the
+#                            same honesty argument as deleting Firefox's RPM
+#                            below: the scanner has no deny-list by design,
+#                            so what it must not report must not exist. The
+#                            settings row does not care -- it launches the
+#                            wrapper by path, no desktop entry involved.
 #   dejavu-sans-mono-fonts   named rather than left to fontconfig, because the
 #                            wrapper asks for this face BY NAME and
 #                            fontconfig's answer to a missing family is a
@@ -447,6 +461,12 @@ RUN --mount=type=cache,dst=/var/cache/libdnf5,sharing=locked \
         libXi \
         libxkbcommon; \
     dnf clean all; \
+    : "xterm's launcher entry, removed -- see the xterm note above. uxterm's"; \
+    : "is named too in case a future Fedora ships one (Debian's package"; \
+    : "does); rm -f on a file that does not exist is the cheap way to keep"; \
+    : "that from ever becoming a second card."; \
+    rm -f /usr/share/applications/xterm.desktop \
+          /usr/share/applications/uxterm.desktop; \
     ldconfig -p > /tmp/ldcache.txt; \
     for lib in libX11.so.6 libXcursor.so.1 libXinerama.so.1 libXext.so.6 \
                libXrandr.so.2 libXrender.so.1 libXi.so.6 libxkbcommon.so.0 \
@@ -463,9 +483,12 @@ RUN --mount=type=cache,dst=/var/cache/libdnf5,sharing=locked \
 #
 # The ublue base image ships Firefox -- 295 MB plus 49 MB of langpacks, on a
 # root filesystem with about 7 GiB spare. Nothing here asked for it and the
-# appliance's browser is Zen, installed as a flatpak on first boot by
-# marwanos-flatpak-install@app.zen_browser.zen.service, so the RPM is both
-# unwanted and the largest single thing in the image that nothing uses.
+# browser is Zen, installed as a flatpak on first boot by
+# marwanos-flatpak-install@app.zen_browser.zen.service -- rail-hidden since
+# 2026-08-11 and kept only as the buy flow's checkout until the Chromium
+# kiosk shell replaces it (that removal is its own change, not this one) --
+# so the RPM is both unwanted and the largest single thing in the image that
+# nothing uses.
 #
 # WHY REMOVED RATHER THAN HIDDEN. marwanos-appscan lists what is installed, by
 # design and with no deny-list for "things we would rather you did not see" --
@@ -1197,6 +1220,15 @@ RUN set -euxo pipefail; \
     command -v visudo; \
     fc-match "DejaVu Sans Mono" | grep -qi dejavu; \
     test -x /usr/lib/marwanos/terminal; \
+    : "AND THE TERMINAL IS NOT AN APP. xterm's desktop entry is deleted at"; \
+    : "install time (see the dnf layer above) because appscan would put it"; \
+    : "on the rail as a card -- the terminal is a devmode settings row and"; \
+    : "nothing else. Asserted here because a package update that reinstated"; \
+    : "the file would put the card back with no change anywhere in this"; \
+    : "repo, and the symptom is a rail with an 'xterm' tile on a shipped"; \
+    : "machine."; \
+    test ! -e /usr/share/applications/xterm.desktop; \
+    test ! -e /usr/share/applications/uxterm.desktop; \
     test -x /usr/lib/marwanos/devmode-sudo; \
     test -s /usr/lib/marwanos/sudoers.devmode; \
     visudo -c -f /usr/lib/marwanos/sudoers.devmode; \

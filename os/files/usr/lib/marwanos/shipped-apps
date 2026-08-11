@@ -24,9 +24,14 @@
 # and serves it over RPC.
 #
 # THE SET IS TWO, DOWN FROM EIGHT BY WAY OF THREE. Steam is the games library
-# and Zen is the browser (itself living on borrowed time until the project's
-# own Chromium shell replaces it) -- one app per job, no job twice, and
-# browsing files is the shell's own Files screen rather than an app at all.
+# and Zen is a browser THE RAIL NO LONGER SHOWS (2026-08-11: "zen is no longer
+# the desired browser"): it keeps installing because the stores screen's buy
+# flow opens Valve's checkout in it, and a purchase route with no browser is a
+# dead end -- but the shell hides its card (catalogue.gd, RAIL_HIDDEN_APPS)
+# and offers no available-card for it. Deleting Zen from THIS file too is the
+# Chromium kiosk-shell session's move, made when the checkout has somewhere
+# else to open. One app per job, no job twice, and browsing files is the
+# shell's own Files screen rather than an app at all.
 # Kodi left on 2026-08-11 on the owner's word -- "kodi is out no need to have
 # it at all" -- taking the media-player job with it: a video opened from the
 # Files screen now says it has no player, which is honest until the use

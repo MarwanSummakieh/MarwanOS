@@ -135,7 +135,25 @@ static func stores() -> Array:
 	return [STEAM_STORE]
 
 
-## The desktop-entry ids of every store's application.
+## Installed applications the rail must not draw, beyond the store apps below.
+##
+## Zen is here on the owner's word (2026-08-11): it is no longer the desired
+## browser, so it gets no card -- but the flatpak still installs (see
+## shipped-apps), because the stores screen's purchase route opens Valve's
+## store page in it and a checkout with no browser is a dead end. This is the
+## NoDisplay of the shell's side of the seam: the scanner keeps reporting Zen
+## honestly in apps.tsv -- the buy flow and the Files screen's open-with both
+## need that record -- and placement, as ever, is the rail's decision.
+##
+## Removing Zen ENTIRELY (flatpak, buy flow, file_open handlers) belongs to
+## the Chromium kiosk-shell work, not here: until that lands, Zen is the only
+## thing on the machine that can render a checkout. When it does land, this
+## entry goes with it.
+const RAIL_HIDDEN_APPS := ["app.zen_browser.zen"]
+
+
+## The desktop-entry ids of everything the rail must not draw: every store's
+## application, plus the deliberately hidden ids above.
 ##
 ## This is how "one thing, one home" is enforced now: marwanos-appscan reports
 ## a store's application like any other install -- the stores screen needs
@@ -143,13 +161,16 @@ static func stores() -> Array:
 ## and the RAIL is what filters these ids out (shell_root._populate), because
 ## the rail is the one place deciding what becomes a rail card. The scanner
 ## used to make this call by omitting Steam from apps.tsv, which turned the
-## installed list into a lie the stores screen then believed.
+## installed list into a lie the stores screen then believed. The hidden ids
+## ride in the same answer because they are the same decision -- "installed,
+## and not a card" -- made for a different reason.
 static func store_app_ids() -> Array:
 	var ids: Array = []
 	for store in stores():
 		var app_id := str(store.get("app_id", ""))
 		if not app_id.is_empty():
 			ids.append(app_id)
+	ids.append_array(RAIL_HIDDEN_APPS)
 	return ids
 
 
@@ -184,12 +205,12 @@ const AVAILABLE_APPS := [
 		"accent": "#2A3F5A",
 		"tagline": "Valve's storefront and library",
 	},
-	{
-		"id": "app.zen_browser.zen",
-		"title": "Zen Browser",
-		"accent": "#3B2F5A",
-		"tagline": "A browser, on the TV",
-	},
+	# Zen's card left on 2026-08-11: the owner no longer wants it as the
+	# browser, so nothing offers it -- installed (RAIL_HIDDEN_APPS keeps that
+	# card off too) or available. The id stays in shipped-apps because the
+	# stores screen's buy flow still opens Valve's checkout in it; the safe
+	# direction of drift ("there but not here") is exactly this one. Full Zen
+	# removal is the Chromium kiosk-shell session's job, not this list's.
 	# Kodi left on 2026-08-11 ("kodi is out no need to have it at all"),
 	# taking the media-player job with it -- the Files screen now says
 	# honestly that nothing opens a video. Same one-line return path as
