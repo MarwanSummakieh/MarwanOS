@@ -1,8 +1,33 @@
 # The tearing, the day of elimination, and the driver swap that was reverted
 
-**Status (2026-08-11, end of day — READ ALL THREE SENTENCES BEFORE ACTING):
-610.57.04 FIXES THE TEARING. It also runs games badly. The image is currently
-pinned back at 610.43.03, which means the shipping image tears.**
+**Status (2026-08-11, LATEST — supersedes everything below): THE TEARING IS
+INTERMITTENT PER BOOT, and no single-boot test in this file proves anything.**
+
+Measured: the bench booted 610.57.04 and the owner reported "tearing is gone".
+It was rebooted with NOTHING changed — same image digest 383d90b3, same driver
+610.57.04, same kernel 7.1.8, same `hundred` profile, same 99.99 Hz confirmed in
+the journal — and it tore again. Same everything, opposite result.
+
+**So every verdict recorded in this file was N=1 against a random variable.**
+That includes the ones that read as discoveries: killing Steam "stopping" it,
+`flat` "not stopping" it, and 610.57.04 "fixing" it. The elimination table below
+is still a useful record of what was TRIED, but it is not proof that any of
+those things were exonerated — a test that runs once cannot exonerate anything
+when the symptom flips on its own across identical boots.
+
+**THE REAL SHAPE**: the variable is per-modeset, not per-configuration. It was
+visible earlier and misread — "identical config, minutes apart, gave 'worse'
+then 'stopped', the difference being a compositor restart" — which is the same
+coin flip, seen once and explained away.
+
+**METHODOLOGY FROM HERE, non-negotiable**: no configuration may be called good
+or bad on fewer than 3 boots (or 3 `systemctl restart greetd` cycles, which
+re-roll the same dice more cheaply). Record every trial, including the boring
+ones. A run of 3 clean starts is weak evidence; 5 is worth acting on.
+
+**Previous status, now known unreliable and kept only as history: "610.57.04
+FIXES THE TEARING; it also runs games badly; the image is pinned back at
+610.43.03."** The performance half may also have been N=1.
 
 The verdict arrived after the revert, which is the coordination failure this
 file's own "next moves" list was written to prevent: the swap was reverted on
