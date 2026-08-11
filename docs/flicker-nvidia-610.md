@@ -1,10 +1,11 @@
-# The tearing, the day of elimination, and the driver swap
+# The tearing, the day of elimination, and the driver swap that was reverted
 
-**Status: swap staged 2026-08-11; verdict pending the owner's next reboot.**
-Whoever holds the pen after that reboot: fill in the verdict section at the
-bottom. If the tearing is gone, this file *is* the NVIDIA bug report — send it.
-If it is not, this file is the record that the driver branch was also
-exonerated, and the next suspect list is at the bottom too.
+**Status (2026-08-11, end of day): 610.57.04 was tried and REVERTED. It did not
+buy its way in — the owner reported that game performance collapsed across the
+board on it. The image is pinned back at 610.43.03, tearing and all.** The
+elimination table below still stands and is still the material for an NVIDIA
+report; what changed is that "just move to a newer driver" is now a measured
+dead end rather than an untried idea.
 
 ## Symptom
 
@@ -76,18 +77,64 @@ journalctl -b -t marwanos-session | grep "screen 0:"
 dmesg | grep -i "nvidia.*610"
 ```
 
-## Verdict of the swap
+## Verdict of the swap: REVERTED — performance collapse
 
-_Pending the owner's reboot._
+The bench booted 610.57.04 (image 43.20260811.1, kernel 7.1.8-100.fc43) and
+the owner's report was immediate and unambiguous: **"this broke performance
+completely, no game runs well anymore."** The pin was reverted the same day.
 
-- Tearing **gone** at 610.57.04 → 610.43.03 carried an HDMI flip regression
-  fixed upstream between .43 and .57. Report the table above to NVIDIA
-  against 610.43.03 anyway: the elimination is complete and reproducible,
-  and a fixed-later bug with a clean table is still a useful report.
-- Tearing **unchanged** at 610.57.04 → the whole 610 open-module branch is
-  suspect on this flip path. Next moves, in order: pin the previous major
-  branch (an *older* akmods digest whose kmod matches an equally old base
-  digest — pairs move together); failing that, the closed kmod sidecar
-  (`akmods-nvidia`) as a diagnostic; and file the NVIDIA report with this
-  table regardless. Do NOT reopen compositor, Steam, cable, port, VRR, or
-  refresh-rate theories — they are measured out, above.
+What was checked on the bench *before* reverting, so that the revert is a
+measured decision rather than a flinch — none of these explain it:
+
+| Suspected | Measured | Verdict |
+| --- | --- | --- |
+| Driver failed to load / wrong module | `NVRM: 610.57.04`, `nvidia_drm` + `nvidia_modeset` + `nvidia_uvm` all loaded | Healthy |
+| Compositor fell back to software | gamescope on `NVIDIA GeForce RTX 3070`, `selecting mode 3440x1440@100Hz` | On the GPU |
+| **Flatpak GL extension missing** (the classic: host driver moves, Steam's sandbox has no matching GL, everything drops to llvmpipe) | `org.freedesktop.Platform.GL.nvidia-610-57-04` **and** `GL32.` both installed from flathub | Not it |
+| GPU stuck in a low-power state | Runtime D3 `Disabled by default`, power state `D0`, Video Memory `Active` | Full power |
+| GPU faults | no `Xid`, no NVRM errors in dmesg | Clean |
+| `CAP_SYS_NICE` lost in the rebuild (would degrade frame pacing globally) | `getcap`: `cap_sys_nice=ep` present | Intact |
+| The `hundred` display profile's compositing tax (`-r 100 --force-composition`) | **Identical in the previous boot**, on the OLD driver, with Hollow Knight running under Proton 10.0 | Constant across both boots — not the new variable |
+
+That last row is the load-bearing one. The compositing profile is a real and
+permanent cost, but it did not change between the good boot and the bad one,
+so it cannot be what changed. The only variable was the image.
+
+**THE CONFOUND, stated plainly rather than buried:** the akmods kmod is built
+against one exact kernel, so the base image and the driver sidecar are welded
+and can only move together. This swap therefore moved 610.43.03 → 610.57.04
+*and* kernel 7.1.5-101 → 7.1.8-100 *and* a day of base packages, in one step.
+"The new driver is slow" is the leading hypothesis, not a proven one; "the new
+kernel is slow" has not been separated from it. Separating them needs a base
+bump with the driver held still, which the welding makes awkward — a
+deliberate experiment, not a side effect of the next bump.
+
+## Where this leaves the tearing
+
+Both known states are now bad in different ways, which is worth saying out
+loud so nobody re-runs this loop by accident:
+
+- **610.43.03** (pinned, shipping): games run well, panel tears.
+- **610.57.04**: games run badly. Its effect on the tearing was never
+  separately reported and is now unknown.
+
+Next moves, in rough order of cost:
+
+1. **Ask what 610.57.04 did to the tearing before spending anything else.** If
+   it fixed it, the problem becomes "find the performance cause on the newer
+   driver", which is a much better problem than the one we have. If it changed
+   nothing, the whole 610 open-module branch is suspect and step 2 is next.
+2. **An older pair** — an akmods digest carrying a driver *older* than
+   610.43.03, with the base digest whose kernel it was built against. This is
+   the "previous stable branch" idea, and note it is a pair hunt, not a
+   one-line change.
+3. **The closed kmod sidecar** (`akmods-nvidia` rather than
+   `akmods-nvidia-open`) purely as a diagnostic: if the closed module does not
+   tear, the fault is specific to the open module's flip path, which is
+   exactly the sentence an NVIDIA bug report wants.
+4. **File the report regardless.** The elimination table above is complete and
+   reproducible, and it is worth sending whether or not we ever find a
+   workaround.
+
+Do NOT reopen compositor, Steam, cable, port, VRR, or refresh-rate theories —
+they are measured out in the table at the top of this file.

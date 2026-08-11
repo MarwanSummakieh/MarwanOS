@@ -15,20 +15,28 @@
 
 ARG BASE_IMAGE="ghcr.io/ublue-os/base-main"
 ARG BASE_TAG="43"
-ARG BASE_DIGEST="sha256:dba7b1b5d15e6994b11e40e7bcf090a8269c8060984f8c092f18d0cb8cad8799"
+ARG BASE_DIGEST="sha256:0a7036f6c63744e974f022125e67fb03f892cd543ba54ec589cb38932a768997"
 
 ARG AKMODS_IMAGE="ghcr.io/ublue-os/akmods-nvidia-open"
 ARG AKMODS_TAG="main-43"
-ARG AKMODS_DIGEST="sha256:f59625b4411da47491e789bc03cab2fdda73aeef64fa9272d01fce1e4b8e986e"
-# This pair (resolved 2026-08-11) is a DRIVER swap, not routine freshness:
-# 610.43.03's open-kernel-module HDMI flip path tears on the bench's RTX 3060 +
-# Odyssey G85SD, and a full day of measurement exonerated everything else --
-# Steam absent, force-composition + disable-layers, 60 AND 100 Hz, both HDMI
-# ports, a certified cable, VRR off, nvidia_drm.fbdev=0: all tore identically.
-# The sidecar has no per-version tags, so the branch is chosen by choosing the
-# digest; this one ships 610.57.04 (kmod for kernel 7.1.8-100.fc43, matching
-# the base above). See docs/flicker-nvidia-610.md for the elimination table
-# and the verdict of this swap.
+ARG AKMODS_DIGEST="sha256:b73a194f8d9d74bc2bca763be2dedde193b77956f4c83cb5eb3978150ff1f11f"
+# THIS PAIR IS PINNED BACKWARDS ON PURPOSE, and the newer one is a known-bad
+# build rather than a bump nobody got round to. Do not "freshen" it without
+# reading docs/flicker-nvidia-610.md first.
+#
+# 2026-08-11: the bench's tearing was traced by elimination to the NVIDIA
+# 610.43.03 flip path, so this pair was moved forward to 610.57.04 (base
+# kernel 7.1.5 -> 7.1.8; the akmods kmod is built against one exact kernel, so
+# base and sidecar are welded and can only move together). The image built,
+# deployed and booted clean -- driver loaded, no Xid, GPU in D0, the flatpak
+# GL extension for the new version present -- and the owner reported that GAME
+# PERFORMANCE COLLAPSED across the board. Reverted here to the last pair known
+# to run games well.
+#
+# What that costs and what it does not: the tearing is back with it, and the
+# ~4 GB of image churn either way is why this is not a thing to flip casually.
+# The confound is recorded honestly in the doc: base and driver moved as one,
+# so "610.57.04 is slow" and "kernel 7.1.8 is slow" are not yet separated.
 
 # Godot, pinned by exact version plus checksums for the same reason the base is
 # pinned by digest: the engine exports the shell at build time, so the engine
@@ -634,7 +642,7 @@ RUN set -euxo pipefail; \
     : "|| exit because set -e ignores !-pipelines -- see the firefox removal."; \
     ! grep -q 'firmware/nvidia/ga102' /tmp/ir-files.txt \
         || { echo "nouveau firmware is still in the initramfs"; exit 1; }; \
-    grep -q 'firmware/nvidia/610\.57\.04' /tmp/ir-files.txt; \
+    grep -q 'firmware/nvidia/610\.43\.03' /tmp/ir-files.txt; \
     rm -f /tmp/ir-mods.txt /tmp/ir-files.txt
 
 # Session wiring. Separate from the package install so that editing a session
