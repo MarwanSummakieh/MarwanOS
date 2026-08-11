@@ -167,7 +167,7 @@ func _fact_row(label_text: String, value_text: String) -> Control:
 
 ## What this is, in words rather than in a MIME type. "video/x-matroska" is
 ## correct and tells a person on a sofa nothing; "Video (.mkv)" tells them why
-## Kodi is the thing that opens it.
+## it reads as Media rather than as an opaque extension.
 func _type_text(path: String, is_dir: bool) -> String:
 	var link := bool(entry.get("is_link", false))
 	if is_dir:
@@ -183,14 +183,17 @@ func _type_text(path: String, is_dir: bool) -> String:
 
 ## The same families file_open.gd routes on, named for a person. Deliberately
 ## derived from the SAME extension lists rather than from a second table: a
-## panel that called something a Video while A refused to open it in Kodi would
+## panel that called something a Video while A said something else about it would
 ## be the two disagreeing in the one place a person went to find out why.
 func _kind_for(ext: String) -> String:
 	if FileOpen.IMAGE_EXTENSIONS.has(ext):
 		return "Picture"
-	var handler := str(FileOpen.HANDLERS.get(ext, ""))
-	if handler == "tv.kodi.Kodi":
+	# Media is named from its own list rather than from a handler, because it
+	# HAS no handler since Kodi left -- see FileOpen.MEDIA_EXTENSIONS. The
+	# panel still calls a video a video; A on it is what says nothing opens it.
+	if FileOpen.MEDIA_EXTENSIONS.has(ext):
 		return "Media"
+	var handler := str(FileOpen.HANDLERS.get(ext, ""))
 	if handler == "app.zen_browser.zen":
 		return "Document"
 	return "File"

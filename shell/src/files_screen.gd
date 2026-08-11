@@ -22,7 +22,7 @@ extends Control
 ##                    selection. There are two of them, which IS split view.
 ##   file_item.gd     one folder or file, in whichever of the three modes.
 ##   file_thumbs.gd   budgeted, cached, cancellable picture decoding.
-##   file_open.gd     what opens what: the built-in viewer, Kodi, Zen, or an
+##   file_open.gd     what opens what: the built-in viewer, Zen, or an
 ##                    honest sentence.
 ##   image_viewer.gd  a picture fullscreen, with the folder under left/right.
 ##   file_properties.gd  Dolphin's properties dialog, at reading distance.
@@ -205,10 +205,10 @@ func _ready() -> void:
 
 	Media.state_changed.connect(_on_media_state_changed)
 	# DEAF WHILE A LAUNCH IS UP, the stores screen's rule and now this screen's
-	# too -- because this screen can start one. A opens a video in Kodi and
+	# too -- because this screen can start one. A opens a file in its handler and
 	# leaves this listing in the tree underneath; both read the same evdev
-	# devices, so without this every arrow meant for Kodi would also walk the
-	# cursor down a directory nobody is looking at, and a B meant for Kodi
+	# devices, so without this every arrow meant for the app would also walk the
+	# cursor down a directory nobody is looking at, and a B meant for the app
 	# would walk it up a folder.
 	Launcher.launch_started.connect(_on_launch_started)
 	Launcher.launch_finished.connect(_on_launch_finished)
@@ -446,7 +446,7 @@ func _refresh_hints() -> void:
 		else:
 			# What A will actually do to THIS file, from the same function the
 			# press goes through -- so the caption and the behaviour can never
-			# disagree about whether Kodi is installed.
+			# disagree about whether the handler is installed.
 			var plan := FileOpen.plan(str(entry.get("name", "")))
 			var caption := str(plan["detail"])
 			if str(plan["action"]) == "none" or str(plan["action"]) == "install":

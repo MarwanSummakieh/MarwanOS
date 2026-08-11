@@ -269,7 +269,7 @@ func _build() -> void:
 
 ## PLAY for a game, OPEN for everything else.
 ##
-## The rail is a library and most of it is games, but it also holds Kodi and a
+## The rail is a library and most of it is games, but it also holds a
 ## browser, and "Play" on a browser is the shell using a word it borrowed from a
 ## console without checking what it was pointing at. The hint row already says
 ## "Open" for the same press on a card, so this is the panel agreeing with the

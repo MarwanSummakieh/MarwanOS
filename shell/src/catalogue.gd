@@ -159,7 +159,7 @@ static func store_app_ids() -> Array:
 ## until an application could be REMOVED. After that, "not installed" stopped
 ## meaning "never heard of it" and started meaning "gone, and gettable back" --
 ## with nowhere on the rail to say so. The stores screen offers Steam back
-## because Steam is a store; nothing offered Kodi back, so removing it was a
+## because Steam is a store; nothing offered a removed app back, so removal was a
 ## one-way door on a machine with no terminal.
 ##
 ## So an entry here that is not in the installed list becomes a card in the
@@ -190,12 +190,10 @@ const AVAILABLE_APPS := [
 		"accent": "#3B2F5A",
 		"tagline": "A browser, on the TV",
 	},
-	{
-		"id": "tv.kodi.Kodi",
-		"title": "Kodi",
-		"accent": "#1F4E63",
-		"tagline": "Your media library, ten feet tall",
-	},
+	# Kodi left on 2026-08-11 ("kodi is out no need to have it at all"),
+	# taking the media-player job with it -- the Files screen now says
+	# honestly that nothing opens a video. Same one-line return path as
+	# everything else that has ever left this list.
 	# The 2026-08-08 curation (RetroArch, VLC, Moonlight, Spotify, Dolphin) is
 	# gone on the owner's word: apps nobody asked for made the shelf read as
 	# filler, and the file manager the Dolphin flatpak stood in for is the
@@ -341,7 +339,7 @@ static func terminal_entry() -> Dictionary:
 ## A TABLE, not a flag on the entry, because installed entries come from
 ## apps.tsv and a column there would put shell input policy into a scanner
 ## whose whole job is reporting what is on disk. Gamepad-native apps must
-## never appear here: Steam's Big Picture and Kodi read the pad themselves,
+## never appear here: applications that read the pad natively need no bridge,
 ## and double-delivered input is worse than none -- which is also why the
 ## desktop launch has its own id, so Big Picture's cannot match it.
 ## "keys" was built for a file manager (Dolphin) that the shell's own Files

@@ -774,17 +774,13 @@ RUN set -euxo pipefail; \
         "/usr/lib/systemd/system/multi-user.target.wants/marwanos-flatpak-install@com.valvesoftware.Steam.service"; \
     ln -sf ../marwanos-flatpak-install@.service \
         "/usr/lib/systemd/system/multi-user.target.wants/marwanos-flatpak-install@app.zen_browser.zen.service"; \
-    : "KODI, FOR MEDIA -- and it is no longer here as the file manager."; \
-    : "This block used to say Kodi WAS the file manager, on the argument"; \
-    : "that its browser already copied, moved, renamed and deleted from a"; \
-    : "sofa and the shell would otherwise have to grow a screen. The shell"; \
-    : "grew the screen (shell/src/files_screen.gd), and it browses this"; \
-    : "machine and the sticks marwanos-usbmount puts under /run/media."; \
-    : "What Kodi is still shipped FOR is the half the Files screen"; \
-    : "deliberately does not do: playing what it finds. It is a 10-foot UI"; \
-    : "the pad drives natively, which is why it stays a shipped app."; \
-    ln -sf ../marwanos-flatpak-install@.service \
-        "/usr/lib/systemd/system/multi-user.target.wants/marwanos-flatpak-install@tv.kodi.Kodi.service"; \
+    : "KODI IS GONE, on the owner's word (2026-08-11): 'kodi is out no need"; \
+    : "to have it at all'. It survived the eight-to-three trim as the media"; \
+    : "player -- the half the Files screen deliberately does not do -- and"; \
+    : "that half is now simply a use this appliance does not serve. The"; \
+    : "Files screen still browses and manages; a video opened from it has"; \
+    : "no player and says so, which is honest until a player is wanted"; \
+    : "again. One line here and one in shipped-apps bring it back."; \
     ln -sf ../marwanos-netcheck.service \
         /usr/lib/systemd/system/multi-user.target.wants/marwanos-netcheck.service; \
     ln -sf ../marwanos-appscan.service \
@@ -956,12 +952,16 @@ RUN set -euxo pipefail; \
     : "appctl refuses every store request and storeart fetches nothing --"; \
     : "both failing silently on a machine with no console. The greps are the"; \
     : "exact-id check on the first and last ids the file ships (Steam and"; \
-    : "Kodi): matching everywhere is string equality, so this catches the"; \
+    : "Zen): matching everywhere is string equality, so this catches the"; \
     : "stray whitespace or BOM that would make an id silently stop existing,"; \
-    : "and the last-id grep catches a truncated file."; \
+    : "and the last-id grep catches a truncated file. Kodi must NOT be in"; \
+    : "it -- removed 2026-08-11 -- and its absence is asserted because a"; \
+    : "merge or revert resurrecting the id would quietly re-grow an install"; \
+    : "unit for an application the owner asked off the machine."; \
     test -s /usr/lib/marwanos/shipped-apps; \
     grep -q '^com\.valvesoftware\.Steam$' /usr/lib/marwanos/shipped-apps; \
-    grep -q '^tv\.kodi\.Kodi$' /usr/lib/marwanos/shipped-apps; \
+    grep -q '^app\.zen_browser\.zen$' /usr/lib/marwanos/shipped-apps; \
+    ! grep -q 'kodi' /usr/lib/marwanos/shipped-apps; \
     test -L /usr/lib/systemd/system/timers.target.wants/marwanos-storeart.timer; \
     test -L /usr/lib/systemd/system/multi-user.target.wants/marwanos-panel.service; \
     : "Without this link nothing consumes the shell's profile requests, so"; \
@@ -974,7 +974,7 @@ RUN set -euxo pipefail; \
     test -L /usr/lib/systemd/system/multi-user.target.wants/marwanos-window-profile.service; \
     test -L "/usr/lib/systemd/system/multi-user.target.wants/marwanos-flatpak-install@com.valvesoftware.Steam.service"; \
     test -L "/usr/lib/systemd/system/multi-user.target.wants/marwanos-flatpak-install@app.zen_browser.zen.service"; \
-    test -L "/usr/lib/systemd/system/multi-user.target.wants/marwanos-flatpak-install@tv.kodi.Kodi.service"; \
+    test ! -e "/usr/lib/systemd/system/multi-user.target.wants/marwanos-flatpak-install@tv.kodi.Kodi.service"; \
     test -L /usr/lib/systemd/system/multi-user.target.wants/marwanos-netcheck.service; \
     test -L /usr/lib/systemd/system/multi-user.target.wants/marwanos-appscan.service; \
     test -L /usr/lib/systemd/system/multi-user.target.wants/marwanos-wifi.service; \

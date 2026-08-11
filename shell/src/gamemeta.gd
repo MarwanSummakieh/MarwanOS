@@ -66,7 +66,7 @@ const STEAM_PREFIX := "steam."
 const SOURCE_STEAM := "steam-store"
 
 ## Catalogue.AVAILABLE_APPS, the hand-written shelf. One line per shipped
-## flatpak, and the only description this project has ever had for Kodi or a
+## flatpak, and the only description this project has ever had for a
 ## browser -- neither of which has a Steam store page to fall back on.
 const SOURCE_CATALOGUE := "catalogue"
 

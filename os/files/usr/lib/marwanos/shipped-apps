@@ -23,17 +23,19 @@
 # they ever drift again. Phase 1 deletes all of it: marwand owns the app set
 # and serves it over RPC.
 #
-# THE SET IS THREE, DOWN FROM EIGHT. Steam is the games library, Kodi is the
-# player, Zen is the browser -- one app per job, no job twice, and browsing
-# files is the shell's own Files screen rather than an app at all. The five
-# that left (Dolphin, RetroArch, VLC, Moonlight, Spotify) each duplicated a
-# job something here already does, or served a use this appliance has not
-# grown yet; an id can come back with one line here and one in the
-# display_name table when the use arrives.
+# THE SET IS TWO, DOWN FROM EIGHT BY WAY OF THREE. Steam is the games library
+# and Zen is the browser (itself living on borrowed time until the project's
+# own Chromium shell replaces it) -- one app per job, no job twice, and
+# browsing files is the shell's own Files screen rather than an app at all.
+# Kodi left on 2026-08-11 on the owner's word -- "kodi is out no need to have
+# it at all" -- taking the media-player job with it: a video opened from the
+# Files screen now says it has no player, which is honest until the use
+# returns. The five before it (Dolphin, RetroArch, VLC, Moonlight, Spotify)
+# each duplicated a job something here already does; any id can come back
+# with one line here and one in the display_name table when the use arrives.
 #
 # Lines starting with # and blank lines are ignored. Ids only -- no globs, no
 # comments on the same line as an id. Matching everywhere is exact string
 # equality, so a stray space here is an app that silently stops existing.
 com.valvesoftware.Steam
 app.zen_browser.zen
-tv.kodi.Kodi

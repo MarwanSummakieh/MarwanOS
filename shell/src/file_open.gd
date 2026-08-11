@@ -16,13 +16,14 @@ extends RefCounted
 ##      already decodes PNG, JPEG, WEBP and SVG for thumbnails; showing one
 ##      fullscreen is the same loader and a black background. No dependency, no
 ##      launch, no wait.
-##   2. AN INSTALLED APPLICATION, for everything else it can do. Kodi is a
-##      media player driven by a pad natively; Zen is a browser and will render
-##      a PDF, an HTML file or a text file. Both are in the image's shipped set.
-##   3. THE HONEST SENTENCE, unchanged, for everything left -- and now it can be
-##      specific about WHY: "Kodi opens .mkv" when Kodi is simply not installed
-##      is a different problem from "nothing here opens .dll", and the person
-##      can fix the first from the rail.
+##   2. AN INSTALLED APPLICATION, for everything else it can do. Zen is a
+##      browser and will render a PDF, an HTML file or a text file; it is in
+##      the image's shipped set.
+##   3. THE HONEST SENTENCE for everything left, and since Kodi's removal that
+##      includes every video and audio file: "nothing on this machine opens
+##      .mkv" is true, and truer than naming a player the machine refuses to
+##      install. When an app that IS shipped is merely absent, the sentence
+##      still says which app and how to get it.
 ##
 ## THE HANDLER MUST BE INSTALLED, and that is checked against the installed
 ## seam rather than assumed from the shipped list. Launching `flatpak run` for
@@ -42,24 +43,22 @@ const IMAGE_EXTENSIONS := ["png", "jpg", "jpeg", "webp", "bmp", "svg"]
 ## what marwanos-appscan reports and what appctl installs -- because that is
 ## what "is it actually here" is answered against.
 ##
-## KODI TAKES A PATH ON ITS COMMAND LINE and plays it; that is the whole
-## integration, and it is why Kodi is the media answer rather than a player
-## the shell would have to grow. Zen is Firefox-derived and will open a local
-## file: URL for the document formats a browser already renders.
+## MEDIA HAS NO HANDLER ANY MORE, and the absence is a decision with a date on
+## it: Kodi -- which took a path on its command line and played it, the whole
+## integration -- left the image on 2026-08-11 on the owner's word ("kodi is
+## out no need to have it at all"). Every media extension therefore routes to
+## plan()'s honest "none": A on an .mkv says nothing on this machine opens it,
+## which is true, rather than naming a player the machine refuses to install.
+## The extensions live on in MEDIA_EXTENSIONS below so the properties panel
+## can still call a video a video.
+##
+## Zen is Firefox-derived and will open a local file: URL for the document
+## formats a browser already renders.
 ##
 ## A TABLE, not a chain of ifs, so adding a format is one line and so the hint
-## the screen shows ("Kodi opens .mkv") is generated from the same data that
-## decides what runs.
+## the screen shows is generated from the same data that decides what runs.
 const HANDLERS := {
-	# Video
-	"mkv": "tv.kodi.Kodi", "mp4": "tv.kodi.Kodi", "avi": "tv.kodi.Kodi",
-	"mov": "tv.kodi.Kodi", "m4v": "tv.kodi.Kodi", "webm": "tv.kodi.Kodi",
-	"mpg": "tv.kodi.Kodi", "mpeg": "tv.kodi.Kodi", "ts": "tv.kodi.Kodi",
-	# Audio
-	"mp3": "tv.kodi.Kodi", "flac": "tv.kodi.Kodi", "m4a": "tv.kodi.Kodi",
-	"ogg": "tv.kodi.Kodi", "opus": "tv.kodi.Kodi", "wav": "tv.kodi.Kodi",
-	"aac": "tv.kodi.Kodi",
-	# Documents and web, which a browser renders and a media player does not
+	# Documents and web, which a browser renders
 	"pdf": "app.zen_browser.zen", "html": "app.zen_browser.zen",
 	"htm": "app.zen_browser.zen", "txt": "app.zen_browser.zen",
 	"md": "app.zen_browser.zen", "json": "app.zen_browser.zen",
@@ -67,15 +66,24 @@ const HANDLERS := {
 	"log": "app.zen_browser.zen",
 }
 
-## Titles for the sentence, so it says "Kodi" rather than "tv.kodi.Kodi". The
+## Titles for the sentence, so it says "Zen Browser" rather than the raw id. The
 ## installed seam knows the title of everything on the machine -- and the case
 ## this sentence is FOR is the application being absent, which is exactly when
 ## that list cannot answer. Same two-source problem the rail's app alert has,
 ## solved the same way: a small table, then the raw id.
 const HANDLER_TITLES := {
-	"tv.kodi.Kodi": "Kodi",
 	"app.zen_browser.zen": "Zen Browser",
 }
+
+## The formats that ARE media, kept for naming rather than for routing: nothing
+## opens these since Kodi left, but the properties panel calling an .mkv a
+## plain "File" would be a second, quieter lie on top of the honest "nothing
+## opens this". Video and audio in one list because the distinction only
+## mattered to the player.
+const MEDIA_EXTENSIONS := [
+	"mkv", "mp4", "avi", "mov", "m4v", "webm", "mpg", "mpeg", "ts",
+	"mp3", "flac", "m4a", "ogg", "opus", "wav", "aac",
+]
 
 
 static func is_image(file_name: String) -> bool:
@@ -130,10 +138,9 @@ static func plan(file_name: String) -> Dictionary:
 ##
 ## A SEPARATE ID FROM THE APPLICATION'S OWN CARD, "open.<app>", for the reason
 ## the store's buy entry has one: the launch seam, the splash and the
-## pad bridge all key on the entry id, and "Kodi as a library you browse" and
-## "Kodi opened on one file" want different treatment from at least the first
-## of them. It also keeps a file-open out of the pad-bridge table, which is
-## right -- Kodi reads the pad itself.
+## pad bridge all key on the entry id, and "an app as a thing you browse" and
+## "the same app opened on one file" want different treatment from at least
+## the first of them. It also keeps a file-open out of the pad-bridge table.
 ##
 ## The icon is the application's real one where appscan resolved a path, so the
 ## launch splash shows the logo of the thing that is starting rather than a

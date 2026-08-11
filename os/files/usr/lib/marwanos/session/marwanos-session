@@ -1098,7 +1098,7 @@ start_gamescope() {
     #
     # `loose` is the one profile that drops it, and dropping it is not free: this
     # flag is what makes a placeholder satisfy M1's acceptance wording, and
-    # without it Zen and Kodi open at whatever size they choose on a television.
+    # without it Zen opens at whatever size it chooses on a television.
     # It is a profile rather than a fix for that reason -- it is a diagnostic
     # question ("is forcing Steam's popups fullscreen the flicker?"), and the
     # answer being yes would mean finding a narrower way to keep it.
@@ -1398,7 +1398,7 @@ export GODOT_WAYLAND_DISABLE_LIBDECOR=1
 #
 # Both are in the `__GL_` namespace, which is the proprietary driver's OpenGL
 # configuration and nothing else. They bind GL clients -- Xwayland applications
-# drawing with OpenGL, which on this machine is most games, Kodi, and the shell
+# drawing with OpenGL, which on this machine is most games and the shell
 # whenever it is run with --rendering-method gl_compatibility. They do NOT reach
 # gamescope: gamescope composites with Vulkan and owns the KMS flip itself, so
 # neither of these is the thing that decides whether the panel runs at a variable
