@@ -1,29 +1,60 @@
-# The tearing is below the software, and it is not the driver version either
+# The tearing: reproduced, recovered, and cornered to the link-after-training
 
-**Status (2026-08-11, night — supersedes everything below, including every
-previous status header):**
+**Status (2026-08-12, small hours — supersedes everything below, including
+every previous status header). THE CAUSAL LOOP IS CLOSED AND REPRODUCIBLE:**
 
-1. **The artifact is present on a completely static screen.** Nothing moving,
-   nothing being redrawn, and the picture still shimmers. That puts it below the
-   compositor, below the shell, below frame delivery entirely.
-2. **Both driver branches do it.** Booted on 610.43.03 / kernel 7.1.5, at the
-   same 3440x1440@100, same port, same cable, same stock session as the trials
-   that came before it: still shimmers when static, still tears under motion.
-   610.57.04 and 610.43.03 are indistinguishable on this symptom.
-3. **The panel, the cable and the mode are clean on a different laptop** — same
-   monitor, same cable, 3440x1440@100+ over HDMI.
+1. **Trigger: a freshly-trained link.** A cold boot or a physical
+   unplug/replug of the display cable puts the link in a state where the
+   gamescope session shimmers on a static screen and tears under motion. This
+   was demonstrated on demand: the owner replugged DP mid-session and the
+   artifact returned immediately.
+2. **Recovery: a plymouth modeset cycle.** Stop greetd → `plymouthd` +
+   `plymouth show-splash` → quit → start greetd, and the same session on the
+   same connector is clean. **Demonstrated twice**, the second time against a
+   deliberately re-broken link. The clean state then survives everything:
+   greetd restarts (6+), GPU at 53°C, memory clock locked at 7001, memory
+   clock flapping freely, gamescope color management on and off. Only a fresh
+   link training breaks it again.
+3. **The artifact needs BOTH halves.** On the same freshly-trained marginal
+   link, plymouth's splash is stable (3/3 across its own modesets) while
+   gamescope shimmers. The scanout difference is measured, not guessed:
+   plymouth scans an **8-bit XR24 linear** framebuffer with no color
+   pipeline; gamescope scans a **10-bit XB30 NVIDIA block-linear**
+   (`modifier=0x300000000606014`, decoded: uncompressed, kind 6) framebuffer
+   through nvidia-drm's color pipeline with live PQ-125 EOTF/inverse-EOTF
+   colorops. Fresh link + plymouth-style scanout = clean. Settled link +
+   gamescope-style scanout = clean. Fresh link + gamescope-style scanout =
+   the artifact.
+4. **Transport does not matter; driver version does not matter.** Both HDMI
+   ports and DP-1 show it; 610.43.03/7.1.5 and 610.57.04/7.1.8 show it
+   identically. The same panel, same cable, same 3440x1440@100 over HDMI is
+   clean on a different laptop — so it is this machine's side, in whatever
+   the NVIDIA driver family negotiates onto a fresh link that plymouth's
+   legacy 8-bit modeset then settles.
 
-Taken together the leading suspect is now **this laptop's HDMI output
-hardware**: the transmitter, the port, or the board between them. The elimination
-is broad — two drivers, two kernels, two HDMI ports, composition on and off, two
-resolutions, two refresh rates, two different clients, and motion versus no
-motion at all. Nothing above the wire is left holding anything.
+**Eliminated this session, each at n≥3 and mostly blind** (details in the trial
+log): the compositor's composition flag, the shell (vkcube control), the HDMI
+ports, the HDMI transport itself (DP identical), the driver version, GPU
+temperature (still clean at 53°C), and GPU memory-clock flapping — measured
+flapping P3↔P5 every ~7s on an idle screen, but clean with it flapping and
+shimmering with it locked, so it is out in both directions.
 
-The one thing still not separated is stated plainly at the bottom: the other
-laptop ran a different operating system, so "both NVIDIA *Linux* branches
-misprogram this chassis's link" survives as an alternative to "this chassis's
-link is marginal". Both are consistent with everything measured. Neither is a
-software fix.
+**The workaround this arms** (not yet built): a boot-time "link scrub" — after
+the first session is up, bounce the display through one plymouth cycle. Boot
+already runs plymouth BEFORE greetd and still tears, so the order matters: the
+healing transition observed is specifically gamescope-modeset →
+plymouth-modeset → gamescope-modeset. Cost: one ~10s splash flash shortly
+after the shell first appears. Ugly, mechanical, and it worked 2 out of 2
+times tonight. n=2, so build it as an experiment, not as a triumph.
+
+**For the NVIDIA report**, the sentence this file existed to find: *on an RTX
+3070 Laptop (10de:2488), open kernel modules 610.43.03 and 610.57.04
+identically, a freshly-trained HDMI or DP link shows static-image sparkle and
+motion tearing when scanning a 10-bit XB30 block-linear framebuffer with
+active color-pipeline PQ colorops, is clean scanning an 8-bit XR24 linear
+framebuffer on the same link state, and becomes permanently clean for the
+10-bit path after one legacy 8-bit modeset cycle — surviving all subsequent
+atomic modesets until the link is physically retrained.*
 
 ---
 
@@ -88,6 +119,48 @@ monitor's own upscaler blurring a high-frequency artifact.
 | 20 | 2560x1080@100 requested | on | HDMI-A-2 | **Void** — see below |
 | 21 | 3440x1440@100 on **610.43.03 / 7.1.5**, static | on | HDMI-A-2 | **Shimmers** |
 | 22 | 3440x1440@100 on **610.43.03 / 7.1.5**, moving | on | HDMI-A-2 | Tearing |
+
+### The DP night session (2026-08-12, owner connected a DP cable; all on 610.43.03 / 7.1.5)
+
+All of these ran at 3440x1440@60 — the booted (old) image does not know the
+`hundred` profile, so the stock session falls back to `steady`/`-r 60`. Mode
+verified from the journal per trial as before.
+
+| # | What | Verdict |
+| --- | --- | --- |
+| DP1–DP3 | gamescope, fresh DP link, 3 restarts | Shimmers/tears, 3/3 |
+| — | memclock watch: P3↔P5 flap (5001↔810) every ~7s on an idle static screen | measured |
+| — | memclock **locked** 5001, static screen | Still shimmers |
+| P1–P3 | plymouth splash, no gamescope, same mode (verified in DRM state), 3 modesets | **Stable, 3/3** |
+| — | gamescope again after the plymouth cycle, stock config | **Clean** |
+| A | gamescope, `GAMESCOPE_COLOR_MANAGEMENT_DISABLE=1` | Clean |
+| B | gamescope, stock (blind interleave) | **Clean** — kills the CM theory |
+| C | gamescope, CM disabled again | Clean |
+| — | GPU heated to 53°C, mem locked 7001 / gfx 1305 | **Still clean** — kills the temperature theory |
+| — | owner **replugs DP** (fresh link training) | **Shimmer returns** |
+| — | plymouth cycle repeated against the re-broken link | Splash stable; **gamescope clean again after** |
+
+Objective facts pulled from debugfs/NVML during the above: gamescope does
+**not** page-flip while the screen is static (same fb id over 10s), so flips
+are out; gamescope's scanout buffer is XB30 10-bit block-linear, uncompressed
+(modifier `c=0`); plymouth's is XR24 8-bit linear; nvidia-drm's
+`color_pipeline` parameter defaults on and keeps PQ-125 EOTF colorop pairs
+active in the plane pipeline even with gamescope's color management disabled
+(`nvidia_drm.color_pipeline=0` exists and was NOT yet tried — it needs a karg
+via a direct BLS edit and became moot for tonight once the link-state
+mechanism was found, but it is the right first lever if the 10-bit/colorop
+path needs to be split from the link-training half).
+
+### Found in passing, and it is a real image bug
+
+The current `:latest` (the post-revert image the bench now boots) is
+**internally mismatched**: kernel modules are 610.43.03, but the userspace is
+610.57.04 (`/usr/lib64/libnvidia-ml.so.610.57.04`, and the flatpak GL
+extension is `nvidia-610-57-04`). The revert moved the akmods sidecar digest
+back and did not move the userspace packages with it. Rendering and NVML
+demonstrably work anyway on the GSP path, but every conclusion about "the
+610.43.03 driver" on this boot is really about that mixed pair, and the
+Containerfile should either weld the two or assert they match.
 
 Every trial's mode was verified from the journal (`drm: selecting mode ...` and
 the shell's own `screen 0: ... refresh ...`) before its verdict was recorded, so
@@ -260,10 +333,19 @@ no build was pulled, because the bench's booted deployment is pinned to a driver
 - `revert` — restores `/etc/greetd/config.toml` from the backup taken before the
   first edit and restarts greetd onto the stock session.
 
-**greetd is back on the stock session** (`revert` was run before the reboot), so
-the harness is installed but inert — it changes nothing until greetd is pointed
-at it again. It survives on both deployments' `/etc`, so it is there for the
-next round without re-uploading anything.
+**greetd is back on the stock session** (`revert` run again at the end of the
+DP night session), so the harness is installed but inert — it changes nothing
+until greetd is pointed at it again. It survives on both deployments' `/etc`,
+so it is there for the next round without re-uploading anything. The harness
+gained two pieces during the night: the session file now sources
+`/etc/marwanos-trial/env` (VAR=value lines, allexport) so per-trial environment
+reaches gamescope, and `round2` runs env-varying trials the way `round` runs
+mode-varying ones. `/root/nvml_clocks.py` and `/root/nvml_lock.py` (NVML via
+ctypes; the image has no nvidia-smi) watch and lock GPU clocks.
+
+**The bench was left as the owner chose**: DP cable connected, stock session,
+native 3440x1440@60, in the healed-link state — clean at handoff. A reboot or
+a replug re-rolls the fresh-link dice until the link-scrub workaround exists.
 
 The pillarboxed configuration tried during this session —
 `3440 1440 100 NESTED=1920x1080 -S fit`, native 3440x1440@100 on the wire with
