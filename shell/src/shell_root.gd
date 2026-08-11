@@ -36,11 +36,12 @@ const IconButton = preload("res://src/icon_button.gd")
 const AppOverlay = preload("res://src/app_overlay.gd")
 const CardMenu = preload("res://src/card_menu.gd")
 const DetailsPanel = preload("res://src/details_panel.gd")
-const Glyphs = preload("res://src/glyphs.gd")
 const ErrorScreen = preload("res://src/error_screen.gd")
 const MosMark = preload("res://src/mos_mark.gd")
 const ServiceTray = preload("res://src/service_tray.gd")
 const ServiceMenu = preload("res://src/service_menu.gd")
+const StatusCorner = preload("res://src/status_corner.gd")
+const QuickSettings = preload("res://src/quick_settings.gd")
 
 ## Same prefix, same meaning as tile.gd's: an entry whose id starts with it is a
 ## Steam library game rather than an application, which is what makes it the one
@@ -54,7 +55,6 @@ var _art_back: TextureRect = null
 var _art_front: TextureRect = null
 var _title: Label = null
 var _subtitle: Label = null
-var _clock: Label = null
 var _rail_viewport: Control = null
 var _rail: HBoxContainer = null
 
@@ -66,6 +66,14 @@ var _rail: HBoxContainer = null
 var _title_block: Control = null
 var _rail_row: Control = null
 var _hint_row: Control = null
+## The top bar's whole row, HIDDEN BY DEFAULT at the owner's request (#12): the
+## rail is the home screen, and the bar appears when Up is pressed from it --
+## see _handle_bar_reveal for the mechanism and _hide_bar for the way back.
+var _bar_row: Control = null
+## True while the bar is up only because a failure alert needed somewhere to be
+## seen -- see _on_apps_state_changed. Cleared the moment the person moves into
+## the bar themselves, because then it is up for them.
+var _bar_revealed_for_alert := false
 var _status: Label = null
 var _app_alert: Label = null
 var _app_alert_timer: Timer = null
@@ -84,7 +92,6 @@ var _gameart_pending := false
 ## The rail entry the cursor is on, kept because the card menu is opened from
 ## input handling rather than from the card itself.
 var _selected_entry: Dictionary = {}
-var _wifi: Glyphs = null
 ## The bar's focusable cluster, in the order they sit. Kept as one array as
 ## well as four members because every wiring loop below wants "all of them" --
 ## and a fifth icon arriving should not be a fifth line in four places.
@@ -95,6 +102,11 @@ var _store_button: IconButton = null
 var _files_button: IconButton = null
 var _gear_button: IconButton = null
 var _power_button: IconButton = null
+## The wifi glyph and the clock, made one focusable control: A on it drops the
+## quick settings panel. See status_corner.gd for why the indicators became
+## the button rather than gaining a sibling.
+var _status_corner: StatusCorner = null
+var _quick_settings: QuickSettings = null
 
 var _tiles: Array = []
 var _last_focused: Control = null
@@ -166,6 +178,14 @@ func _ready() -> void:
 	# this is the current answer rather than a default -- the first frame the
 	# TV shows already carries the wifi glyph if the machine has said Offline.
 	_on_network_changed(SystemStatus.network)
+
+	# A machine that boots with no pad starts with the bar up and "Reconnect
+	# the controller" on it: player_one_absent only fires on a CHANGE, and
+	# boot-without-pad is a state, not a change. Same alert reveal as the
+	# unplug, so a pad arriving retires it through the same door.
+	if not PlayerOne.has_controller() and _bar_row != null:
+		_reveal_bar(false)
+		_bar_revealed_for_alert = true
 
 	_start_clock()
 
@@ -270,7 +290,20 @@ func _build() -> void:
 	column.add_theme_constant_override("separation", TvTheme.SECTION_GAP)
 	safe.add_child(column)
 
-	column.add_child(_inset(_build_topbar()))
+	# HIDDEN BY DEFAULT, at the owner's request: the home screen is the rail and
+	# the art, and the bar -- store, files, settings, power, notifications --
+	# appears when Up is pressed from the rail. Kept as a field because four
+	# other places move it: the reveal, the hide, the empty-rail fallback (a
+	# machine with no cards has nothing BUT the bar to focus) and the app alert
+	# (a failure must be seen without being asked for). Hiding a VBox child
+	# collapses its slot, so the spacer below simply grows and the rail never
+	# moves -- the reveal costs no layout jump at the bottom of the screen.
+	_bar_row = _inset(_build_topbar())
+	_bar_row.visible = false
+	column.add_child(_bar_row)
+	# Said in the journal because it is a designed absence: a bar missing from
+	# the first frame is this line, not a build that lost the top of the UI.
+	ShellLog.info("top bar starts hidden; Up from the rail reveals it")
 
 	# Pushes everything below it to the bottom of the surface. The rail sitting
 	# low is not a style choice: the hero art it is drawn over is the thing being
@@ -409,11 +442,14 @@ func _build_topbar() -> Control:
 	mark.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	bar.add_child(mark)
 
-	# THE SERVICE TRAY, immediately right of the mark, because what it shows is
-	# about the machine rather than about the screen: which background services
-	# are up. Lit or grey per service, and A opens the menu that starts and stops
-	# them. It is added to _bar_buttons below with the rest of the focusables so
-	# the neighbour table picks it up without a special case.
+	# THE NOTIFICATION BELL, immediately right of the mark, because what it
+	# shows is about the machine rather than about the screen: whether the
+	# background services need attention, said as a badge on one bell rather
+	# than as a row of app icons (the owner's #17 -- see service_tray.gd). A
+	# opens the menu that starts and stops them, which is also where
+	# notifications will land when the shell has any. It is added to
+	# _bar_buttons below with the rest of the focusables so the neighbour table
+	# picks it up without a special case.
 	_service_tray = ServiceTray.new()
 	_service_tray.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	_service_tray.activated.connect(_open_service_menu)
@@ -472,13 +508,25 @@ func _build_topbar() -> Control:
 	_files_button = _bar_button("folder", "Files", Files.open)
 	_gear_button = _bar_button("gear", "Settings", Settings.open)
 	# The power menu, asked for by name: off, restart, sleep, next to the
-	# others. Last of the focusables so a thumb overshooting the gear lands on
-	# it rather than on nothing.
+	# others.
 	_power_button = _bar_button("power", "Power", Power.open)
 
-	for button in _bar_buttons:
-		bar.add_child(button)
-		bar.add_child(_bar_gap())
+	# THE STATUS CORNER IS THE LAST FOCUSABLE, rightmost because it is the
+	# corner: the wifi glyph and the clock, which used to be loose indicators
+	# here, are now the face of one button whose A drops the quick settings
+	# panel (#13). Appended by hand rather than through _bar_button because it
+	# is not an IconButton -- but into the same array, so the neighbour table
+	# still cannot drift from what is on the bar.
+	_status_corner = StatusCorner.new()
+	_status_corner.activated.connect(_open_quick_settings)
+	_bar_buttons.append(_status_corner)
+
+	for index in _bar_buttons.size():
+		bar.add_child(_bar_buttons[index])
+		# No gap after the last one: the corner ends the bar, and a trailing
+		# gap would hold it off the safe area's right edge for nothing.
+		if index + 1 < _bar_buttons.size():
+			bar.add_child(_bar_gap())
 
 	# THE TRAY JOINS THE FOCUS CHAIN AFTER the loop above, not before it: it was
 	# already parented to the bar at the far left, and letting the loop see it
@@ -494,29 +542,10 @@ func _build_topbar() -> Control:
 		_bar_buttons.insert(0, _service_tray)
 	Installed.apps_changed.connect(_on_tray_membership_changed)
 
-	# The network's answer as a glyph next to the time, from SystemStatus. In
-	# the bar for the same reason the controller state is: connectivity coming
-	# and going should never take the home screen away, only annotate it.
-	# Hidden when the system has made no claim -- a desk run, or a boot too
-	# early for netcheck to have answered -- because drawing a struck wifi fan
-	# on a machine that merely has not said yet would be the indicator lying in
-	# the direction that causes cable-wiggling.
-	_wifi = Glyphs.new()
-	_wifi.custom_minimum_size = Vector2(TvTheme.SIZE_TOPBAR + 10, TvTheme.SIZE_TOPBAR + 10)
-	_wifi.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	_wifi.visible = false
-	_wifi.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	bar.add_child(_wifi)
-
-	bar.add_child(_bar_gap())
-
-	_clock = Label.new()
-	_clock.add_theme_font_size_override("font_size", TvTheme.SIZE_TOPBAR)
-	_clock.add_theme_color_override("font_color", TvTheme.TEXT_SECONDARY)
-	_clock.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	_clock.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	bar.add_child(_clock)
-
+	# The wifi glyph and the clock used to end the bar here as loose indicator
+	# Labels. They still end it -- inside the status corner appended above,
+	# where they double as the quick settings panel's button. The rules about
+	# what the wifi fan may claim went with them; see status_corner.set_network.
 	return bar
 
 
@@ -674,12 +703,15 @@ func _populate() -> void:
 
 ## The rail keeps its one-axis argument -- left and right between cards, hard
 ## stops at the ends, no wrapping (a selection that teleports across the rail
-## when you lean on the stick reads as a glitch). What the third amendment
-## added is ONE move off that axis: up, from any card, lands on the store icon
-## -- the PS5 shape, where the bar is a second row rather than decoration. Down
-## from the bar returns to the rail; _scroll_to_selected keeps the buttons'
-## down-neighbour pointed at the selected card, so the round trip up-and-down
-## lands where the person left rather than at the rail's start.
+## when you lean on the stick reads as a glitch). The ONE move off that axis --
+## up, from any card, lands on the store icon, the PS5 shape -- survives the
+## bar hiding (#12), but it is _handle_bar_reveal's move now rather than a row
+## in this table: a neighbour path cannot reveal a hidden control, so within
+## the table every card's up is a hard stop. Down from the bar returns to the
+## rail; _scroll_to_selected keeps the buttons' down-neighbour pointed at the
+## selected card, so the round trip up-and-down lands where the person left
+## rather than at the rail's start -- and the card taking focus is what re-hides
+## the bar (see _on_card_selected).
 ##
 ## Everything is still an explicit table someone can read. Down from a card and
 ## up from the bar stay pointed at self, so Control's geometric search can
@@ -716,7 +748,13 @@ func _wire_focus_neighbours() -> void:
 
 		tile.focus_neighbor_left = tile.get_path_to(_tiles[left])
 		tile.focus_neighbor_right = tile.get_path_to(_tiles[right])
-		tile.focus_neighbor_top = tile.get_path_to(_store_button)
+		# SELF, NOT THE STORE BUTTON ANY MORE. Up from a card still lands on
+		# the store -- that is _handle_bar_reveal's job now, because the bar
+		# hides (#12) and a neighbour path into a hidden control is a press
+		# Godot drops with a warning. The table keeps the hard stop so the
+		# geometric search can never wander; the one move off this axis lives
+		# in _input, where it can also make the bar exist first.
+		tile.focus_neighbor_top = tile.get_path_to(tile)
 		tile.focus_neighbor_bottom = tile.get_path_to(tile)
 
 	# The bar is the rail's argument on its own row: one axis, hard stops at both
@@ -744,6 +782,14 @@ func _on_card_selected(entry: Dictionary) -> void:
 	# Remembered for the card menu, which is opened from _unhandled_input and
 	# therefore has no card to ask.
 	_selected_entry = entry
+	# A card taking focus is the rail saying "the person is back down here",
+	# whichever route they took -- Down off a bar icon, B in the bar, a surface
+	# closing onto a remembered card -- so it is the single place the bar
+	# re-hides (#12). NOT when the bar is up for an alert the person never
+	# asked about: scrolling the rail must not dismiss a failure line that
+	# exists precisely to be seen from the rail.
+	if _bar_row != null and _bar_row.visible and not _bar_revealed_for_alert:
+		_hide_bar()
 	# OPTIONS IS ONLY OFFERED WHERE IT DOES SOMETHING. The menu's one entry is
 	# Uninstall, and an application that is not on the machine cannot be
 	# removed -- so on an available card the hint would advertise a button
@@ -1065,6 +1111,13 @@ func _ensure_focus() -> void:
 	if get_viewport().gui_get_focus_owner() != null:
 		return
 	if is_instance_valid(_last_focused):
+		# The remembered place can be a bar icon -- a surface opened from the
+		# bar remembers the icon that opened it -- and the bar may have hidden
+		# meanwhile (an alert reveal expiring while the surface was up). The
+		# person's place outranks the hide: bring the bar back so the grab has
+		# somewhere to land, rather than silently dropping them onto the rail.
+		if _bar_buttons.has(_last_focused) and _bar_row != null and not _bar_row.visible:
+			_reveal_bar(false)
 		_last_focused.grab_focus()
 	elif not _tiles.is_empty():
 		var first: Control = _tiles[0]
@@ -1073,7 +1126,10 @@ func _ensure_focus() -> void:
 		# An empty rail is the normal state of a fresh machine, and it must not
 		# be a dead end: with no card to focus, the store icon is both the only
 		# focusable thing left and exactly where someone with nothing installed
-		# needs to go.
+		# needs to go. The bar has to exist to be landed on, so the hide (#12)
+		# yields here -- and _hide_bar refuses to fire while the rail is empty,
+		# which keeps the two rules from fighting.
+		_reveal_bar(false)
 		_store_button.grab_focus()
 
 
@@ -1126,10 +1182,10 @@ func _start_clock() -> void:
 
 
 func _refresh_clock() -> void:
-	if _clock == null:
+	if _status_corner == null:
 		return
 	var now := Time.get_time_dict_from_system()
-	_clock.text = "%02d:%02d" % [int(now.get("hour", 0)), int(now.get("minute", 0))]
+	_status_corner.set_clock("%02d:%02d" % [int(now.get("hour", 0)), int(now.get("minute", 0))])
 
 
 func _on_launch_started(_entry: Dictionary) -> void:
@@ -1189,10 +1245,22 @@ func _on_player_one_present(_device: int, _pad_name: String) -> void:
 	# A controller arriving is also the moment a shell that came up with nothing
 	# focused becomes usable, so take the opportunity.
 	_ensure_focus()
+	# And the moment the "Reconnect the controller" line stops being true, so
+	# the bar it summoned can stand down (unless something else still needs it
+	# -- _retire_alert_reveal checks).
+	_retire_alert_reveal()
 
 
+## The pad going away is the second thing that summons the hidden bar
+## unprompted (#12), for the app alert's exact reason: the line lives in the
+## bar so that losing a pad does not take the home screen away -- but a bar
+## that stays hidden over "Reconnect the controller" is a message to nobody,
+## written on a machine whose one input device just left.
 func _on_player_one_absent() -> void:
 	_refresh_status()
+	if _bar_row != null and not _bar_row.visible:
+		_reveal_bar(false)
+		_bar_revealed_for_alert = true
 
 
 ## How long a failure stays in the top bar. It has to outlast someone looking
@@ -1218,6 +1286,8 @@ func _on_apps_state_changed(state: String, app: String, detail: String) -> void:
 		_app_alert.text = ""
 		if _app_alert_timer != null:
 			_app_alert_timer.stop()
+		# The alert is what the bar came up for, and it just resolved.
+		_retire_alert_reveal()
 		return
 
 	# The application's TITLE, because "Steam" is what the person pressed a
@@ -1242,6 +1312,16 @@ func _on_apps_state_changed(state: String, app: String, detail: String) -> void:
 		_app_alert_timer.timeout.connect(_on_app_alert_expired)
 		add_child(_app_alert_timer)
 	_app_alert_timer.start(APP_ALERT_SECONDS)
+
+	# THE ALERT LIVES IN A BAR THAT HIDES NOW (#12), and a failure line nobody
+	# can see is exactly the journal-only silence this label was built to end.
+	# So a failure brings the bar up on its own, unfocused -- the person's
+	# thumb stays where it was on the rail -- and the expiry below (or the
+	# state resolving above) takes it back down. If the person was already in
+	# the bar, the flag stays false and their reveal is theirs to keep.
+	if _bar_row != null and not _bar_row.visible:
+		_reveal_bar(false)
+		_bar_revealed_for_alert = true
 
 
 ## A human name for an application id -- see _on_apps_state_changed for why the
@@ -1269,6 +1349,28 @@ func _on_app_alert_expired() -> void:
 	if _app_alert != null:
 		_app_alert.visible = false
 		_app_alert.text = ""
+	_retire_alert_reveal()
+
+
+## The bar came up for an alert alone; the alert is gone, so the bar goes too
+## -- UNLESS the person moved into it meanwhile, in which case it is up for
+## them and leaves when they do. Checked on the focus owner rather than on the
+## flag alone because Up during an alert takes the reveal over (see
+## _reveal_bar) and this is the belt to that brace.
+func _retire_alert_reveal() -> void:
+	if not _bar_revealed_for_alert:
+		return
+	# The app alert and the controller line are independent -- both can be true
+	# at once, which is why they are two labels (see _build_topbar) -- so one
+	# resolving must not hide the other. Either alone keeps the bar up.
+	if _app_alert != null and _app_alert.visible:
+		return
+	if not PlayerOne.has_controller():
+		return
+	_bar_revealed_for_alert = false
+	var owner := get_viewport().gui_get_focus_owner()
+	if owner == null or not _bar_buttons.has(owner):
+		_hide_bar()
 
 
 func _refresh_status() -> void:
@@ -1375,21 +1477,12 @@ func _on_gameart_changed() -> void:
 	_on_apps_changed(Installed.apps)
 
 
+## The glyph and its rules live in the status corner now; this stays as the
+## seam's listener because the corner is furniture this node built, not an
+## autoload that can subscribe for itself.
 func _on_network_changed(state: String) -> void:
-	if _wifi == null:
-		return
-	match state:
-		"online":
-			_wifi.visible = true
-			_wifi.kind = "wifi"
-			_wifi.color = TvTheme.TEXT_SECONDARY
-		"offline":
-			_wifi.visible = true
-			_wifi.kind = "wifi-off"
-			_wifi.color = TvTheme.TEXT_ALERT
-		_:
-			# No claim from the system, no glyph on the screen. See _build_topbar.
-			_wifi.visible = false
+	if _status_corner != null:
+		_status_corner.set_network(state)
 
 
 ## THE HOME BUTTON IS HANDLED IN _input, NOT _unhandled_input, and that is the
@@ -1400,20 +1493,83 @@ func _on_network_changed(state: String) -> void:
 ## is hidden behind a launch.
 ##
 ## Everything else is left alone: this consumes nothing unless there is a
-## running application and the press is the home button.
+## running application and the press is the home button, or the press is the
+## Up that summons the hidden top bar (see _handle_bar_reveal).
 func _input(event: InputEvent) -> void:
+	if _handle_home_button(event):
+		return
+	_handle_bar_reveal(event)
+
+
+func _handle_home_button(event: InputEvent) -> bool:
 	if not InputMap.has_action("ui_shell_home"):
-		return
+		return false
 	if not event.is_action_pressed("ui_shell_home"):
-		return
+		return false
 	if not Launcher.is_busy() or not Launcher.can_close():
 		# No process to offer anything about. The placeholder branch has no pid
 		# and is dismissed with B, and at the rail the button means nothing.
-		return
+		return false
 	if _overlay != null:
-		return
+		return false
 	get_viewport().set_input_as_handled()
 	_open_overlay()
+	return true
+
+
+## UP FROM THE RAIL SUMMONS THE BAR (#12). Caught in _input rather than
+## through the focus-neighbour table, and the placement is forced, not a
+## style choice: the bar is hidden, a hidden control cannot take focus, so a
+## neighbour path pointing into it would be a press Godot drops -- and by the
+## time _unhandled_input would see the event, the viewport's focus traversal
+## has already consumed every arrow that lands on a focused control. _input
+## runs before both, which makes it the one hook that can show the bar and
+## move focus into it on the same press.
+##
+## Every guard is a surface that owns the pad while it is up. `visible` covers
+## the fullscreen surfaces, the card menu and a running application, all of
+## which hide this node; the panel and the two drop menus do not hide it, so
+## they are named. The focus owner must be a card: Up means "to the bar" only
+## from the rail, and anywhere else this consumes nothing.
+func _handle_bar_reveal(event: InputEvent) -> void:
+	if not visible or _bar_row == null:
+		return
+	if _details != null or _service_menu != null or _quick_settings != null:
+		return
+	if not event.is_action_pressed("ui_up"):
+		return
+	var owner := get_viewport().gui_get_focus_owner()
+	if owner == null or not _tiles.has(owner):
+		return
+	get_viewport().set_input_as_handled()
+	_reveal_bar(true)
+
+
+## Show the bar. With `take_focus`, also land on the store icon -- the same
+## place up-from-the-rail has always gone -- and the reveal stops being about
+## any alert that triggered it: the person is in the bar now, and it stays
+## until they leave.
+func _reveal_bar(take_focus: bool) -> void:
+	if not _bar_row.visible:
+		_bar_row.visible = true
+		ShellLog.info("top bar revealed")
+	if take_focus:
+		_bar_revealed_for_alert = false
+		if _store_button != null:
+			_store_button.grab_focus()
+
+
+## Hide the bar again -- unless the rail is empty, in which case the bar is
+## the only focusable surface this screen has and taking it away would leave
+## the pad pointing at nothing (see _ensure_focus's empty-rail fallback).
+func _hide_bar() -> void:
+	if _bar_row == null or not _bar_row.visible:
+		return
+	if _tiles.is_empty():
+		return
+	_bar_revealed_for_alert = false
+	_bar_row.visible = false
+	ShellLog.info("top bar hidden")
 
 
 func _open_overlay() -> void:
@@ -1600,7 +1756,7 @@ func _set_lower_deck_visible(shown: bool) -> void:
 ## The service menu, from the tray in the bar. Same guards as the card menu: not
 ## while another surface owns the screen, and not twice.
 func _open_service_menu() -> void:
-	if _service_menu != null or _details != null:
+	if _service_menu != null or _details != null or _quick_settings != null:
 		return
 	if Settings.is_open() or Stores.is_open() or Power.is_open() or Files.is_open() \
 			or Launcher.is_busy():
@@ -1633,6 +1789,42 @@ func _close_service_menu() -> void:
 	# not come back ringless and looking like the pad has stopped working.
 	if _service_tray != null and _service_tray.visible:
 		_service_tray.grab_focus()
+
+
+## The quick settings panel, from the bar's status corner. Same guards as the
+## service menu, and the same shape all the way down: a child of the root so a
+## hidden rail cannot swallow it, deaf while it is up, focus handed back to
+## the control it came from.
+func _open_quick_settings() -> void:
+	if _quick_settings != null or _service_menu != null or _details != null:
+		return
+	if Settings.is_open() or Stores.is_open() or Power.is_open() or Files.is_open() \
+			or Launcher.is_busy():
+		return
+
+	_quick_settings = QuickSettings.new()
+	_quick_settings.closed.connect(_on_quick_settings_closed, CONNECT_ONE_SHOT)
+	get_tree().root.add_child(_quick_settings)
+	set_process_unhandled_input(false)
+
+
+func _on_quick_settings_closed() -> void:
+	_close_quick_settings.call_deferred()
+
+
+func _close_quick_settings() -> void:
+	if _quick_settings == null:
+		return
+	var panel := _quick_settings
+	_quick_settings = null
+	panel.get_parent().remove_child(panel)
+	panel.queue_free()
+	set_process_unhandled_input(true)
+	# Back to the corner it dropped from. The corner is always on the bar --
+	# unlike the tray it has no installed-apps condition -- so this needs no
+	# visibility check beyond existing.
+	if _status_corner != null:
+		_status_corner.grab_focus()
 
 
 func _open_card_menu() -> void:
@@ -1714,6 +1906,24 @@ func _unhandled_input(event: InputEvent) -> void:
 	if not event.is_action_pressed("ui_cancel"):
 		return
 	get_viewport().set_input_as_handled()
+
+	# B IN THE BAR RETURNS TO THE RAIL AND RE-HIDES IT (#12) -- the mirror of
+	# the Up that summoned it. The landing card is resolved through the focused
+	# button's own down-neighbour rather than remembered separately, because
+	# _scroll_to_selected already keeps that pointed at the selected card and a
+	# second copy of "where is the person's place" is how the two would drift.
+	# On an empty rail the guard fails and B falls through to the log below:
+	# the bar is the only surface, and backing out of it would strand the pad.
+	var owner := get_viewport().gui_get_focus_owner()
+	if _bar_row != null and _bar_row.visible and owner != null \
+			and _bar_buttons.has(owner) and not _tiles.is_empty():
+		var below := owner.get_node_or_null(owner.focus_neighbor_bottom) as Control
+		if below != null:
+			below.grab_focus()
+			# The grab lands on a card, whose selected signal hides the bar --
+			# see _on_card_selected -- so nothing more to do here.
+			return
+
 	# The home rail is the root of the shell, so there is nowhere to back out to
 	# and nothing here quits. Exiting would be a client exit as far as
 	# marwanos-session is concerned: the supervision loop would count it as a

@@ -57,6 +57,10 @@ const CODEPOINTS := {
 	# The shell's existing marks
 	"store": 0xe470,        # storefront
 	"gear": 0xe270,
+	# The notification bell in the top bar (service_tray.gd). Verified against
+	# the vendored TTF's cmap as well as style.css, because the post table in
+	# this build is format 3 and carries no glyph names to cross-check by.
+	"bell": 0xe0ce,
 	"wifi": 0xe4ea,         # wifi-high
 	"wifi-off": 0xe4f2,     # wifi-slash
 	"close": 0xe4f6,        # x
