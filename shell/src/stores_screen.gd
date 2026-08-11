@@ -61,6 +61,7 @@ const ListMenu = preload("res://src/list_menu.gd")
 const StoreFrontTile = preload("res://src/store_front_tile.gd")
 const ActionRow = preload("res://src/action_row.gd")
 const Keyboard = preload("res://src/keyboard.gd")
+const BrowserScreen = preload("res://src/browser_screen.gd")
 
 ## What the Steam page's install line says in each state the status seam can
 ## report. The same narration that lived on the rail card before the third
@@ -287,6 +288,11 @@ var _keyboard: Keyboard = null
 var _page_spacer: Control = null
 
 var _card_menu: ListMenu = null
+
+## The browser, while a checkout is open over this screen. Null the rest of the
+## time -- the engine is expensive enough that a page nobody asked for should
+## not exist.
+var _browser: Control = null
 
 
 func _ready() -> void:
@@ -663,8 +669,9 @@ func _build_detail() -> Control:
 	# THE SECOND ROW IS THE PURCHASE DOOR, and it goes to the BROWSER now. Money
 	# still never changes hands in this shell -- see the header -- but it no
 	# longer changes hands in Valve's client on this television either: the store
-	# page opens in Chromium in kiosk mode, driven with the right stick (see
-	# Catalogue.browser_exec). That is the last Steam-client door on this
+	# page opens in the shell's own browser screen, which is Chromium's engine
+	# painting into a control here rather than any application being launched
+	# (see browser_screen.gd). That is the last Steam-client door on this
 	# screen, and closing it is the whole point of the panel existing.
 	#
 	# The first row's text here is a placeholder: _refresh_detail_actions sets
@@ -1850,16 +1857,23 @@ func _on_detail_action() -> void:
 ## away: buying needs a real store page, a cart and a card field, and none of
 ## those are things this shell will ever draw.
 ##
-## The answer is that Steam's own store page is a WEBSITE, and this machine ships
-## a browser engine. `store.steampowered.com/app/<appid>` is the same page the
-## client renders, with the same checkout behind it, opened in Chromium's kiosk
-## mode -- one page, no chrome -- and driven by a pointer this machine already
-## has: pad_keys.gd puts the right stick on the cursor for exactly this kind of
-## application. So the transaction still happens entirely on Valve's side, in
-## Valve's UI, and the flickering ten-foot client the owner cannot navigate
-## never enters into it. (Valve's client is itself CEF -- the same engine --
-## which is the whole argument that an engine without a browser's face loses
-## nothing a checkout needs.)
+## The answer is that Steam's own store page is a WEBSITE, and this shell now
+## contains a browser engine. `store.steampowered.com/app/<appid>` is the same
+## page the client renders, with the same checkout behind it, opened in the
+## shell's OWN browser screen -- Chromium's engine painting into a Godot
+## control, with the cursor, the status line and every button drawn by this
+## project (see browser_screen.gd and mowser/src/mowser.h). So the transaction
+## still happens entirely on Valve's side, in Valve's page, and the flickering
+## ten-foot client the owner cannot navigate never enters into it.
+##
+## NO LAUNCH, WHICH IS THE CHANGE. This used to hand an entry to the launch
+## seam, which spawned a flatpak, waited for gamescope to seat its window, put
+## a splash up and started a pad bridge that injected xdotool events at it. A
+## page inside this process needs none of that: the browser screen is a Control
+## added over this one, and the store screen simply goes deaf while it is up --
+## the same shape as the options menu below. (Valve's client is itself CEF, the
+## same engine, which is the measure of what an engine without a browser's face
+## gives up for a checkout: nothing.)
 ##
 ## STILL NO MONEY ANYWHERE NEAR THIS SHELL. What changed is which of somebody
 ## else's UIs the handover goes to, not whether there is a handover.
@@ -1874,23 +1888,45 @@ func _on_detail_store_action() -> void:
 	if appid <= 0:
 		return
 
-	var entry := {
-		# A distinct id, because the launch seam, the
-		# splash and the pad bridge all key on this, and "the browser showing one
-		# game's store page" wants the splash to say the game's name. It is also
-		# why this id had to be ADDED to Catalogue.PAD_KEY_APPS as "pointer": a
-		# web page has no controller support of its own, and a checkout nobody
-		# can click is a dead end with a card field on it.
-		"id": "store.steam.buy",
-		"title": str(_detail_item.get("name", "")),
-		"accent": str(_selected.get("accent", "")),
-		"exec": Catalogue.browser_exec(
-			"https://store.steampowered.com/app/%d/" % appid),
-		"app_id": Catalogue.BROWSER_ID,
-		"icon": Steamfront.art_path(appid),
-	}
+	_open_browser("https://store.steampowered.com/app/%d/" % appid,
+		str(_detail_item.get("name", "")))
 	ShellLog.info("storefront opening appid %d in the browser to buy" % appid)
-	Launcher.launch(entry)
+
+
+## The browser, over this screen. Same shape as _open_card_menu: a child of the
+## root so nothing can reparent it out from under a page somebody is reading,
+## this screen deaf while it is up, and focus restored on the way back.
+func _open_browser(url: String, title: String) -> void:
+	if _browser != null:
+		return
+	_browser = BrowserScreen.new()
+	_browser.closed.connect(_on_browser_closed, CONNECT_ONE_SHOT)
+	set_process_unhandled_input(false)
+	get_tree().root.add_child(_browser)
+	# Opened AFTER the node is in the tree, because the engine's view has no
+	# size until it has been laid out once -- and a browser asked to render at
+	# zero by zero is one CEF stops painting entirely. See Client::GetViewRect.
+	_browser.open_url(url, title)
+
+
+func _on_browser_closed() -> void:
+	_close_browser.call_deferred()
+
+
+func _close_browser() -> void:
+	if _browser == null:
+		return
+	var browser := _browser
+	_browser = null
+	browser.get_parent().remove_child(browser)
+	browser.queue_free()
+	set_process_unhandled_input(true)
+	# Back onto the row that opened it, for the card menu's reason: a screen
+	# that comes back ringless is a screen the pad appears to have stopped
+	# working on.
+	if _detail_store_action != null and _mode == MODE_DETAIL:
+		_detail_store_action.grab_focus()
+	ShellLog.info("browser closed; back on the game's page")
 
 
 func _on_steam_changed(_state: String) -> void:

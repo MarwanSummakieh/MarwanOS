@@ -7,6 +7,66 @@ what is stale.
 
 ---
 
+## The browser is MOWSER: Chromium's engine inside the shell (2026-08-11/12)
+
+**On the owner's word:** *"I wanted to fork it and make my own custom made
+chromium that is only the engine inside my launcher aka mowser."* The kiosk
+Chromium below lasted about a day. Kiosk mode is a *flag* on somebody else's
+program — their profile, their updates, their crash dialogs, one changed
+default away from a window this machine cannot dismiss. Mowser is the engine
+as a **library**: CEF (Chromium Embedded Framework, the same thing Steam's own
+UI is built on) linked into the shell binary, rendering off-screen into a Godot
+texture, with every pixel around the page drawn by this repo.
+
+- **`mowser/`** — a GDExtension. `MowserView` is a `Control`: it navigates,
+  paints and takes input, and deliberately does nothing else. No cursor, no
+  error page, no keyboard, no key bindings — those are `browser_screen.gd`'s,
+  in the rail's theme.
+- **The pad drives it by method call.** `pad_keys.gd` exists because the shell
+  could not reach inside a foreign X client; it spawns an xdotool process per
+  event. A page in this process needs none of that, so `PAD_KEY_APPS` is down
+  to the terminal and the `"pointer"` dialect is now dead code (kept: the next
+  mouse-first foreign app is one line from needing it).
+- **The payload is 294 MB** — stripped `libcef.so` (256 MB from 1.4 GB), V8
+  snapshot, resource packs, ICU, one locale, the sandbox helper. For scale,
+  this image *deleted* Firefox at 344 MB for being dead weight.
+- **The sandbox stays on**: `chrome-sandbox` ships SUID root, set at build time
+  because `/usr` is composefs and read-only later.
+
+**Things that cost a build each, all now commented where they bite:**
+
+| Trap | Symptom |
+|---|---|
+| CEF 151 headers need **C++20** | `cef_scoped_refptr.h` won't parse |
+| godot-cpp has no 4.6/4.7 branch | built from the engine's own `--dump-extension-api` instead |
+| Godot's exporter **copies** the `.so` beside the binary | path must be `res://`, but the rpath must be absolute `/usr/lib/marwanos/mowser` |
+| The `/usr/lib/marwanos` chmod sweep | strips SUID off `chrome-sandbox` unless the payload is pruned |
+| CEF wants its data **flat** beside `libcef.so` | a `resources/` subdir aborts with `Invalid file descriptor to ICU data` |
+| An in-process CEF `abort()` | kills the **shell** — a black TV. Pre-flight checks are load-bearing |
+| Chromium refuses to sandbox **root** | harness only: `MARWANOS_MOWSER_NO_SANDBOX`, honoured solely at euid 0 |
+| `CreateBrowser` is **async** | anything asked for before `OnAfterCreated` must be replayed |
+| OSR `background_color` defaults to **transparent** | an opaque page draws as nothing |
+| `String.join` needs a **PackedStringArray** | handed an `Array` it returns `""` — silently |
+
+**Status: rendering, end to end, under the invisible harness.** A local page
+opened from the Files screen draws inside the shell — heading, text and an RGB
+gradient in the right channel order (which is the swizzle proving itself) with
+the shell's own hint row composited over it. The chain is Files → browser
+screen → `file://` → CEF renderer → `OnPaint` → `ImageTexture` → `_draw`.
+
+**The last bug was aliasing, and it is worth remembering.** `sink_browser_ready`
+replayed the pending URL as `load_url(pending_url_)` — the member passed *by
+reference* into a method whose first statement is `pending_url_ = url`. The
+string arrived empty, the browser stayed on `about:blank`, and three rounds of
+diagnostics all reported success because every stage genuinely was succeeding.
+Passing a copy fixed it.
+
+**Still unproven: hardware.** No boot on the bench, so the sandbox path (the
+harness runs as root and skips it), the real GPU, gamescope and a live network
+have never seen this. That is the next thing.
+
+---
+
 ## The browser is Chromium in kiosk mode, and Zen is gone (2026-08-11)
 
 **On the owner's word:** *"zen is not a controller friendly browser so we need a

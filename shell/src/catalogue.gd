@@ -132,58 +132,22 @@ const STEAM_STORE := {
 
 
 ## ---------------------------------------------------------------------------
-## THE BROWSER, and why launching it is a catalogue function rather than an
-## exec spelled at each call site.
+## BROWSER_ID AND browser_exec() STOOD HERE FOR ABOUT A DAY, and this is their
+## headstone because what replaced them is not in this file at all.
 ##
-## The browser is Chromium (org.chromium.Chromium, the Flathub build), and it
-## replaced Zen on 2026-08-11 on the owner's word: "zen is not a controller
-## friendly browser so we need a replacement... we use chromium because it is
-## simply more performant." The insight that made a replacement unnecessary to
-## BUILD is that this machine never needed a browser's UI at all -- every
-## browser launch the shell makes is a URL or a file handed over whole, and
-## tabs, toolbars and menus are furniture for a mouse the appliance does not
-## have. So the project's "own browser" is Chromium's engine with none of
-## Chromium's face: kiosk mode, one page, full screen, right stick as the
-## cursor (PAD_KEY_APPS below). Steam's own client is this same engine wearing
-## Valve's face, which is the measure of how much of a browser survives losing
-## its chrome: all of it.
+## They named org.chromium.Chromium and built a `flatpak run` command line with
+## five flags on it -- --kiosk, --no-first-run, --no-default-browser-check,
+## --hide-crash-restore-bubble, --noerrdialogs -- each one suppressing a piece
+## of UI that a person on a sofa could not dismiss. That list was the argument
+## against the whole approach, written out: five flags to stop somebody else's
+## program from being itself, with no flag available for the sixth thing it
+## might do after an update.
 ##
-## TWO CALLERS, ONE SPELLING. The store's buy page (stores_screen.gd) and the
-## Files screen's document handler (file_open.gd) both launch the browser, and
-## the flags below are behaviour -- a second spelling that dropped one would be
-## a browser that popped a dialog on one path and not the other. Same argument
-## as the rail card and the detail page sharing Steam's launch line.
-const BROWSER_ID := "org.chromium.Chromium"
-
-## The kiosk launch: `flatpak run org.chromium.Chromium <flags> <target>`.
-## The target is a URL or an absolute file path -- Chromium turns a bare path
-## into a file: URL itself, and the flatpak reads it through the read-only
-## grants flatpak-install applied at install time.
-##
-## Every flag is load-bearing, on a machine where nobody can dismiss a dialog:
-##
-##   --kiosk                      one page, full screen, no chrome. The whole
-##                                design -- what makes this "our browser".
-##   --no-first-run               a fresh profile otherwise opens a welcome
-##                                tour IN FRONT of the page it was asked for.
-##   --no-default-browser-check   the "make Chromium your default?" bar. There
-##                                is no other browser and no way to answer it.
-##   --hide-crash-restore-bubble  the shell closes the browser with `flatpak
-##                                kill` (see launcher.gd), so every session
-##                                after the first ends "unclean" and Chromium
-##                                would offer to restore it -- a Restore bubble
-##                                on every single launch, forever.
-##   --noerrdialogs               error dialogs block a kiosk with no pointer
-##                                to dismiss them; the journal is where errors
-##                                on this machine go.
-##
-## The PROFILE is the flatpak's own per-app home (~/.var/app/org.chromium...),
-## which is what keeps a Steam checkout signed in across purchases; kiosk mode
-## hides the session, it does not discard it.
-static func browser_exec(target: String) -> Array:
-	return ["flatpak", "run", BROWSER_ID,
-		"--kiosk", "--no-first-run", "--no-default-browser-check",
-		"--hide-crash-restore-bubble", "--noerrdialogs", target]
+## The browser is now mowser: Chromium's engine linked into this binary, drawn
+## by browser_screen.gd. There is no command line to spell, no application id
+## to name, and no flags -- what the page is surrounded by is decided by code
+## in this repo rather than by asking a browser not to draw it. See
+## mowser/src/mowser.h.
 
 
 static func stores() -> Array:
@@ -257,20 +221,23 @@ const AVAILABLE_APPS := [
 		"accent": "#2A3F5A",
 		"tagline": "Valve's storefront and library",
 	},
-	# The browser. Zen held this slot from 2026-08-07 to 2026-08-11 -- its card
-	# hidden on its last morning, the id gone by evening -- and left on the
-	# owner's word: "zen is not a controller friendly browser so we need a
-	# replacement... we use chromium because it is simply more performant." The
-	# replacement is not a different browser UI but the absence of one: the shell
-	# launches Chromium in KIOSK MODE (see browser_exec above) with the pad
-	# bridge as the pointer, so what reaches the television is the page and
-	# nothing else. Same one-line return path as everything that has left.
-	{
-		"id": BROWSER_ID,
-		"title": "Chromium",
-		"accent": "#3B2F5A",
-		"tagline": "The web, full screen, driven by the pad",
-	},
+	# THE BROWSER IS NOT ON THIS LIST AND CANNOT BE, which is a different kind
+	# of absence from every other name that has left it.
+	#
+	# Kodi, Zen, RetroArch and the rest are gone in the ordinary way: one line
+	# here and one in shipped-apps brings any of them back. The browser is gone
+	# because it stopped being an APPLICATION. This list exists so a person can
+	# reinstall something the machine can download; mowser is Chromium's engine
+	# linked into the shell binary (see mowser/src/mowser.h), so there is
+	# nothing to download, nothing to remove, and no state in which the machine
+	# has a rail but no browser. A card offering to install it would be
+	# offering to install the program drawing the card.
+	#
+	# Two applications held the job before it: Zen (2026-08-07 to 2026-08-11,
+	# "not a controller friendly browser") and org.chromium.Chromium in kiosk
+	# mode for about a day after that -- the same engine, but as somebody
+	# else's program run with flags, which is what the owner was actually
+	# rejecting.
 	# Kodi left on 2026-08-11 ("kodi is out no need to have it at all"),
 	# taking the media-player job with it -- the Files screen now says
 	# honestly that nothing opens a video. Same one-line return path as
@@ -433,25 +400,22 @@ static func terminal_entry() -> Dictionary:
 ## together are the whole input story for a terminal on a machine with no
 ## keyboard: press home, choose Type, write the command, press A to run it.
 const PAD_KEY_APPS := {
-	# THE BUY PAGE, and it is here because a web page has no controller support
-	# of its own. The store screen's purchase action opens Valve's store page in
-	# the browser rather than in Big Picture (see stores_screen's
-	# _on_detail_store_action), and a checkout nobody can click is not a
-	# purchase route -- it is a dead end with a card field on it.
-	"store.steam.buy": "pointer",
-	# THE BROWSER ITSELF, everywhere else it can be launched from: its rail
-	# card (the entry id IS the desktop-entry id for installed cards) and a
-	# document opened from the Files screen (file_open.gd prefixes "open.").
-	# This SETTLES THE GAP the old note here left open -- Zen's rail card was
-	# never bridged, so a browser opened from the rail could not be driven at
-	# all, and the note said that was worth deciding rather than inheriting.
-	# Decided: every surface the browser puts on the television is the same
-	# mouse-first surface, so every launch path gets the same pointer. The
-	# double-delivery warning in the header does not bite -- Chromium reads no
-	# gamepad unless a page asks for the Gamepad API, and a page that does is
-	# not what a kiosk document view opens.
-	BROWSER_ID: "pointer",
-	"open." + BROWSER_ID: "pointer",
+	# ONE ENTRY LEFT, AND THE POINTER DIALECT HAS NO USERS AT ALL.
+	#
+	# This table had three browser entries a few hours ago: the buy page, the
+	# browser's rail card, and a document opened from Files -- all "pointer",
+	# all driven by spawning an xdotool process per input event and aiming it
+	# at whatever gamescope had focused. Every one of them is gone, because the
+	# thing they were aiming AT is gone: the browser is not a foreign X client
+	# any more, it is a Control in this process, and browser_screen.gd calls
+	# methods on it with coordinates in its own space. No processes, no
+	# injection, no guessing.
+	#
+	# THE "pointer" DIALECT ITSELF IS NOW DEAD CODE and is deliberately kept
+	# (see pad_keys.gd): it was written for Steam's desktop client, inherited
+	# by the browser, and outlived both. The next mouse-first foreign
+	# application is one line here from needing it again, and it is a hundred
+	# lines nobody would enjoy rewriting.
 	TERMINAL_ID: "keys",
 }
 

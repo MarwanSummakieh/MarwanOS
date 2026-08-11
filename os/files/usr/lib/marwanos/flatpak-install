@@ -53,7 +53,7 @@ err()  { printf '<3>%s[%s]: %s\n' "$TAG" "$APP" "$*" >&2; }
 ## What the TV calls this application while it is still arriving.
 ##
 ## An app that is not installed yet has no desktop entry, so there is nothing
-## to read a name out of -- and "org.chromium.Chromium" is not a name to show
+## to read a name out of -- and "com.valvesoftware.Steam" is not a name to show
 ## someone on a sofa. The table is small because the set of apps the image
 ## ships with is small and hand-picked; anything not in it falls back to its
 ## id, which is ugly but true. Phase 1 gets this from AppStream, which is
@@ -61,7 +61,6 @@ err()  { printf '<3>%s[%s]: %s\n' "$TAG" "$APP" "$*" >&2; }
 display_name() {
     case "$1" in
         com.valvesoftware.Steam) printf 'Steam' ;;
-        org.chromium.Chromium)   printf 'Chromium' ;;
         *)                       printf '%s' "$1" ;;
     esac
 }
@@ -402,17 +401,20 @@ kill "$ticker_pid" 2>/dev/null
 # application is on the machine and works for everything except being handed a
 # path, and refusing to stamp a good install over a permission would turn a
 # degraded feature into no application at all.
+# NOTHING NEEDS A GRANT ANY MORE, and the whole block above is kept as a
+# comment rather than deleted because the NEXT app that takes a path on its
+# command line will need exactly this again.
+#
+# It existed for the browser: the Files screen launched `flatpak run <browser>
+# /run/media/player/STICK/page.html`, and a sandboxed app cannot read a path
+# outside its sandbox no matter who put it there -- so the install granted
+# read-only access to /run/media and home. The browser is not a flatpak now
+# (mowser links Chromium's engine into the shell, see mowser/src/mowser.h), so
+# it reads the stick as the session user, with no sandbox to widen and no
+# override to apply. Steam, the one app left in shipped-apps, is never handed
+# a path by anything.
 case "$APP" in
-    org.chromium.Chromium)
-        for grant in /run/media home; do
-            if flatpak override --system --filesystem="${grant}:ro" "$APP"; then
-                info "granted $APP read access to $grant"
-            else
-                err "could not grant $APP read access to $grant --"
-                err "opening a file from the Files screen in it will not work"
-            fi
-        done
-        ;;
+    *) : "no application in this image needs a filesystem override" ;;
 esac
 
 install -d /var/marwanos

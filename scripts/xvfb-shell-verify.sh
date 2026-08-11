@@ -199,6 +199,14 @@ podman run -d --name "$CTR" \
     -e HOME=/godothome \
     -e XDG_RUNTIME_DIR=/godothome \
     -e MARWANOS_SHELL_WINDOWED=1 \
+    `# THE BROWSER'S SANDBOX, OFF HERE AND ONLY HERE. This container runs as` \
+    `# root, and Chromium refuses to sandbox a root process at all -- it` \
+    `# aborts, which in-process means the shell dies the moment a page opens.` \
+    `# mowser only honours this variable when its euid is 0, so setting it` \
+    `# does nothing on an appliance (greetd starts the shell as player). What` \
+    `# this run therefore proves is the engine, the paint path and the input` \
+    `# path; the sandbox itself is exercised on hardware, not here.` \
+    -e MARWANOS_MOWSER_NO_SANDBOX=1 \
     "${STATUS_ARGS[@]}" \
     "${STORE_ARGS[@]}" \
     "${FILES_ARGS[@]}" \

@@ -2,7 +2,11 @@
 # Installs one Flathub application on the first boot that has a network. The
 # instance name IS the application id, e.g.
 #
-#   marwanos-flatpak-install@org.chromium.Chromium.service
+#   marwanos-flatpak-install@com.valvesoftware.Steam.service
+#
+# Which is, as of 2026-08-11, the only instance the image enables: the browser
+# used to be the second one and is now part of the shell itself (mowser), so
+# this template serves a set of one until the next app arrives.
 #
 # A template rather than one unit per app: the units differ only in that id,
 # and a second hand-written copy is a second place for a timeout or an

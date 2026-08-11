@@ -67,6 +67,7 @@ const PlacesPanel = preload("res://src/places_panel.gd")
 const FileOpen = preload("res://src/file_open.gd")
 const FileItem = preload("res://src/file_item.gd")
 const ImageViewer = preload("res://src/image_viewer.gd")
+const BrowserScreen = preload("res://src/browser_screen.gd")
 const FileProperties = preload("res://src/file_properties.gd")
 const Keyboard = preload("res://src/keyboard.gd")
 
@@ -98,6 +99,11 @@ var _clipboard: Dictionary = {}
 var _menu: ListMenu = null
 var _keyboard: Keyboard = null
 var _viewer: ImageViewer = null
+
+## The browser, while a document is open over this screen. Null the rest of the
+## time: the engine is expensive enough that a page nobody asked for should not
+## exist.
+var _browser: Control = null
 var _properties: FileProperties = null
 
 ## What the open menu is about, captured when OPTIONS is pressed -- by the time
@@ -449,7 +455,7 @@ func _refresh_hints() -> void:
 			# disagree about whether the handler is installed.
 			var plan := FileOpen.plan(str(entry.get("name", "")))
 			var caption := str(plan["detail"])
-			if str(plan["action"]) == "none" or str(plan["action"]) == "install":
+			if str(plan["action"]) == "none":
 				caption = "Cannot open"
 			_hints.add_child(TvTheme.hint("A", caption))
 		_hints.add_child(TvTheme.hint("X",
@@ -585,18 +591,17 @@ func _on_item_activated(entry: Dictionary, pane: FilePane) -> void:
 	match str(plan["action"]):
 		"image":
 			_open_viewer(pane, str(entry["path"]))
-		"launch":
-			if Launcher.is_busy():
-				ShellLog.info("files: A while a launch is already up; ignoring")
-				return
-			var app := str(plan["app"])
-			_say("Opening %s in %s" % [file_name, FileOpen.handler_title(app)])
-			Launcher.launch(FileOpen.launch_entry(app, str(entry["path"])))
+		"browser":
+			# A DOCUMENT IS A SCREEN NOW, not a launch. No Launcher.is_busy
+			# check, because nothing is being spawned and there is no window to
+			# wait for -- the browser is a Control this screen puts over itself,
+			# the same as the picture viewer above.
+			_open_browser(pane, str(entry["path"]), file_name)
 		_:
-			# "install" and "none" both land here: nothing runs, and the screen
-			# says why in terms of THIS file. The install case names the
-			# application and where to get it, which is the difference between
-			# a dead end and an instruction.
+			# Only "none" lands here now: nothing on this machine draws this
+			# format, said in terms of THIS file. ("install" used to land here
+			# too, back when the handler was a flatpak that might not have
+			# arrived; see FileOpen.plan for why that state cannot exist.)
 			_say(str(plan["detail"]), true)
 
 
@@ -613,6 +618,43 @@ func _open_viewer(pane: FilePane, path: String) -> void:
 	# then never leave a viewer orphaned over the rail.
 	add_child(_viewer)
 	set_process_unhandled_input(false)
+
+
+## A document, in the shell's own browser. The picture viewer's shape exactly:
+## a child of THIS screen rather than of the root, so closing the files screen
+## can never leave a page orphaned over the rail, and this screen deaf while it
+## is up.
+func _open_browser(pane: FilePane, path: String, file_name: String) -> void:
+	if _browser != null:
+		return
+	_browser = BrowserScreen.new()
+	_browser.closed.connect(_on_browser_closed, CONNECT_ONE_SHOT)
+	_return_focus_name = file_name
+	add_child(_browser)
+	set_process_unhandled_input(false)
+	# After the node is in the tree: the engine's view has no size until it has
+	# been laid out once, and CEF stops painting a view it was told is empty.
+	_browser.open_url(FileOpen.file_url(path), file_name)
+	ShellLog.info("files: opening %s in the browser" % file_name)
+
+
+func _on_browser_closed() -> void:
+	_close_browser.call_deferred()
+
+
+func _close_browser() -> void:
+	if _browser == null:
+		return
+	var browser := _browser
+	_browser = null
+	remove_child(browser)
+	browser.queue_free()
+	set_process_unhandled_input(true)
+	# Back onto the file that was opened, the viewer's rule: a listing that
+	# comes back with no ring reads as a pad that stopped working. Focus is
+	# restored BY NAME rather than by index, which is the pane's own contract
+	# -- the listing may have been re-read while the document was up.
+	_pane().grab_pane_focus(_return_focus_name)
 
 
 func _on_viewer_closed() -> void:
@@ -769,7 +811,7 @@ func _open_actions_menu() -> void:
 
 	if targets.size() == 1 and not bool(targets[0].get("is_dir", false)):
 		var plan := FileOpen.plan(str(targets[0].get("name", "")))
-		if str(plan["action"]) == "image" or str(plan["action"]) == "launch":
+		if str(plan["action"]) == "image" or str(plan["action"]) == "browser":
 			items.append({"id": "open", "label": str(plan["detail"]), "icon": "folder-open"})
 
 	if not targets.is_empty():

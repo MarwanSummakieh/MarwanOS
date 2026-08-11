@@ -23,9 +23,24 @@
 # they ever drift again. Phase 1 deletes all of it: marwand owns the app set
 # and serves it over RPC.
 #
-# THE SET IS TWO, DOWN FROM EIGHT BY WAY OF THREE. Steam is the games library
-# and Chromium is the browser -- one app per job, no job twice, and browsing
-# files is the shell's own Files screen rather than an app at all.
+# THE SET IS ONE. Steam is the games library, and that is the whole list --
+# because every other job this appliance does is now done by the shell itself
+# rather than by an application it installs. Browsing files was the first
+# (the Files screen), and browsing the WEB was the last: mowser puts Chromium's
+# engine inside the shell binary, so there is no browser to install.
+#
+# THE BROWSER JOB LEFT THIS FILE ON 2026-08-11, having been held by two
+# applications in four days. Zen went first ("not a controller friendly
+# browser"). org.chromium.Chromium replaced it for about a day, in kiosk mode,
+# and went the same way for a subtler reason: kiosk is a FLAG on somebody
+# else's program -- their profile, their updates, their crash dialogs, one
+# changed default away from a window this machine cannot dismiss. The owner
+# asked for "my own custom made chromium that is only the engine inside my
+# launcher", and an installed application cannot be that no matter which flags
+# it is started with. See mowser/src/mowser.h.
+#
+# What this means for the list: a browser can never come back as a line here,
+# because a line here is an application, and the browser is no longer one.
 # Kodi left on 2026-08-11 on the owner's word -- "kodi is out no need to have
 # it at all" -- taking the media-player job with it: a video opened from the
 # Files screen now says it has no player, which is honest until the use
@@ -48,4 +63,3 @@
 # comments on the same line as an id. Matching everywhere is exact string
 # equality, so a stray space here is an app that silently stops existing.
 com.valvesoftware.Steam
-org.chromium.Chromium

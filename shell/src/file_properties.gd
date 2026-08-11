@@ -29,7 +29,6 @@ signal closed()
 const TvTheme = preload("res://src/tv_theme.gd")
 const FileItem = preload("res://src/file_item.gd")
 const FileOpen = preload("res://src/file_open.gd")
-const Catalogue = preload("res://src/catalogue.gd")
 
 const PANEL_WIDTH := 900
 
@@ -195,7 +194,7 @@ func _kind_for(ext: String) -> String:
 	if FileOpen.MEDIA_EXTENSIONS.has(ext):
 		return "Media"
 	var handler := str(FileOpen.HANDLERS.get(ext, ""))
-	if handler == Catalogue.BROWSER_ID:
+	if handler == FileOpen.HANDLER_BROWSER:
 		return "Document"
 	return "File"
 
