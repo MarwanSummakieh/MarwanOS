@@ -107,12 +107,16 @@ const APPCTL_ALERT_STATES := ["failed", "refused"]
 const HINT_BROWSE := "Browse"
 const HINT_SIGN_IN := "Sign in to Steam"
 const HINT_INSTALL := "Install"
-## The fallback verb, for the one state where the shell cannot do the job: signed
-## in, installed, and no storefront on disk to browse (a cold machine, or one
-## that has never had a network). Handing over to Valve's client there is not a
-## relapse -- it is the shell being honest that it has nothing to show and the
-## other UI might.
-const HINT_OPEN := "Open store"
+## There is DELIBERATELY no fallback verb for "signed in, installed, nothing to
+## browse". The first draft had one -- "Open store", which opened Big Picture on
+## the theory that the client might have something to show when the shell did
+## not. It would not have: the empty-storefront state is almost always a machine
+## with no network, where the client's store page is exactly as dead, drawn by
+## the one UI this screen exists to keep off the television. The status line
+## already names the real cause (offline, fetching, Valve down); A advertising a
+## door to a broken page on top of that explanation was the relapse, not the
+## honesty. See _page_action_hint and _on_store_opened, which both go quiet in
+## that state instead.
 
 ## WHAT THE PANEL IS SHOWING. Four renderings of one pane rather than four
 ## panes: with the content data-driven there is nothing for a second pane to
@@ -665,7 +669,12 @@ func _refresh_hints() -> void:
 		_hints.add_child(TvTheme.hint("B", "Back to stores"))
 		return
 
-	_hints.add_child(TvTheme.hint("A", _page_action_hint()))
+	# Skipped entirely when the hint is empty -- see _page_action_hint: an A
+	# badge with no caption is a button advertised as doing something unnamed,
+	# which is worse than no badge.
+	var page_hint := _page_action_hint()
+	if not page_hint.is_empty():
+		_hints.add_child(TvTheme.hint("A", page_hint))
 	# The doorway, advertised: the grid is the pane's biggest feature and
 	# nothing else on this screen has ever answered Right, so a person has no
 	# reason to try it unless told.
@@ -1666,10 +1675,12 @@ func _page_action_hint() -> String:
 		return HINT_INSTALL
 	if not Steamfront.account_signed_in:
 		return HINT_SIGN_IN
-	# NOTHING TO BROWSE IS A REAL STATE and it must not be advertised as one. A
-	# hint reading "Browse" over an empty pane, on a button that then did
-	# nothing, is the dead control this screen has twice been fixed for.
-	return HINT_BROWSE if not _tiles.is_empty() else HINT_OPEN
+	# NOTHING TO BROWSE ADVERTISES NOTHING. An empty string here makes the hint
+	# row skip A entirely, which is the truthful rendering of a state where A
+	# has no job: the grid is empty, the status line under it says why, and the
+	# door Big Picture used to provide from this spot opened onto a client
+	# store page that was dead for the same reason the grid was.
+	return HINT_BROWSE if not _tiles.is_empty() else ""
 
 
 func _on_store_opened(entry: Dictionary) -> void:
@@ -1712,11 +1723,22 @@ func _on_store_opened(entry: Dictionary) -> void:
 			_page_status.add_theme_color_override("font_color", TvTheme.TEXT_SECONDARY)
 		return
 
-	# Installed but signed out. Through the launch seam like every launch in the
-	# project, and the screen stays open underneath: when the client quits, this
-	# page is what the person lands back on -- by which point the account line
-	# above the shelves will have noticed the sign-in, because the seam re-reads
-	# Steam's loginusers.vdf on every visit to this screen.
+	# Signed in with nothing to browse: A does NOTHING, on purpose, and quietly.
+	# The status line above is already explaining why the grid is empty; the old
+	# behaviour here opened Big Picture's store page, which in this state (it is
+	# nearly always a machine with no network) was equally empty and drawn by
+	# the one client this screen exists to keep off the television.
+	if Steamfront.account_signed_in:
+		ShellLog.info("A on the store tab with nothing to browse; the status line says why")
+		return
+
+	# Installed but signed out -- THE ONE REMAINING CLIENT DOOR, kept until the
+	# QR sign-in flow replaces it: a password is Valve's to collect, and today
+	# the client is the only surface that can collect it. Through the launch
+	# seam like every launch; when the client quits, this page is what the
+	# person lands back on -- by which point the account line above the shelves
+	# will have noticed the sign-in, because the seam re-reads Steam's
+	# loginusers.vdf on every visit to this screen.
 	Launcher.launch(entry)
 
 

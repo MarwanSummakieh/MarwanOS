@@ -663,12 +663,25 @@ steam_installed() {
 # killed Steam directly would watch it come back thirty seconds later and look
 # broken. One owner of the lifecycle, and the shell expresses a WISH rather than
 # performing an action.
-SERVICE_DIR="$RUNTIME/services"
+## RESOLVED WHEN CALLED, NEVER AT PARSE TIME, and that is a scar rather than a
+## style choice. This was `SERVICE_DIR="$RUNTIME/services"` at the top level --
+## and RUNTIME is not assigned until five hundred lines further down, next to
+## XDG_RUNTIME_DIR. Under `set -u` that is not an empty string, it is a FATAL
+## error: the session died at parse time, greetd restarted it, and it died
+## again, forever. The owner got the boot splash and then a blank television.
+##
+## The functions below are only ever called from the supervisor, which runs long
+## after RUNTIME exists -- so a function is the correct shape and a top-level
+## constant never was. Nothing in this file may read a variable defined below it.
+service_dir() {
+    printf '%s' "$RUNTIME/services"
+}
 
 service_state() {
-    install -d -m 0700 "$SERVICE_DIR" 2>/dev/null || return 0
-    printf '%s\n' "$2" > "$SERVICE_DIR/$1.state.tmp" 2>/dev/null \
-        && mv -f "$SERVICE_DIR/$1.state.tmp" "$SERVICE_DIR/$1.state" 2>/dev/null
+    _sdir="$(service_dir)"
+    install -d -m 0700 "$_sdir" 2>/dev/null || return 0
+    printf '%s\n' "$2" > "$_sdir/$1.state.tmp" 2>/dev/null \
+        && mv -f "$_sdir/$1.state.tmp" "$_sdir/$1.state" 2>/dev/null
 }
 
 ## Is a service wanted? ABSENT MEANS YES, which is the load-bearing default: a
@@ -676,7 +689,8 @@ service_state() {
 ## seam existed, and the file only appears once somebody has chosen otherwise.
 service_wanted() {
     _w=""
-    [ -r "$SERVICE_DIR/$1.wanted" ] && IFS= read -r _w < "$SERVICE_DIR/$1.wanted" 2>/dev/null
+    _wf="$(service_dir)/$1.wanted"
+    [ -r "$_wf" ] && IFS= read -r _w < "$_wf" 2>/dev/null
     [ "$_w" != "0" ]
 }
 
@@ -698,28 +712,15 @@ supervise_steam() {
     _steam_window_start="$(uptime_seconds)"
 
     while :; do
-        # Steam's own output goes to /dev/null rather than to the journal, and
-        # that is the difference between bounded log noise and a journal made
-        # entirely of Steam. The client narrates asset loads, controller
-        # enumeration and CEF chatter at info level; an hour of it would bury
-        # every other service on this machine. What is worth knowing -- that it
-        # started, that it stopped, that it is not coming back -- is said below
-        # in this script's own voice, which is also the only voice
-        # `journalctl -t marwanos-session` can be searched with.
-        # THE WSI LEVER, and --env is how it has to be spelled. This session
-        # exports ENABLE_GAMESCOPE_WSI=1 for everything, but Steam runs inside a
-        # flatpak sandbox: setting a variable out here and hoping is how a
-        # profile silently does nothing. `flatpak run --env=` puts it inside the
-        # sandbox explicitly, which is the only place Steam will read it.
-        #
-        # Passed on EVERY profile except no-wsi rather than only on no-wsi, so
-        # that what the client gets is stated by this line rather than inherited
-        # from whatever the session's environment happened to contain -- the
-        # difference between a lever and a coincidence.
         # STOPPED ON REQUEST, and this check is why the loop is shaped this way.
         # Somebody who turns Steam off from the shell's service menu must find it
         # still off a minute later; without this the supervisor would restart it
         # and the menu would read as a switch that does not switch.
+        #
+        # Stopping the service can NOT kill a running game from under somebody,
+        # and that guarantee lives in the shell rather than here: the service
+        # menu refuses to open while Launcher.is_busy(), so by the time a stop
+        # wish can be written there is no game for `flatpak kill` to take down.
         if ! service_wanted steam; then
             service_state steam stopped
             sleep 2
@@ -731,6 +732,21 @@ supervise_steam() {
         # foreground call could not notice a stop request while the thing it
         # would be stopping was running -- the menu would do nothing until Steam
         # happened to quit on its own.
+        #
+        # Steam's own output goes to /dev/null rather than to the journal: the
+        # client narrates asset loads, controller enumeration and CEF chatter at
+        # info level, and an hour of it would bury every other service on this
+        # machine. What is worth knowing -- started, stopped, not coming back --
+        # is said in this script's own voice, which is also the only voice
+        # `journalctl -t marwanos-session` can be searched with.
+        #
+        # THE WSI LEVER, and --env is how it has to be spelled. This session
+        # exports ENABLE_GAMESCOPE_WSI=1 for everything, but Steam runs inside a
+        # flatpak sandbox: setting a variable out here and hoping is how a
+        # profile silently does nothing. `flatpak run --env=` puts it inside the
+        # sandbox explicitly. Passed on EVERY profile except no-wsi rather than
+        # only on no-wsi, so what the client gets is stated by this line rather
+        # than inherited -- the difference between a lever and a coincidence.
         if [ "$WINDOW_PROFILE" = "no-wsi" ]; then
             flatpak run --env=ENABLE_GAMESCOPE_WSI=0 "$STEAM_FLATPAK_ID" -silent >/dev/null 2>&1 &
         else

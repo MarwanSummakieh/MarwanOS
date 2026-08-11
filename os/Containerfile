@@ -880,6 +880,48 @@ RUN set -euxo pipefail; \
         lvm2-monitor.service \
         fedora-atomic-desktop-appstream-cache-refresh.service; \
     test -x /usr/lib/marwanos/session/marwanos-session; \
+    : "THE SESSION IS ACTUALLY RUN, briefly, and this check exists because of"; \
+    : "2026-08-11: a top-level SERVICE_DIR=\$RUNTIME/services referenced a"; \
+    : "variable assigned five hundred lines lower. Under set -u that is fatal"; \
+    : "at parse time -- the session died, greetd restarted it, it died again,"; \
+    : "and the owner got the boot splash followed by a blank television."; \
+    : ""; \
+    : "NOTHING ELSE IN THIS BUILD COULD HAVE CAUGHT IT. bash -n checks syntax"; \
+    : "and an unbound variable is a RUNTIME error; every other assertion here"; \
+    : "reads files rather than executing them. So the script is started for"; \
+    : "five seconds with no display to take, which is far enough to run all of"; \
+    : "its top-level code and hit the same error the appliance would."; \
+    : ""; \
+    : "ONLY 'unbound variable' FAILS THE BUILD. A session in a container has"; \
+    : "every right to fail -- there is no seat, no DRM device and no gamescope"; \
+    : "to take master -- so the exit code is ignored on purpose and this greps"; \
+    : "for the one class of error that means the file is broken everywhere"; \
+    : "rather than merely unhappy here."; \
+    : ""; \
+    : "MARWANOS_SESSION_LOGGING=1 IS WHAT MAKES THIS RUN AT ALL, and finding"; \
+    : "that out is the reason this check is trusted. The script re-execs itself"; \
+    : "through systemd-cat at its absolute path; a container has no journal"; \
+    : "socket, so that exec fails at line 70 with 'Failed to create stream fd'"; \
+    : "and NOTHING below it ever runs. The first version of this guard was"; \
+    : "therefore a check that could not fail -- it passed the broken script and"; \
+    : "the fixed one identically. That variable is the script's own skip for the"; \
+    : "re-exec, so setting it lets the top-level code actually execute."; \
+    : ""; \
+    : "-k 2 IS NOT OPTIONAL, and the first run of this guard proved it the"; \
+    : "expensive way: the script traps TERM (its cleanup handler), and bash"; \
+    : "delivers a trap only after the current foreground command returns --"; \
+    : "which, once gamescope fails in a container with no DRM, is the hold"; \
+    : "loop's sleep. timeout's polite TERM therefore waited on a sleep 3600"; \
+    : "and the guard stalled the build for as long as nobody killed it. KILL"; \
+    : "cannot be trapped, so -k 2 bounds the whole step at ~7 seconds."; \
+    MARWANOS_SESSION_LOGGING=1 timeout -k 2 5 /usr/lib/marwanos/session/marwanos-session \
+        >/tmp/session-smoke.txt 2>&1 || true; \
+    if grep -q "unbound variable" /tmp/session-smoke.txt; then \
+        echo "FATAL: the session script references a variable before it is assigned:"; \
+        grep "unbound variable" /tmp/session-smoke.txt | head -3; \
+        exit 1; \
+    fi; \
+    rm -f /tmp/session-smoke.txt; \
     test -x /usr/lib/marwanos/display/panel-policy; \
     test -x /usr/lib/marwanos/display/profile; \
     : "The display profiles, asserted from both ends. The session and the"; \
