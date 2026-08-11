@@ -181,9 +181,10 @@ desktop_get() {
 ## SVG IS ACCEPTED NOW, AND IT HAD TO BE. This was PNG-only on the reasoning
 ## that Godot loads PNG with certainty while SVG support depends on module
 ## availability -- so an application whose only icon is scalable fell back to
-## the flat accent wash. That was not a rare edge: Zen ships exactly one icon
-## and it is an SVG, so its card on the TV was a coloured rectangle with no
-## logo on it, which is what the rail looked like to the person using it.
+## the flat accent wash. That was not a rare edge: Zen (the browser then)
+## shipped exactly one icon and it was an SVG, so its card on the TV was a
+## coloured rectangle with no logo on it, which is what the rail looked like
+## to the person using it.
 ##
 ## The shell rasterises SVG itself (see tile.gd) and falls back to the wash if
 ## its build cannot, so the failure this comment used to fear is still handled

@@ -663,10 +663,9 @@ func _build_detail() -> Control:
 	# THE SECOND ROW IS THE PURCHASE DOOR, and it goes to the BROWSER now. Money
 	# still never changes hands in this shell -- see the header -- but it no
 	# longer changes hands in Valve's client on this television either: the store
-	# page opens in Zen, which is a pointer-driven UI this machine already ships
-	# and already knows how to drive with the right stick. That is the last
-	# Steam-client door on this screen, and closing it is the whole point of the
-	# panel existing.
+	# page opens in Chromium in kiosk mode, driven with the right stick (see
+	# Catalogue.browser_exec). That is the last Steam-client door on this
+	# screen, and closing it is the whole point of the panel existing.
 	#
 	# The first row's text here is a placeholder: _refresh_detail_actions sets
 	# the real verb from what the machine has, before this view is ever shown.
@@ -1852,12 +1851,15 @@ func _on_detail_action() -> void:
 ## those are things this shell will ever draw.
 ##
 ## The answer is that Steam's own store page is a WEBSITE, and this machine ships
-## a browser. `store.steampowered.com/app/<appid>` is the same page the client
-## renders, with the same checkout behind it, driven by a pointer this machine
-## already has -- pad_keys.gd puts the right stick on the cursor for exactly this
-## kind of application. So the transaction still happens entirely on Valve's
-## side, in Valve's UI, and the flickering ten-foot client the owner cannot
-## navigate never enters into it.
+## a browser engine. `store.steampowered.com/app/<appid>` is the same page the
+## client renders, with the same checkout behind it, opened in Chromium's kiosk
+## mode -- one page, no chrome -- and driven by a pointer this machine already
+## has: pad_keys.gd puts the right stick on the cursor for exactly this kind of
+## application. So the transaction still happens entirely on Valve's side, in
+## Valve's UI, and the flickering ten-foot client the owner cannot navigate
+## never enters into it. (Valve's client is itself CEF -- the same engine --
+## which is the whole argument that an engine without a browser's face loses
+## nothing a checkout needs.)
 ##
 ## STILL NO MONEY ANYWHERE NEAR THIS SHELL. What changed is which of somebody
 ## else's UIs the handover goes to, not whether there is a handover.
@@ -1882,9 +1884,9 @@ func _on_detail_store_action() -> void:
 		"id": "store.steam.buy",
 		"title": str(_detail_item.get("name", "")),
 		"accent": str(_selected.get("accent", "")),
-		"exec": ["flatpak", "run", "app.zen_browser.zen",
-			"https://store.steampowered.com/app/%d/" % appid],
-		"app_id": "app.zen_browser.zen",
+		"exec": Catalogue.browser_exec(
+			"https://store.steampowered.com/app/%d/" % appid),
+		"app_id": Catalogue.BROWSER_ID,
 		"icon": Steamfront.art_path(appid),
 	}
 	ShellLog.info("storefront opening appid %d in the browser to buy" % appid)

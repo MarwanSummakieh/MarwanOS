@@ -7,6 +7,44 @@ what is stale.
 
 ---
 
+## The browser is Chromium in kiosk mode, and Zen is gone (2026-08-11)
+
+**On the owner's word:** *"zen is not a controller friendly browser so we need a
+replacement... we use chromium because it is simply more performant"* — plus the
+standing *"this is a pure console system."* The replacement is not another
+browser UI but the absence of one: the appliance ships
+`org.chromium.Chromium` (Flathub) and every launch the shell makes is
+**kiosk mode** — one page, full screen, no chrome — driven by the pad bridge's
+pointer dialect (right stick as cursor, A clicks, shoulders scroll, home-menu
+Type for text). Steam's own client is CEF, i.e. this same engine wearing
+Valve's face, which is the measure of how little a checkout needs a browser's
+furniture.
+
+- **One spelling of the launch**: `Catalogue.browser_exec(target)` builds
+  `flatpak run org.chromium.Chromium --kiosk --no-first-run
+  --no-default-browser-check --hide-crash-restore-bubble --noerrdialogs
+  <target>`. Every flag is a dialog nobody on a sofa can dismiss; the
+  crash-restore one exists because the shell closes apps with `flatpak kill`,
+  so every session after the first would otherwise open on a Restore bubble.
+- **The store's buy door** (`store.steam.buy`) opens Valve's store page in it;
+  **documents from Files** (pdf/html/txt/md/json/xml/csv/log) open in it via
+  `open.org.chromium.Chromium`; both ids plus the rail card are "pointer" in
+  `PAD_KEY_APPS` — which also settles the long-noted gap where Zen's rail card
+  was never bridged at all.
+- **Zen is out of the image entirely**: shipped-apps, the installer's
+  display-name table and `:ro` grants, the `.wants` symlink, and the
+  Containerfile's verify block all moved to Chromium, and the build now
+  asserts Zen's id and unit are absent (same headstone pattern as Kodi).
+- **Found while doing it:** the verify block's `! grep -q 'kodi'` matched the
+  owner's own quoted words in shipped-apps' comments — a latent build breaker
+  on main since the Kodi removal. Both absence greps are id-anchored now
+  (`^tv\.kodi\.Kodi$`, `^app\.zen_browser\.zen$`).
+- **Profile persistence**: the flatpak's per-app home is the browser profile,
+  so a Steam checkout stays signed in across purchases; kiosk hides the
+  session, it does not discard it.
+
+---
+
 ## THE 2026-08-07 BOOT RAN, AND THE WIFI ASSOCIATED
 
 **First journal off a stick in four attempts, and it closes the oldest open

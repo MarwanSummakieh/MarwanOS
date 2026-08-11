@@ -131,25 +131,77 @@ const STEAM_STORE := {
 ## string.
 
 
+## ---------------------------------------------------------------------------
+## THE BROWSER, and why launching it is a catalogue function rather than an
+## exec spelled at each call site.
+##
+## The browser is Chromium (org.chromium.Chromium, the Flathub build), and it
+## replaced Zen on 2026-08-11 on the owner's word: "zen is not a controller
+## friendly browser so we need a replacement... we use chromium because it is
+## simply more performant." The insight that made a replacement unnecessary to
+## BUILD is that this machine never needed a browser's UI at all -- every
+## browser launch the shell makes is a URL or a file handed over whole, and
+## tabs, toolbars and menus are furniture for a mouse the appliance does not
+## have. So the project's "own browser" is Chromium's engine with none of
+## Chromium's face: kiosk mode, one page, full screen, right stick as the
+## cursor (PAD_KEY_APPS below). Steam's own client is this same engine wearing
+## Valve's face, which is the measure of how much of a browser survives losing
+## its chrome: all of it.
+##
+## TWO CALLERS, ONE SPELLING. The store's buy page (stores_screen.gd) and the
+## Files screen's document handler (file_open.gd) both launch the browser, and
+## the flags below are behaviour -- a second spelling that dropped one would be
+## a browser that popped a dialog on one path and not the other. Same argument
+## as the rail card and the detail page sharing Steam's launch line.
+const BROWSER_ID := "org.chromium.Chromium"
+
+## The kiosk launch: `flatpak run org.chromium.Chromium <flags> <target>`.
+## The target is a URL or an absolute file path -- Chromium turns a bare path
+## into a file: URL itself, and the flatpak reads it through the read-only
+## grants flatpak-install applied at install time.
+##
+## Every flag is load-bearing, on a machine where nobody can dismiss a dialog:
+##
+##   --kiosk                      one page, full screen, no chrome. The whole
+##                                design -- what makes this "our browser".
+##   --no-first-run               a fresh profile otherwise opens a welcome
+##                                tour IN FRONT of the page it was asked for.
+##   --no-default-browser-check   the "make Chromium your default?" bar. There
+##                                is no other browser and no way to answer it.
+##   --hide-crash-restore-bubble  the shell closes the browser with `flatpak
+##                                kill` (see launcher.gd), so every session
+##                                after the first ends "unclean" and Chromium
+##                                would offer to restore it -- a Restore bubble
+##                                on every single launch, forever.
+##   --noerrdialogs               error dialogs block a kiosk with no pointer
+##                                to dismiss them; the journal is where errors
+##                                on this machine go.
+##
+## The PROFILE is the flatpak's own per-app home (~/.var/app/org.chromium...),
+## which is what keeps a Steam checkout signed in across purchases; kiosk mode
+## hides the session, it does not discard it.
+static func browser_exec(target: String) -> Array:
+	return ["flatpak", "run", BROWSER_ID,
+		"--kiosk", "--no-first-run", "--no-default-browser-check",
+		"--hide-crash-restore-bubble", "--noerrdialogs", target]
+
+
 static func stores() -> Array:
 	return [STEAM_STORE]
 
 
 ## Installed applications the rail must not draw, beyond the store apps below.
 ##
-## Zen is here on the owner's word (2026-08-11): it is no longer the desired
-## browser, so it gets no card -- but the flatpak still installs (see
-## shipped-apps), because the stores screen's purchase route opens Valve's
-## store page in it and a checkout with no browser is a dead end. This is the
-## NoDisplay of the shell's side of the seam: the scanner keeps reporting Zen
-## honestly in apps.tsv -- the buy flow and the Files screen's open-with both
-## need that record -- and placement, as ever, is the rail's decision.
-##
-## Removing Zen ENTIRELY (flatpak, buy flow, file_open handlers) belongs to
-## the Chromium kiosk-shell work, not here: until that lands, Zen is the only
-## thing on the machine that can render a checkout. When it does land, this
-## entry goes with it.
-const RAIL_HIDDEN_APPS := ["app.zen_browser.zen"]
+## EMPTY, AND KEPT. Zen was this list's only member, for the half-day between
+## "no longer the desired browser" and its removal from the image entirely --
+## the interval where the flatpak had to stay (the buy flow had nowhere else
+## to open a checkout) but its card was already unwanted. Chromium, which
+## closed that interval, is deliberately NOT here: its rail card is the one
+## place a person can open the browser to browse, and hiding it would make
+## the buy page the machine's only door to the web. The mechanism stays --
+## the shell's NoDisplay, one id per line -- because "installed, and not a
+## card" is a decision the rail will want again.
+const RAIL_HIDDEN_APPS := []
 
 
 ## The desktop-entry ids of everything the rail must not draw: every store's
@@ -205,12 +257,20 @@ const AVAILABLE_APPS := [
 		"accent": "#2A3F5A",
 		"tagline": "Valve's storefront and library",
 	},
-	# Zen's card left on 2026-08-11: the owner no longer wants it as the
-	# browser, so nothing offers it -- installed (RAIL_HIDDEN_APPS keeps that
-	# card off too) or available. The id stays in shipped-apps because the
-	# stores screen's buy flow still opens Valve's checkout in it; the safe
-	# direction of drift ("there but not here") is exactly this one. Full Zen
-	# removal is the Chromium kiosk-shell session's job, not this list's.
+	# The browser. Zen held this slot from 2026-08-07 to 2026-08-11 -- its card
+	# hidden on its last morning, the id gone by evening -- and left on the
+	# owner's word: "zen is not a controller friendly browser so we need a
+	# replacement... we use chromium because it is simply more performant." The
+	# replacement is not a different browser UI but the absence of one: the shell
+	# launches Chromium in KIOSK MODE (see browser_exec above) with the pad
+	# bridge as the pointer, so what reaches the television is the page and
+	# nothing else. Same one-line return path as everything that has left.
+	{
+		"id": BROWSER_ID,
+		"title": "Chromium",
+		"accent": "#3B2F5A",
+		"tagline": "The web, full screen, driven by the pad",
+	},
 	# Kodi left on 2026-08-11 ("kodi is out no need to have it at all"),
 	# taking the media-player job with it -- the Files screen now says
 	# honestly that nothing opens a video. Same one-line return path as
@@ -378,14 +438,20 @@ const PAD_KEY_APPS := {
 	# the browser rather than in Big Picture (see stores_screen's
 	# _on_detail_store_action), and a checkout nobody can click is not a
 	# purchase route -- it is a dead end with a card field on it.
-	#
-	# NOTE, and it is a real gap rather than a decision: the rail's own Zen card
-	# ("app.zen_browser.zen") is NOT in this table, so a browser opened from the
-	# rail gets no bridge either. That predates this entry. It is left alone here
-	# because adding it changes how an existing card behaves, and double-
-	# delivered input is the failure this table's own header warns about -- but
-	# it is worth settling deliberately rather than by omission.
 	"store.steam.buy": "pointer",
+	# THE BROWSER ITSELF, everywhere else it can be launched from: its rail
+	# card (the entry id IS the desktop-entry id for installed cards) and a
+	# document opened from the Files screen (file_open.gd prefixes "open.").
+	# This SETTLES THE GAP the old note here left open -- Zen's rail card was
+	# never bridged, so a browser opened from the rail could not be driven at
+	# all, and the note said that was worth deciding rather than inheriting.
+	# Decided: every surface the browser puts on the television is the same
+	# mouse-first surface, so every launch path gets the same pointer. The
+	# double-delivery warning in the header does not bite -- Chromium reads no
+	# gamepad unless a page asks for the Gamepad API, and a page that does is
+	# not what a kiosk document view opens.
+	BROWSER_ID: "pointer",
+	"open." + BROWSER_ID: "pointer",
 	TERMINAL_ID: "keys",
 }
 

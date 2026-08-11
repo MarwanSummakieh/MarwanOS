@@ -22,8 +22,8 @@ extends Control
 ##                    selection. There are two of them, which IS split view.
 ##   file_item.gd     one folder or file, in whichever of the three modes.
 ##   file_thumbs.gd   budgeted, cached, cancellable picture decoding.
-##   file_open.gd     what opens what: the built-in viewer, Zen, or an
-##                    honest sentence.
+##   file_open.gd     what opens what: the built-in viewer, the browser, or
+##                    an honest sentence.
 ##   image_viewer.gd  a picture fullscreen, with the folder under left/right.
 ##   file_properties.gd  Dolphin's properties dialog, at reading distance.
 ##

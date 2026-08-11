@@ -2,7 +2,7 @@
 # Installs one Flathub application on the first boot that has a network. The
 # instance name IS the application id, e.g.
 #
-#   marwanos-flatpak-install@app.zen_browser.zen.service
+#   marwanos-flatpak-install@org.chromium.Chromium.service
 #
 # A template rather than one unit per app: the units differ only in that id,
 # and a second hand-written copy is a second place for a timeout or an

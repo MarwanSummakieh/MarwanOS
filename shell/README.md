@@ -56,7 +56,7 @@ shell/
     file_pane.gd         one view pane; there are two, which is split view
     file_item.gd         one folder or file, in any of the three view modes
     file_thumbs.gd       budgeted, cached, cancellable picture decoding
-    file_open.gd         what opens what: viewer, Kodi, Zen, or a sentence
+    file_open.gd         what opens what: viewer, the browser, or a sentence
     image_viewer.gd      a picture fullscreen, folder under left/right
     file_properties.gd   type, size, date, permissions, location
     file_menu.gd         the row list both menus are drawn with

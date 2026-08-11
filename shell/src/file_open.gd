@@ -16,9 +16,10 @@ extends RefCounted
 ##      already decodes PNG, JPEG, WEBP and SVG for thumbnails; showing one
 ##      fullscreen is the same loader and a black background. No dependency, no
 ##      launch, no wait.
-##   2. AN INSTALLED APPLICATION, for everything else it can do. Zen is a
-##      browser and will render a PDF, an HTML file or a text file; it is in
-##      the image's shipped set.
+##   2. AN INSTALLED APPLICATION, for everything else it can do. Chromium
+##      renders a PDF, an HTML file or a text file, and it is in the image's
+##      shipped set -- opened in kiosk mode, so the document arrives full
+##      screen with no browser furniture around it (see Catalogue.browser_exec).
 ##   3. THE HONEST SENTENCE for everything left, and since Kodi's removal that
 ##      includes every video and audio file: "nothing on this machine opens
 ##      .mkv" is true, and truer than naming a player the machine refuses to
@@ -52,27 +53,29 @@ const IMAGE_EXTENSIONS := ["png", "jpg", "jpeg", "webp", "bmp", "svg"]
 ## The extensions live on in MEDIA_EXTENSIONS below so the properties panel
 ## can still call a video a video.
 ##
-## Zen is Firefox-derived and will open a local file: URL for the document
-## formats a browser already renders.
+## Chromium opens a local path handed on its command line -- it makes the
+## file: URL itself -- for the document formats a browser engine already
+## renders. (The handler was Zen until 2026-08-11; same formats, because the
+## list was always "what a browser renders", not "what Zen renders".)
 ##
 ## A TABLE, not a chain of ifs, so adding a format is one line and so the hint
 ## the screen shows is generated from the same data that decides what runs.
 const HANDLERS := {
-	# Documents and web, which a browser renders
-	"pdf": "app.zen_browser.zen", "html": "app.zen_browser.zen",
-	"htm": "app.zen_browser.zen", "txt": "app.zen_browser.zen",
-	"md": "app.zen_browser.zen", "json": "app.zen_browser.zen",
-	"xml": "app.zen_browser.zen", "csv": "app.zen_browser.zen",
-	"log": "app.zen_browser.zen",
+	# Documents and web, which a browser engine renders
+	"pdf": Catalogue.BROWSER_ID, "html": Catalogue.BROWSER_ID,
+	"htm": Catalogue.BROWSER_ID, "txt": Catalogue.BROWSER_ID,
+	"md": Catalogue.BROWSER_ID, "json": Catalogue.BROWSER_ID,
+	"xml": Catalogue.BROWSER_ID, "csv": Catalogue.BROWSER_ID,
+	"log": Catalogue.BROWSER_ID,
 }
 
-## Titles for the sentence, so it says "Zen Browser" rather than the raw id. The
+## Titles for the sentence, so it says "Chromium" rather than the raw id. The
 ## installed seam knows the title of everything on the machine -- and the case
 ## this sentence is FOR is the application being absent, which is exactly when
 ## that list cannot answer. Same two-source problem the rail's app alert has,
 ## solved the same way: a small table, then the raw id.
 const HANDLER_TITLES := {
-	"app.zen_browser.zen": "Zen Browser",
+	Catalogue.BROWSER_ID: "Chromium",
 }
 
 ## The formats that ARE media, kept for naming rather than for routing: nothing
@@ -140,7 +143,9 @@ static func plan(file_name: String) -> Dictionary:
 ## the store's buy entry has one: the launch seam, the splash and the
 ## pad bridge all key on the entry id, and "an app as a thing you browse" and
 ## "the same app opened on one file" want different treatment from at least
-## the first of them. It also keeps a file-open out of the pad-bridge table.
+## the first of them. The pad bridge lists the open.-prefixed browser id
+## separately in PAD_KEY_APPS -- a distinct id needs its own row, which is the
+## cost of the ids being distinct and worth it for the splash alone.
 ##
 ## The icon is the application's real one where appscan resolved a path, so the
 ## launch splash shows the logo of the thing that is starting rather than a
@@ -155,10 +160,20 @@ static func launch_entry(app_id: String, path: String) -> Dictionary:
 	if icon.is_empty():
 		icon = Catalogue.store_icon_path(app_id)
 
+	# The browser gets its one spelling of the kiosk launch -- the same flags
+	# the buy page uses, for the same reason there is only one spelling of
+	# Steam's launch line: a document that opened with browser furniture around
+	# it while the checkout did not would be two browsers pretending to be one.
+	# Any future non-browser handler falls through to the plain form, which is
+	# how Kodi was launched when it held the media formats.
+	var exec: Array = Catalogue.browser_exec(path) \
+		if app_id == Catalogue.BROWSER_ID \
+		else ["flatpak", "run", app_id, path]
+
 	return {
 		"id": "open.%s" % app_id,
 		"title": "%s -- %s" % [title, path.get_file()],
-		"exec": ["flatpak", "run", app_id, path],
+		"exec": exec,
 		"app_id": app_id,
 		"icon": icon,
 		"accent": "#33526B",

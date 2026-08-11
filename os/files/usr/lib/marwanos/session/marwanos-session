@@ -1098,7 +1098,8 @@ start_gamescope() {
     #
     # `loose` is the one profile that drops it, and dropping it is not free: this
     # flag is what makes a placeholder satisfy M1's acceptance wording, and
-    # without it Zen opens at whatever size it chooses on a television.
+    # without it an application opens at whatever size it chooses on a television
+    # (Zen did exactly that on the bench, above).
     # It is a profile rather than a fix for that reason -- it is a diagnostic
     # question ("is forcing Steam's popups fullscreen the flicker?"), and the
     # answer being yes would mean finding a narrower way to keep it.

@@ -24,14 +24,8 @@
 # and serves it over RPC.
 #
 # THE SET IS TWO, DOWN FROM EIGHT BY WAY OF THREE. Steam is the games library
-# and Zen is a browser THE RAIL NO LONGER SHOWS (2026-08-11: "zen is no longer
-# the desired browser"): it keeps installing because the stores screen's buy
-# flow opens Valve's checkout in it, and a purchase route with no browser is a
-# dead end -- but the shell hides its card (catalogue.gd, RAIL_HIDDEN_APPS)
-# and offers no available-card for it. Deleting Zen from THIS file too is the
-# Chromium kiosk-shell session's move, made when the checkout has somewhere
-# else to open. One app per job, no job twice, and browsing files is the
-# shell's own Files screen rather than an app at all.
+# and Chromium is the browser -- one app per job, no job twice, and browsing
+# files is the shell's own Files screen rather than an app at all.
 # Kodi left on 2026-08-11 on the owner's word -- "kodi is out no need to have
 # it at all" -- taking the media-player job with it: a video opened from the
 # Files screen now says it has no player, which is honest until the use
@@ -39,8 +33,19 @@
 # each duplicated a job something here already does; any id can come back
 # with one line here and one in the display_name table when the use arrives.
 #
+# ZEN LEFT ON 2026-08-11, the same day it was told it was living on borrowed
+# time: "zen is not a controller friendly browser so we need a replacement...
+# we use chromium because it is simply more performant." Zen held the browser
+# job for four days, and what it was actually used for -- the store's buy page,
+# documents from the Files screen -- is a job for an engine, not for a
+# browser's own UI: the shell launches Chromium in kiosk mode with the pad
+# bridge as the pointer, so the tabs-and-toolbars face Zen was chosen for
+# never reaches the television at all. (The irony is noted: Steam's own UI is
+# this same engine.) One line here and one in the display_name table bring
+# any browser back.
+#
 # Lines starting with # and blank lines are ignored. Ids only -- no globs, no
 # comments on the same line as an id. Matching everywhere is exact string
 # equality, so a stray space here is an app that silently stops existing.
 com.valvesoftware.Steam
-app.zen_browser.zen
+org.chromium.Chromium

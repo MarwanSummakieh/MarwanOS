@@ -54,7 +54,7 @@ const MEDIA_ROOT := "/run/media"
 
 ## The folders tmpfiles.d guarantees inside Home (see 50-marwanos.conf). Listed
 ## as places for the reason Dolphin lists them: they are where things land --
-## Zen's downloads, a stick's films -- and reaching Downloads should not be two
+## the browser's downloads, a stick's films -- and reaching Downloads should not be two
 ## presses into a directory listing.
 ##
 ## A folder that does not exist is NOT drawn. tmpfiles re-asserts all four every

@@ -27,9 +27,10 @@ extends Control
 ## can actually do.
 ##
 ## TYPE IS WHY THE MENU EXISTS RATHER THAN TWO BUTTONS. A person can point at
-## Zen's address bar with the pad -- pad_keys.gd moves a real cursor -- and then
-## has no way to put a single character in it, because the appliance has no
-## keyboard and the shell cannot see inside another application. Nothing here
+## a text field in the browser -- a search box, a sign-in form -- with the pad
+## (pad_keys.gd moves a real cursor) and then has no way to put a single
+## character in it, because the appliance has no keyboard and the shell cannot
+## see inside another application. Nothing here
 ## can know that a text field just took focus in a foreign X client; there is no
 ## protocol for it under gamescope and inventing one would mean an input method
 ## the applications would have to opt into. So the trigger is honest and manual:

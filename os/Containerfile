@@ -479,16 +479,15 @@ RUN --mount=type=cache,dst=/var/cache/libdnf5,sharing=locked \
     getcap /usr/bin/gamescope | grep -q cap_sys_nice \
         || { echo "setcap did not take on gamescope"; exit 1; }
 
-# THE BROWSER IS ZEN, AND IT IS NOT AN RPM.
+# THE BROWSER IS CHROMIUM, AND IT IS NOT AN RPM.
 #
 # The ublue base image ships Firefox -- 295 MB plus 49 MB of langpacks, on a
 # root filesystem with about 7 GiB spare. Nothing here asked for it and the
-# browser is Zen, installed as a flatpak on first boot by
-# marwanos-flatpak-install@app.zen_browser.zen.service -- rail-hidden since
-# 2026-08-11 and kept only as the buy flow's checkout until the Chromium
-# kiosk shell replaces it (that removal is its own change, not this one) --
-# so the RPM is both unwanted and the largest single thing in the image that
-# nothing uses.
+# appliance's browser is Chromium, installed as a flatpak on first boot by
+# marwanos-flatpak-install@org.chromium.Chromium.service, so the RPM is both
+# unwanted and the largest single thing in the image that nothing uses.
+# (The browser was Zen from 2026-08-07 to 2026-08-11 -- rail-hidden on its
+# last day, then removed; see shipped-apps for the headstone.)
 #
 # WHY REMOVED RATHER THAN HIDDEN. marwanos-appscan lists what is installed, by
 # design and with no deny-list for "things we would rather you did not see" --
@@ -501,15 +500,21 @@ RUN --mount=type=cache,dst=/var/cache/libdnf5,sharing=locked \
 # package depends on Firefox here -- checked with `rpm -q --whatrequires`
 # before this line existed -- so nothing else follows it out.
 #
-# Zen is not installed here for the reason no flatpak is: /var is per-stick and
-# outside the ostree commit, so a baked-in flatpak would bloat every image and
-# still not survive as an installed app. See flatpak-install's header.
+# Chromium is not installed here for the reason no flatpak is: /var is per-stick
+# and outside the ostree commit, so a baked-in flatpak would bloat every image
+# and still not survive as an installed app. See flatpak-install's header.
 RUN --mount=type=cache,dst=/var/cache/libdnf5,sharing=locked \
     set -euxo pipefail; \
     dnf -y remove firefox firefox-langpacks; \
     dnf clean all; \
-    ! rpm -q firefox; \
-    ! test -f /usr/share/applications/org.mozilla.firefox.desktop
+    : "The || exit is load-bearing on every negated assertion in this file:"; \
+    : "set -e deliberately ignores a pipeline that starts with !, so a bare"; \
+    : "'! grep' or '! rpm -q' is an assertion that can never fire. Found"; \
+    : "2026-08-11 when the shipped-apps kodi grep provably matched (the"; \
+    : "file quotes the owner's words) on builds that stayed green."; \
+    ! rpm -q firefox || { echo "firefox survived its removal"; exit 1; }; \
+    ! test -f /usr/share/applications/org.mozilla.firefox.desktop \
+        || { echo "firefox's desktop entry survived its removal"; exit 1; }
 
 # CAP_SYS_NICE on gamescope, and it is a measured fix rather than a precaution.
 #
@@ -626,7 +631,9 @@ RUN set -euxo pipefail; \
     : "driver's -- which nvidia-drm.modeset needs to light the panel before"; \
     : "plymouth draws -- must still be THERE. A dracut that started ignoring"; \
     : "the drop-in would pass a size check by luck and fail this one."; \
-    ! grep -q 'firmware/nvidia/ga102' /tmp/ir-files.txt; \
+    : "|| exit because set -e ignores !-pipelines -- see the firefox removal."; \
+    ! grep -q 'firmware/nvidia/ga102' /tmp/ir-files.txt \
+        || { echo "nouveau firmware is still in the initramfs"; exit 1; }; \
     grep -q 'firmware/nvidia/610\.57\.04' /tmp/ir-files.txt; \
     rm -f /tmp/ir-mods.txt /tmp/ir-files.txt
 
@@ -818,7 +825,13 @@ RUN set -euxo pipefail; \
     ln -sf ../marwanos-flatpak-install@.service \
         "/usr/lib/systemd/system/multi-user.target.wants/marwanos-flatpak-install@com.valvesoftware.Steam.service"; \
     ln -sf ../marwanos-flatpak-install@.service \
-        "/usr/lib/systemd/system/multi-user.target.wants/marwanos-flatpak-install@app.zen_browser.zen.service"; \
+        "/usr/lib/systemd/system/multi-user.target.wants/marwanos-flatpak-install@org.chromium.Chromium.service"; \
+    : "ZEN IS GONE (2026-08-11): 'zen is not a controller friendly browser"; \
+    : "so we need a replacement... we use chromium because it is simply"; \
+    : "more performant.' Chromium above holds the browser job now, driven"; \
+    : "in kiosk mode by the shell's own pad bridge -- see catalogue.gd's"; \
+    : "PAD_KEY_APPS. Zen's own UI was never controller-navigable and the"; \
+    : "shell never used it: every launch was a URL or a file handed over."; \
     : "KODI IS GONE, on the owner's word (2026-08-11): 'kodi is out no need"; \
     : "to have it at all'. It survived the eight-to-three trim as the media"; \
     : "player -- the half the Files screen deliberately does not do -- and"; \
@@ -1027,16 +1040,26 @@ RUN set -euxo pipefail; \
     : "appctl refuses every store request and storeart fetches nothing --"; \
     : "both failing silently on a machine with no console. The greps are the"; \
     : "exact-id check on the first and last ids the file ships (Steam and"; \
-    : "Zen): matching everywhere is string equality, so this catches the"; \
+    : "Chromium): matching everywhere is string equality, so this catches the"; \
     : "stray whitespace or BOM that would make an id silently stop existing,"; \
-    : "and the last-id grep catches a truncated file. Kodi must NOT be in"; \
-    : "it -- removed 2026-08-11 -- and its absence is asserted because a"; \
-    : "merge or revert resurrecting the id would quietly re-grow an install"; \
-    : "unit for an application the owner asked off the machine."; \
+    : "and the last-id grep catches a truncated file. Kodi and Zen must NOT"; \
+    : "be in it -- both removed 2026-08-11 -- and their absence is asserted"; \
+    : "because a merge or revert resurrecting either id would quietly re-grow"; \
+    : "an install unit for an application the owner asked off the machine."; \
+    : "The absence greps are ID-ANCHORED, not substring: the file's comments"; \
+    : "quote the owner's own words ('kodi is out', 'zen is not a controller"; \
+    : "friendly browser'), so a substring grep would fail the build on the"; \
+    : "headstone prose that records why the id is absent. The old bare-'!'"; \
+    : "spelling hid exactly that: it provably matched 'kodi' in the comments"; \
+    : "and the build stayed green, because set -e ignores !-pipelines."; \
     test -s /usr/lib/marwanos/shipped-apps; \
     grep -q '^com\.valvesoftware\.Steam$' /usr/lib/marwanos/shipped-apps; \
-    grep -q '^app\.zen_browser\.zen$' /usr/lib/marwanos/shipped-apps; \
-    ! grep -q 'kodi' /usr/lib/marwanos/shipped-apps; \
+    grep -q '^org\.chromium\.Chromium$' /usr/lib/marwanos/shipped-apps; \
+    : "|| exit because set -e ignores !-pipelines -- see the firefox removal."; \
+    ! grep -q '^tv\.kodi\.Kodi$' /usr/lib/marwanos/shipped-apps \
+        || { echo "kodi's id is back in shipped-apps"; exit 1; }; \
+    ! grep -q '^app\.zen_browser\.zen$' /usr/lib/marwanos/shipped-apps \
+        || { echo "zen's id is back in shipped-apps"; exit 1; }; \
     test -L /usr/lib/systemd/system/timers.target.wants/marwanos-storeart.timer; \
     test -L /usr/lib/systemd/system/multi-user.target.wants/marwanos-panel.service; \
     : "Without this link nothing consumes the shell's profile requests, so"; \
@@ -1048,8 +1071,9 @@ RUN set -euxo pipefail; \
     : "mode: every press accepted, nothing consumed, nothing changed."; \
     test -L /usr/lib/systemd/system/multi-user.target.wants/marwanos-window-profile.service; \
     test -L "/usr/lib/systemd/system/multi-user.target.wants/marwanos-flatpak-install@com.valvesoftware.Steam.service"; \
-    test -L "/usr/lib/systemd/system/multi-user.target.wants/marwanos-flatpak-install@app.zen_browser.zen.service"; \
+    test -L "/usr/lib/systemd/system/multi-user.target.wants/marwanos-flatpak-install@org.chromium.Chromium.service"; \
     test ! -e "/usr/lib/systemd/system/multi-user.target.wants/marwanos-flatpak-install@tv.kodi.Kodi.service"; \
+    test ! -e "/usr/lib/systemd/system/multi-user.target.wants/marwanos-flatpak-install@app.zen_browser.zen.service"; \
     test -L /usr/lib/systemd/system/multi-user.target.wants/marwanos-netcheck.service; \
     test -L /usr/lib/systemd/system/multi-user.target.wants/marwanos-appscan.service; \
     test -L /usr/lib/systemd/system/multi-user.target.wants/marwanos-wifi.service; \
