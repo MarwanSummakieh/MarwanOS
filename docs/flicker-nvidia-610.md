@@ -1,11 +1,36 @@
 # The tearing, the day of elimination, and the driver swap that was reverted
 
-**Status (2026-08-11, end of day): 610.57.04 was tried and REVERTED. It did not
-buy its way in — the owner reported that game performance collapsed across the
-board on it. The image is pinned back at 610.43.03, tearing and all.** The
-elimination table below still stands and is still the material for an NVIDIA
-report; what changed is that "just move to a newer driver" is now a measured
-dead end rather than an untried idea.
+**Status (2026-08-11, end of day — READ ALL THREE SENTENCES BEFORE ACTING):
+610.57.04 FIXES THE TEARING. It also runs games badly. The image is currently
+pinned back at 610.43.03, which means the shipping image tears.**
+
+The verdict arrived after the revert, which is the coordination failure this
+file's own "next moves" list was written to prevent: the swap was reverted on
+the performance report alone, while the question it was made to answer — what
+did it do to the tearing — was still unasked. Asked and answered 2026-08-11 by
+the owner, on the bench, booted on 610.57.04: **"tearing is gone"**. Two days of
+elimination end here, and the cause is named: the tearing is the NVIDIA
+**610.43.03** open-kernel-module flip path.
+
+So the choice is no longer "find the cause". It is a trade, and both sides are
+measured:
+
+| Pin | Tearing | Games |
+| --- | --- | --- |
+| 610.43.03 (shipping now) | **tears** | fast |
+| 610.57.04 | **clean** | slow |
+
+**AND THE TRADE MAY BE FALSE, which is the next thing to test rather than
+assume.** The swap moved TWO things at once: the driver 610.43.03 → 610.57.04
+*and* the base kernel 7.1.5 → 7.1.8, because an akmods kmod is built against one
+exact kernel and the pair moves together. Nothing has separated "610.57.04 is
+slow" from "7.1.8 is slow" — see the Containerfile's own note. Until that is
+split, "the newer driver runs games badly" is one of two candidate sentences,
+and the other one has a different fix.
+
+The elimination table below stands and is still the material for an NVIDIA
+report — which is now a much sharper report than it was, because it names a
+version that fixes it.
 
 ## Symptom
 
@@ -115,19 +140,29 @@ Both known states are now bad in different ways, which is worth saying out
 loud so nobody re-runs this loop by accident:
 
 - **610.43.03** (pinned, shipping): games run well, panel tears.
-- **610.57.04**: games run badly. Its effect on the tearing was never
-  separately reported and is now unknown.
+- **610.57.04**: **tearing gone** (owner, 2026-08-11, on the bench), games run
+  badly.
 
-Next moves, in rough order of cost:
+Step 1 below is now ANSWERED and struck through; the live question is step 1a.
 
-1. **Ask what 610.57.04 did to the tearing before spending anything else.** If
-   it fixed it, the problem becomes "find the performance cause on the newer
-   driver", which is a much better problem than the one we have. If it changed
-   nothing, the whole 610 open-module branch is suspect and step 2 is next.
+1. ~~Ask what 610.57.04 did to the tearing before spending anything else.~~
+   **Done: it fixes it.** So this is no longer a hunt for the cause — it is a
+   trade between two known-bad states, and the work is to break the trade.
+1a. **Separate the driver from the kernel, because the swap moved both.**
+   610.43.03 pairs with base kernel 7.1.5 and 610.57.04 with 7.1.8, so the
+   performance report accuses two suspects at once. Find an akmods digest for
+   610.57.04 built against 7.1.5 (or any pair that holds one variable still)
+   and the answer falls out in one boot. If the kernel is the slow half, the
+   trade dissolves entirely: 610.57.04 on 7.1.5 would be clean AND fast.
+1b. **Failing that, make it a choice rather than a default.** Both pins work;
+   they are simply good at different things. A build-time switch — or an owner
+   who knowingly runs the clean-but-slow image while games wait — beats
+   shipping the tearing silently, which is what the revert did.
 2. **An older pair** — an akmods digest carrying a driver *older* than
    610.43.03, with the base digest whose kernel it was built against. This is
    the "previous stable branch" idea, and note it is a pair hunt, not a
-   one-line change.
+   one-line change. Lower priority now that a KNOWN-GOOD-for-tearing driver
+   exists.
 3. **The closed kmod sidecar** (`akmods-nvidia` rather than
    `akmods-nvidia-open`) purely as a diagnostic: if the closed module does not
    tear, the fault is specific to the open module's flip path, which is
