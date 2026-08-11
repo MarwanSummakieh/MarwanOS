@@ -4,6 +4,12 @@ A Fedora-based, image-mode Linux distribution that boots straight into a
 controller-navigable gaming shell. No desktop, no login screen, no terminal, no
 visible text between the vendor logo and the shell.
 
+A machine flagged as a development target is the documented exception, and has
+been since D6: it gets sshd, a tty2 getty, and — since
+[ADR 0009](docs/adr/0009-a-terminal-behind-the-devmode-flag.md) — a Terminal row
+on the settings screen. None of it exists on a machine without
+`/var/marwanos/devmode`.
+
 Built on [bootc](https://containers.github.io/bootc/) and Universal Blue: the OS
 is a container image, and every change ships as `bootc upgrade` with
 `bootc rollback` as the undo.

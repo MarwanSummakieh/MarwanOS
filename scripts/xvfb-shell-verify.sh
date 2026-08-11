@@ -60,6 +60,15 @@
 #                Read-write, so a directory created or deleted DURING a run
 #                exercises the live mount poll: mkdir one between two numeric
 #                sleep arguments and assert on "files: drive appeared at".
+#   DEVMODE      set to 1 to run the shell as if /var/marwanos/devmode were
+#                present, which is what puts the Terminal row on the settings
+#                screen (MARWANOS_SHELL_DEVMODE -- see catalogue.gd). Without
+#                it the settings screen is the shipped machine's, one row
+#                shorter, which is the state most assertions should be made
+#                against. Pressing A on the row inside this harness launches
+#                the wrapper from the RUNTIME image and it refuses (no flag in
+#                a container), so what this exercises is the row, the launch
+#                seam and the return -- not a working terminal.
 #   KEY_DELAY    seconds slept after every key (default 1).
 #   SETTLE       seconds slept once the window exists, before driving (default 3).
 #   SHOTS_DIR    if set, an ImageMagick `import` of the Xvfb root is written
@@ -158,6 +167,14 @@ if [[ -n "${FILES_DIR:-}" ]]; then
     FILES_ARGS=(-e MARWANOS_SHELL_FILES_HOME=/files -v "${FILES_DIR}:/files:rw")
 fi
 
+# An environment variable rather than a touched file, because the real flag
+# lives at a root-owned path the shell cannot write -- so the override has to
+# be something only whoever STARTS the shell can set. See catalogue.gd.
+DEVMODE_ARGS=()
+if [[ -n "${DEVMODE:-}" && "${DEVMODE}" != "0" ]]; then
+    DEVMODE_ARGS=(-e MARWANOS_SHELL_DEVMODE=1)
+fi
+
 MEDIA_ARGS=()
 if [[ -n "${MEDIA_DIR:-}" ]]; then
     # Bind-mounted at the REAL path rather than at a fixture path behind an
@@ -181,6 +198,7 @@ podman run -d --name "$CTR" \
     "${STORE_ARGS[@]}" \
     "${FILES_ARGS[@]}" \
     "${MEDIA_ARGS[@]}" \
+    "${DEVMODE_ARGS[@]}" \
     --tmpfs /godothome:rw,mode=1777 \
     -v "${BIN_OUT}:/usr/lib/marwanos/shell/marwanos-shell:ro" \
     --entrypoint /usr/lib/marwanos/shell/marwanos-shell \

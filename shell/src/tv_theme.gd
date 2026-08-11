@@ -385,9 +385,21 @@ const STORE_GRID_GAP := 20
 const STORE_SHELF_GAP := 18
 
 ## The detail sub-view's picture. Most of the pane's width at a screenshot's
-## 16:9, which is why it is nearly twice the tile's -- the whole reason the
-## service fetches a full screenshot rather than reusing the capsule.
-const STORE_DETAIL_ART_HEIGHT := 360
+## 16:9, which is why it is well over the tile's -- the whole reason the service
+## fetches a full screenshot rather than reusing the capsule.
+##
+## 300 AND NOT 360, AND THE NUMBER IS ARITHMETIC RATHER THAN TASTE. The page
+## grew a second action row when Play/Install landed, and the pane has a fixed
+## height: 972 of design surface less the heading, the hint row and their
+## SECTION_GAPs is about 796, less STORE_PAGE_PAD top and bottom is 700. The
+## children below the picture come to 322 (title 70, prices 38, summary 38, two
+## SETTINGS_ROW_HEIGHT rows at 88) plus 60 of STORE_ITEM_PAD separation, so the
+## picture may have 318 at the very most. At 360 the second row was drawn past
+## the bottom edge of the pane -- visible in a harness screenshot on 2026-08-11,
+## and invisible to every assertion in this project, because a Godot Control
+## laid out past its parent is not an error anywhere. It is the one defect class
+## the invisible harness catches that the journal never will.
+const STORE_DETAIL_ART_HEIGHT := 300
 
 ## A discount, and the one place in this file where a hue carries meaning. It
 ## is deliberately NOT the only channel: the tile says "was $59.99 (-70%)" in

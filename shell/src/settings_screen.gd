@@ -28,6 +28,7 @@ const SettingsRow = preload("res://src/settings_row.gd")
 const ActionRow = preload("res://src/action_row.gd")
 const WifiScreen = preload("res://src/wifi_screen.gd")
 const UpdateScreen = preload("res://src/update_screen.gd")
+const Catalogue = preload("res://src/catalogue.gd")
 
 var _rows: Array = []
 var _scroll: ScrollContainer = null
@@ -44,6 +45,9 @@ var _wifi_row: ActionRow = null
 var _wifi_screen: WifiScreen = null
 var _updates_row: ActionRow = null
 var _update_screen: UpdateScreen = null
+## Built only on a devmode machine, and null everywhere else -- see the row's
+## comment in _ready. Every use is guarded, like the two screens above it.
+var _terminal_row: ActionRow = null
 
 
 func _ready() -> void:
@@ -166,7 +170,13 @@ func _ready() -> void:
 	# A person who has never read this repository cannot be expected to go
 	# looking under "Compositor".
 	_window_row = ActionRow.new()
-	_window_row.setup("Steam windows", _window_profile_value())
+	# "Steam", not "Steam windows", and the rename is a correction rather than a
+	# tidy-up. The row shipped believing the flicker was Steam's WINDOWS fighting
+	# the shell's for the screen; the owner's next sentence -- the screen blacks
+	# and flickers the moment the WINDOWLESS background client runs -- says the
+	# axis is really about what the compositor does when Steam attaches to it at
+	# all. Two of the seven profiles now have nothing to do with windows.
+	_window_row.setup("Steam", _window_profile_value())
 	_window_row.activated.connect(_on_window_row_pressed)
 	list.add_child(_window_row)
 	_rows.append(_window_row)
@@ -184,6 +194,28 @@ func _ready() -> void:
 	_updates_row.activated.connect(_on_updates_row_pressed)
 	list.add_child(_updates_row)
 	_rows.append(_updates_row)
+
+	# THE ROW THAT IS NOT THERE ON A SHIPPED MACHINE, and the only row on this
+	# screen whose EXISTENCE is conditional rather than its value.
+	#
+	# A "Terminal -- not available" row would be the wrong kind of honest. Every
+	# other read-only row on this screen answers a question somebody has; this
+	# one would advertise a door and then refuse to open it, on a machine whose
+	# entire thesis is that the door is not there. Absent is the truth. On a
+	# devmode machine the flag is set and the row appears, which is the same
+	# switch sshd and the tty2 getty are on -- see catalogue.gd's terminal block
+	# and ADR 0009.
+	#
+	# LAST, and by a wider margin than Updates earned. Updates is here rather
+	# than mid-list because it can restart the machine; this one hands over the
+	# whole machine, so it sits below the row somebody's thumb might overshoot
+	# onto, not above it.
+	if Catalogue.devmode():
+		_terminal_row = ActionRow.new()
+		_terminal_row.setup("Terminal", "Opens a shell -- press A")
+		_terminal_row.activated.connect(_on_terminal_row_pressed)
+		list.add_child(_terminal_row)
+		_rows.append(_terminal_row)
 
 	# The spacer that used to take the slack here is gone: the scroll container
 	# above is the expanding child now, which is what keeps the hint row pinned
@@ -211,6 +243,26 @@ func _ready() -> void:
 	# own press would keep showing an optimistic guess after a refusal.
 	DisplayProfile.state_changed.connect(_on_display_state_changed)
 	WindowProfile.state_changed.connect(_on_window_state_changed)
+	# OUT OF THE WAY WHILE A LAUNCH IS UP -- the stores and files screens' rule,
+	# arriving here for the same reason they have it: this screen can now start
+	# something. Their version goes deaf; this one HIDES, and the difference is
+	# what the two screens are made of. Those two read input themselves, so
+	# turning the readers off is enough. Every control here is a focusable
+	# Button driven through the viewport's GUI focus, and the shell keeps
+	# receiving pad input while another client owns the screen (see pad_keys.gd)
+	# -- so a deaf-but-visible settings screen would still walk its own focus
+	# ring under a running terminal, and an A meant for the shell prompt would
+	# also press whatever row the ring had landed on. Hiding drops the focus
+	# with the visibility, which is exactly the state this screen should be in
+	# while it is not on screen.
+	#
+	# AND IT IS NOT ONLY ABOUT INPUT. Pressing home over a running application
+	# makes the shell's whole window transparent (Kiosk.set_overlay -- that is
+	# how the app menu shows the application through itself), so a settings
+	# screen left VISIBLE behind a launch would paint its opaque background over
+	# the terminal the menu is supposed to be floating on top of.
+	Launcher.launch_started.connect(_on_launch_started)
+	Launcher.launch_finished.connect(_on_launch_finished)
 
 	ShellLog.info("settings screen up with %d rows" % _rows.size())
 
@@ -506,6 +558,59 @@ func _on_updates_row_pressed() -> void:
 	add_child(_update_screen)
 	set_process_unhandled_input(false)
 	ShellLog.info("update screen opened from settings")
+
+
+## Open the terminal. The one row on this screen that goes through the LAUNCH
+## seam rather than a settings seam, and it uses it exactly as the rail and the
+## stores screen do: build an entry, hand it to Launcher, and let the seam own
+## everything after that -- the splash, the pad bridge, the app menu's Type and
+## Close, and putting this screen back when it exits.
+##
+## The busy guard is the stores screen's: a second press while something is
+## already up is a bounced button. Launcher.launch refuses anyway; saying so in
+## the journal is what makes an unexpectedly missing terminal readable later.
+func _on_terminal_row_pressed() -> void:
+	if Launcher.is_busy():
+		ShellLog.info("terminal row: something is already running; ignoring")
+		return
+	# A failure to spawn is the launch seam's to report and to recover from --
+	# it logs "could not start" and hands the screen straight back, which on a
+	# machine where /usr/lib/marwanos/terminal is missing or the wrapper refuses
+	# (no devmode flag on the ROOT side) is the whole failure path.
+	Launcher.launch(Catalogue.terminal_entry())
+
+
+## Off the screen for as long as something is running on it. See the connect in
+## _ready for why this hides rather than going deaf.
+func _on_launch_started(_entry: Dictionary) -> void:
+	hide()
+	# BOTH HALVES, and the second one is the half a hide does not cover: input
+	# callbacks are not gated on a Control's visibility, so an invisible screen
+	# still hears every button. B is the press that proves it -- the pad bridge
+	# sends B to the terminal as BackSpace, and this screen's _unhandled_input
+	# reads the same press as "close settings", which would tear the screen down
+	# underneath a running application and hand the rail back over the top of it.
+	set_process_unhandled_input(false)
+
+
+func _on_launch_finished(_entry: Dictionary) -> void:
+	show()
+	# Not while a sub-screen is up: one of those owns B, and this is the wifi
+	# screen's guard said the other way round. A launch cannot be started from
+	# under one today -- the row is unreachable while a child screen holds focus
+	# -- so this is a guard against a future arrangement rather than a live case.
+	if _wifi_screen == null and _update_screen == null:
+		set_process_unhandled_input(true)
+	# Nothing is focused after a hide, and a settings screen with no focus owner
+	# is a settings screen the pad cannot move -- the rail's _ensure_focus
+	# lesson, in the one place on this screen where focus can be lost without a
+	# button having been pressed. Back onto the row that started it, which is
+	# where the person who just closed a terminal is looking.
+	if _terminal_row != null:
+		_terminal_row.grab_focus()
+	elif not _rows.is_empty():
+		var first: Control = _rows[0]
+		first.grab_focus()
 
 
 func _on_update_screen_closed() -> void:

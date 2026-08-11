@@ -274,36 +274,65 @@ readonly PROFILE_LIST="steady sixty-raw flat native raw"
 readonly PROFILE_REFRESH=60
 
 # ---------------------------------------------------------------------------
-# THE WINDOW PROFILE
+# THE STEAM PROFILE
 #
-# "the moment steam runs the screen starts flickering" -- the owner, 2026-08-11.
+# "the moment steam ran in the background the screen turns off for a second then
+# starts flickering" -- the owner, 2026-08-11.
 #
-# A SECOND AXIS, and the separation is the design. The display profile above is
-# about the panel: refresh, composition, hardware planes, all of it aimed at a
-# flicker that was there at idle with nothing running. This one is about the
-# WINDOW STACK, and the report is narrower and more specific -- the screen is
-# calm until a second fullscreen client turns up, and then it is not. Those are
-# different causes with different levers, and the display block's own rule says
-# why they cannot share a switch: a profile that also moved the refresh rate
-# "would stop being an answer to which of these four things is flickering".
+# READ THAT SENTENCE CAREFULLY, because the first version of this block did not
+# and got the layer wrong. Two words in it decide everything:
 #
-# WHAT IS ACTUALLY GOING ON, as far as it can be reasoned about from here. This
-# session passes --force-windows-fullscreen, which sizes EVERY window to the
-# nested display. The shell's window is one such window and it never goes away:
-# shell_root hides its Control while an application runs, but the window stays
-# mapped and fullscreen. Steam is not one window either -- it is a main window
-# plus notification popups, tooltips, hidden CEF helpers and an overlay, mapping
-# and unmapping constantly, every one of them forced fullscreen by that flag. So
-# steamcompmgr is repeatedly asked to choose a focus window from a pile of
-# fullscreen candidates that changes several times a second, and every time the
-# choice lands somewhere new the screen shows something new. From a sofa that is
-# a flicker.
+#   IN THE BACKGROUND. That client is started `-silent` by start_background_steam
+#   below, on EVERY boot, seconds after the shell -- and it has no window at all.
+#   Nothing about window management, focus heuristics or fullscreen candidates
+#   can explain a client that never maps anything.
+#   TURNS OFF FOR A SECOND. A screen going black and coming back is a MODESET.
+#   It is the display being reprogrammed, which is a layer below every flag in
+#   the window list and a layer below --force-composition too.
 #
-# THAT IS A THEORY, NOT A MEASUREMENT, and the bench has been unreachable for
-# this whole investigation. Which is exactly why this ships as a switch: five
+# So the question this axis answers is not "how does the compositor arrange
+# Steam's windows" but "what does the compositor do when Steam ATTACHES to it".
+# The window-arrangement profiles are kept because they are cheap, already
+# written and still the right answer if the flicker ever turns out to have a
+# second cause during games -- but they are no longer the ones to try first.
+#
+# AND IT LIKELY EXPLAINS 2026-08-10. The display profile block above lists four
+# candidate causes for a screen that was "so flickery it's giving me a headache",
+# and every one of them assumes an IDLE machine. This machine is never idle:
+# background Steam attaches a few seconds into every boot and stays. That is why
+# none of the five display profiles fixed it, and it means the two reports are
+# probably one bug rather than two.
+#
+# WHAT ATTACHES, AND WHAT THAT COSTS. Steam is a Vulkan/GL client and this
+# session exports ENABLE_GAMESCOPE_WSI=1 globally, so Steam's present path runs
+# through gamescope's own WSI layer rather than one it infers. Steam also detects
+# gamescope and negotiates with it -- refresh included. Either is a plausible
+# route from "a windowless client started" to "the panel was reprogrammed", and
+# neither needs a window to happen.
+#
+# THAT IS STILL A THEORY, NOT A MEASUREMENT -- the bench has been unreachable for
+# this whole investigation. Which is exactly why this ships as a switch: seven
 # configurations, each removing a different part of the above, and whichever one
 # the owner stops on names the cause.
 #
+#   no-bg-steam  The session starts NO background client. THE CLEAN
+#                DISCRIMINATOR, and the first thing to try: if the screen is calm
+#                until a game is launched by hand, the background client's
+#                attachment is the cause and everything below is noise. If it
+#                still flickers with no Steam process on the machine at all, the
+#                cause was never Steam and the display axis is where to look.
+#                THE COST IS REAL AND IT IS ONLY LATENCY: the warm client is what
+#                makes `steam://rungameid/` resolve in a couple of seconds, so
+#                the first game launched on this profile waits out a cold Steam.
+#                Nothing breaks; the rail, the library and the storefront are all
+#                unaffected, because appscan reads manifests off disk and the
+#                storefront is drawn by the shell.
+#   no-wsi       Background Steam runs with ENABLE_GAMESCOPE_WSI=0, so its
+#                Vulkan never attaches to gamescope's WSI layer. One step
+#                narrower than no-bg-steam: the client still starts and stays
+#                warm, it just presents the way it would without gamescope's
+#                help. If this is calm and no-bg-steam was too, the WSI layer is
+#                the modeset and the warm client can be kept.
 #   steam-split  -e AND --xwayland-count 2. What a Steam Deck actually runs.
 #                Steam's gamepadui expects two X servers -- its own UI on one,
 #                the game it launches on the other -- and this session has
@@ -342,12 +371,14 @@ readonly WINDOW_DEFAULT="plain"
 # machine has actually booted, repeatedly.
 readonly WINDOW_FALLBACK="plain"
 
-# In the order the settings screen cycles them: the untried theory first, then
-# the one flag nothing else removes, then the two halves of the reverted commit,
-# ending at today's behaviour. Kept identical to the PROFILES list in
-# /usr/lib/marwanos/window/profile so "the next one" means the same thing on
-# both sides of the seam.
-readonly WINDOW_LIST="steam-split loose steam-aware yield plain"
+# In the order the settings screen cycles them, and the order IS the diagnosis:
+# the two that address the symptom actually reported -- a windowless client
+# blacking the screen -- come first, because they are the only ones that can
+# explain it. The four window-arrangement profiles follow for the case where
+# something still flickers once a game is on screen, and today's behaviour is
+# last. Kept identical to the PROFILES list in /usr/lib/marwanos/window/profile
+# so "the next one" means the same thing on both sides of the seam.
+readonly WINDOW_LIST="no-bg-steam no-wsi steam-split loose steam-aware yield plain"
 
 log()  { printf '<6>%s: %s\n' "$TAG" "$*" >&2; }
 warn() { printf '<4>%s: %s\n' "$TAG" "$*" >&2; }
@@ -634,7 +665,21 @@ supervise_steam() {
         # started, that it stopped, that it is not coming back -- is said below
         # in this script's own voice, which is also the only voice
         # `journalctl -t marwanos-session` can be searched with.
-        flatpak run "$STEAM_FLATPAK_ID" -silent >/dev/null 2>&1
+        # THE WSI LEVER, and --env is how it has to be spelled. This session
+        # exports ENABLE_GAMESCOPE_WSI=1 for everything, but Steam runs inside a
+        # flatpak sandbox: setting a variable out here and hoping is how a
+        # profile silently does nothing. `flatpak run --env=` puts it inside the
+        # sandbox explicitly, which is the only place Steam will read it.
+        #
+        # Passed on EVERY profile except no-wsi rather than only on no-wsi, so
+        # that what the client gets is stated by this line rather than inherited
+        # from whatever the session's environment happened to contain -- the
+        # difference between a lever and a coincidence.
+        if [ "$WINDOW_PROFILE" = "no-wsi" ]; then
+            flatpak run --env=ENABLE_GAMESCOPE_WSI=0 "$STEAM_FLATPAK_ID" -silent >/dev/null 2>&1
+        else
+            flatpak run --env=ENABLE_GAMESCOPE_WSI=1 "$STEAM_FLATPAK_ID" -silent >/dev/null 2>&1
+        fi
         _steam_status=$?
 
         _steam_now="$(uptime_seconds)"
@@ -668,6 +713,18 @@ supervise_steam() {
 start_background_steam() {
     [ -z "${STEAM_STARTED:-}" ] || return 0
     STEAM_STARTED=1
+
+    # THE DISCRIMINATOR, and it is checked before `steam_installed` so the
+    # journal says which of the two reasons applied. The owner's report is that
+    # the screen blacks and starts flickering the moment this client runs; this
+    # is the profile that does not run it, and it is the only test that can tell
+    # "Steam attaching reprograms the display" from "this panel flickers anyway".
+    if [ "$WINDOW_PROFILE" = "no-bg-steam" ]; then
+        log "the 'no-bg-steam' profile is set: NO background Steam this session"
+        log "games still launch from the rail -- the first one waits out a cold client"
+        log "if the screen is calm now, background Steam attaching to gamescope is the flicker"
+        return 0
+    fi
 
     if ! steam_installed; then
         log "Steam is not installed; the session starts no background client"
@@ -1338,7 +1395,7 @@ start_gamescope_or_fall_back() {
     err "gamescope REJECTED the '$DISPLAY_PROFILE' display profile with the '$WINDOW_PROFILE' window profile"
     err "retrying ONCE with '$PROFILE_FALLBACK' + '$WINDOW_FALLBACK', which is this machine's known-good configuration"
     err "$PROFILE_FILE still says '$DISPLAY_PROFILE' -- change it from Settings > Display"
-    err "$WINDOW_PROFILE_FILE still says '$WINDOW_PROFILE' -- change it from Settings > Steam windows"
+    err "$WINDOW_PROFILE_FILE still says '$WINDOW_PROFILE' -- change it from Settings > Steam"
     DISPLAY_PROFILE="$PROFILE_FALLBACK"
     WINDOW_PROFILE="$WINDOW_FALLBACK"
     # RE-EXPORTED, because the shell has not started yet and what it is told has

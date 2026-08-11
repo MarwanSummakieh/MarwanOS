@@ -3,28 +3,35 @@
 # The window profile's privileged half: the one process allowed to write
 # /var/marwanos/window.profile.
 #
-# WHY A SECOND PROFILE AXIS, and not five more words on the display one. The
-# display profile answers "what is this panel being asked to do" -- refresh,
-# composition, hardware planes. It exists because the whole screen was flickering
-# at idle. This one answers a different question: "what does the compositor think
-# Steam's windows ARE", and it exists because of a narrower report --
+# WHY A SECOND PROFILE AXIS, and not more words on the display one. The display
+# profile answers "what is this panel being asked to do" -- refresh, composition,
+# hardware planes. This one answers "what does the compositor do about STEAM",
+# and it exists because of two reports a day apart:
 #
-#   "the moment steam runs the screen starts flickering"  -- the owner, 2026-08-11
+#   "the moment steam runs the screen starts flickering"
+#   "the moment steam ran in the background the screen turns off for a second
+#    then starts flickering"          -- the owner, 2026-08-11
 #
-# -- a flicker that appears when a second fullscreen client turns up and is
-# absent the rest of the time. Those are two independent causes with two
-# independent sets of levers, and marwanos-session's own profile block already
-# states the rule this obeys: a switch that also moved something else "would stop
-# being an answer to which of these four things is flickering". Folding Steam's
-# window handling into the display list would mean picking `steam-split` also
-# gave up the 60 Hz pin, and the next bisect would have two variables in it.
+# THE SECOND ONE MOVED THIS FILE'S CENTRE OF GRAVITY, and the first version of it
+# was written before that sentence existed. `in the background` means the client
+# started by marwanos-session's start_background_steam, which runs `-silent` and
+# maps NO WINDOW at all; `turns off for a second` means a modeset. Neither can be
+# explained by window arrangement, which is what the last four profiles here are
+# about. So the first two words in the list are about ATTACHMENT -- whether the
+# client runs at all, and whether its Vulkan goes through gamescope's WSI layer
+# -- and they are first because they are the only ones that fit the symptom.
 #
-# So: two files, two lists, two rows, and the cross product is never needed
-# because the two axes are testing different halves of the stack.
+# The window-arrangement profiles are kept rather than deleted: they are cheap,
+# already written, and still the right answer if something turns out to flicker
+# once a game is actually on screen.
+#
+# Folding any of this into the display list would mean picking one also gave up
+# the 60 Hz pin, and the next bisect would have two variables in it. So: two
+# files, two lists, two rows, and the cross product is never needed.
 #
 # THIS GROUND HAS BEEN WALKED ONCE ALREADY. Commit 58cc0e3 shipped two of the
-# five configurations below at once, unconditionally and with no way back from
-# the couch -- gamescope's -e AND a shell that unmapped its own window -- and was
+# configurations below at once, unconditionally and with no way back from the
+# couch -- gamescope's -e AND a shell that unmapped its own window -- and was
 # reverted 48 minutes later. Neither half was wrong to try; shipping them welded
 # together with no switch was. Each is a separate word here, and today's exact
 # behaviour is the default, so the machine that boots after this change is the
@@ -65,7 +72,7 @@ PROFILE="$VAR_DIR/window.profile"
 # session's cycle order so "the next one" means the same thing on both sides of
 # the seam. See marwanos-session's own window-profile block for what each one
 # actually passes to gamescope and which theory of the Steam flicker it kills.
-PROFILES=(steam-split loose steam-aware yield plain)
+PROFILES=(no-bg-steam no-wsi steam-split loose steam-aware yield plain)
 
 # Matches marwanos-session's WINDOW_DEFAULT. Duplicated rather than shared
 # because the two halves must survive each other: a session that cannot read

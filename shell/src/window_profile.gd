@@ -63,18 +63,30 @@ const ACTIVE_ENV := "MARWANOS_WINDOW_PROFILE"
 ## one is checked by the root side at runtime -- a word this list invented would
 ## simply be refused rather than written.
 ##
-## The order walks from the untried theory, through the one flag nothing else
-## removes, through the two halves of the reverted commit, to today's behaviour.
-## Somebody cycling from the couch therefore meets the most promising answer
-## first and can always keep going round to where they started.
-const PROFILES := ["steam-split", "loose", "steam-aware", "yield", "plain"]
+## The order IS the diagnosis. The first two address the symptom actually
+## reported -- a WINDOWLESS background client blacking the screen for a second,
+## which is a modeset and not a focus fight -- so they are the only two that can
+## explain it and they come first. The four after them are about window
+## arrangement, kept for the case where something still flickers once a game is
+## on screen. Today's behaviour is last, and the ring wraps, so somebody cycling
+## from the couch meets the likeliest answer first and can always get back to
+## where they started.
+const PROFILES := ["no-bg-steam", "no-wsi", "steam-split", "loose", "steam-aware",
+	"yield", "plain"]
 
 ## What each one is called on a television. Deliberately not the profile word and
 ## deliberately not the flag: "steam-split" is a name for a configuration and
 ## "-e" is a name for nothing at all. What these say is the part a person can
 ## actually perceive or reason about from a sofa, because they will be comparing
 ## it against a flickering screen rather than against this repository.
+## Worded for somebody watching a flickering television, not for somebody
+## reading this repository. The first two say what the machine will NOT do,
+## because that is the part a person can check against the screen in front of
+## them -- and because both of them cost something ("no warm Steam" is a slower
+## first launch), which a label that only said "Fix A" would hide.
 const LABELS := {
+	"no-bg-steam": "No warm Steam (slower first launch)",
+	"no-wsi": "Warm Steam, no compositor hand-off",
 	"steam-split": "Steam gets its own screen",
 	"loose": "Apps size themselves",
 	"steam-aware": "Compositor knows Steam",

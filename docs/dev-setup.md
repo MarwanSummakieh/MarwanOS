@@ -513,6 +513,37 @@ session and every descendant that inherits its descriptors — the script, the
 compositor, and the shell all land under the one tag. `-u greetd` is still the
 right selector for greetd's *own* failures, such as refusing to start.
 
+### The terminal on the target itself
+
+Since [ADR 0009](adr/0009-a-terminal-behind-the-devmode-flag.md) a devmode
+machine has a **Terminal** row at the bottom of the settings screen: gear icon →
+down to the last row → **A**. It opens xterm fullscreen under the session's own
+gamescope, running `bash --login` as `player`, with `sudo` available and no
+password.
+
+It is there for the failure this project keeps having — the target is drawing a
+perfect picture on the TV and SSH will not connect — so the first two commands to
+reach for are the ones that were previously unreachable in exactly that state:
+
+```bash
+journalctl -b -p err -t marwanos-session
+```
+
+```bash
+sudo systemctl status sshd
+```
+
+**Typing without a keyboard.** A USB keyboard just works. With only a pad: press
+**home**, choose **Type**, write the line on the on-screen keyboard, **Done**,
+then **A** to run it — **A** is Return while an app is up, **B** is BackSpace,
+and the stick is the arrow keys (`shell/src/pad_keys.gd`). **home → Close** kills
+the terminal; so does typing `exit`.
+
+**It is not there without the flag,** and neither is the sudo rule: the row is
+not built, the wrapper refuses, and `marwanos-devmode-sudo.service` removes
+`/etc/sudoers.d/50-marwanos-devmode` on the first boot after the flag goes. A
+shipped stick has none of it, which is the whole of D6.
+
 ### Telling a shell problem from a compositor problem
 
 A black TV is ambiguous, and `vkcube` is still in the image precisely to

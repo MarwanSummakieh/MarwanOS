@@ -49,7 +49,14 @@ const FIELD_COUNT := 6
 ## "unknown" doubles as the fallback, so a state word from a newer installer
 ## renders as an unspecific card rather than a silent one.
 const PENDING_SUBTITLES := {
-	"downloading": "Installing -- downloading from Flathub, give it minutes",
+	# SOURCE-NEUTRAL SINCE STEAM GAMES ARRIVE HERE TOO. This used to name
+	# Flathub, which was true when the only pending cards were the shipped
+	# applications; appscan now publishes a Steam game with an appmanifest and no
+	# StateFlags bit 4 as `downloading` as well, and a Witcher 3 card claiming to
+	# be coming from Flathub would be a confident lie. Both sources fill the
+	# comment column with a live line anyway -- see _pending_subtitle -- so this
+	# is only ever the first second or two.
+	"downloading": "Installing -- this is a large download, give it minutes",
 	"waiting-network": "Waiting for a network before installing",
 	"no-network": "No network found -- will install once there is one",
 	"no-space": "Not enough free space on the drive to install this",

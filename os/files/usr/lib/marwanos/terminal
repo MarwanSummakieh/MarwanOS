@@ -1,0 +1,109 @@
+#!/usr/bin/env bash
+#
+# THE TERMINAL, and the door it is behind.
+#
+# This appliance ships without one on purpose (D6): no getty on tty1, no
+# desktop, no console text between the vendor logo and the shell. Half this
+# tree's comments cite that -- appctl exists because "remove an app meant a
+# terminal", the Address row exists because "a box with no terminal has to be
+# able to say its own address". None of that changes. What changes is that D6
+# always had a second half -- "SSH and a tty2 getty exist only when
+# /var/marwanos/devmode is present" -- and on the machines where that half
+# applies, the escape hatch was reachable only over the network. When the
+# network is the thing that broke, the person sitting in front of the TV with
+# a controller in their hands had nothing. That happened repeatedly (see the
+# Address row's comment in settings_screen.gd, and the 2026-08-10 lockout the
+# flight recorder exists because of).
+#
+# So: a real terminal emulator, on the same screen the shell is on, gated by
+# the same flag as sshd. A shipped appliance with no devmode flag has no path
+# to this script that a person could find, and this script refuses anyway.
+#
+# THE REFUSAL IS NOT DECORATION. The shell hides the settings row when the
+# flag is absent, which is a rendering decision made by an unprivileged
+# process; this check is the one that means something. Same arrangement as
+# appctl's allow-list: the side that acts does not trust the side that asks.
+#
+# WHY xterm AND NOT SOMETHING NICER. It is the one terminal emulator that is
+# already an X11 client (the shell runs on gamescope's XWayland -- see
+# kiosk.gd), needs no GPU context of its own, no D-Bus, no portal and no
+# desktop session, and draws with a font this image already has. kitty and
+# alacritty both want more of a desktop than exists here; foot is Wayland-only
+# and would be a second display-server story inside a session that has exactly
+# one. This is a recovery console, not a daily driver.
+#
+# -e /bin/bash IS LOAD-BEARING AND EASY TO DELETE BY MISTAKE. The player
+# account's login shell is /usr/sbin/nologin -- deliberately, since greetd
+# never consults it and it closes su and ssh into the account (see
+# 50-marwanos.conf). xterm with no command runs $SHELL, which greetd exports
+# from that same passwd entry, so an xterm without this flag opens, prints
+# nothing, and exits instantly. That failure looks exactly like "the terminal
+# does not work" and takes an hour to find.
+#
+# SUDO IS AVAILABLE IN HERE and it is the reason this is worth having:
+# journalctl, nmcli, bootc rollback and systemctl are all root's. The rule
+# that grants it is installed by marwanos-devmode-sudo.service, off the same
+# flag, and removed on the first boot after the flag goes.
+#
+set -uo pipefail
+
+readonly DEVMODE_FLAG=/var/marwanos/devmode
+
+if [ ! -e "$DEVMODE_FLAG" ]; then
+    # stderr, because the shell's child inherits the session's descriptors and
+    # they point at systemd-cat. A refusal that left no trace would read, from
+    # the couch, as a launch that silently did nothing.
+    echo "marwanos-terminal: no $DEVMODE_FLAG; this image has no terminal" >&2
+    exit 1
+fi
+
+# UTF-8, BOTH WAYS, and this was measured rather than assumed. The first live
+# run of this wrapper drew Fedora's own bash prompt -- which opens with the
+# ostree hexagon -- as `â¬¢`, because greetd exports no locale, so the shell
+# emitted UTF-8 while xterm decoded Latin-1. Anything this terminal exists to
+# read is affected: systemd's journal is full of typographic quotes and arrows,
+# and a recovery console that mangles the message it was opened to read is
+# worse than useless. -u8 tells xterm; LANG tells everything it runs. Both are
+# needed and neither implies the other.
+export LANG="${LANG:-C.UTF-8}"
+
+# TV-legible, TV-safe, and the shell's own palette so the two surfaces do not
+# look like two machines:
+#
+#   -fa/-fs    DejaVu Sans Mono at 20pt is about 70 columns at 1080p, which is
+#              wide enough for `journalctl -p err` and large enough to read
+#              from a sofa. The font is installed by name in the Containerfile
+#              rather than left to fontconfig's substitution, so this cannot
+#              quietly become a proportional face on a base bump.
+#   -b 64      internal border. gamescope fullscreens this window to the whole
+#              panel, and a TV's overscan eats the outer edge -- the same
+#              reason every shell screen insets by SAFE_MARGIN. Text in the
+#              corner of an unadjusted television is text nobody can read.
+#   -bg/-fg    TvTheme.BACKGROUND and TvTheme.TEXT_PRIMARY, verbatim.
+#   +sb        no scrollbar: there is no pointer on this machine to drag one.
+#              Shift+PageUp still scrolls, and -sl keeps enough history for a
+#              boot's worth of journal.
+#   -title     what the window is called, and allowTitleOps:false is what makes
+#              that survive. Measured: Fedora's own bash writes the escape
+#              sequence that renames a terminal on every prompt, so within one
+#              second of starting, this window was called
+#              `root@<hostname>:/` and `xdotool search --name 'MarwanOS
+#              Terminal'` found nothing. Nothing in the shipped path searches by
+#              name -- the launch seam watches gamescope's focused-window
+#              property, and the app menu names the entry, not the window -- but
+#              a bench that cannot find this window by name is a bench where
+#              every xdotool command has to start by guessing.
+#   -u8        see the LANG note above; this is the decoding half of it.
+exec xterm \
+    -title "MarwanOS Terminal" \
+    -xrm "XTerm*allowTitleOps: false" \
+    -u8 \
+    -fa "DejaVu Sans Mono" \
+    -fs 20 \
+    -b 64 \
+    -bg "#14161A" \
+    -fg "#E2E6EB" \
+    -cr "#E8EAEE" \
+    +sb \
+    -sl 5000 \
+    -e /bin/bash --login

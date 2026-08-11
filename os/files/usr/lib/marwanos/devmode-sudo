@@ -1,0 +1,58 @@
+#!/usr/bin/env bash
+#
+# Grant or revoke the devmode sudo rule, once per boot.
+#
+# WHY A SERVICE AND NOT A FILE IN THE IMAGE. sudo reads /etc/sudoers.d and
+# nothing else. /etc in bootc is machine-local and three-way merged on
+# upgrade, so a rule shipped there would (a) apply to every machine including
+# the ones with no devmode flag, and (b) survive its own removal from a later
+# image on any target whose /etc had diverged. The rule therefore lives in
+# /usr as data, and this decides each boot whether it applies -- which makes
+# `rm /var/marwanos/devmode; reboot` a real revocation rather than a gesture.
+#
+# UNCONDITIONAL, deliberately: there is no ConditionPathExists on the unit,
+# because the branch that matters most is the one where the flag is GONE and
+# the rule has to be taken away. A conditioned unit would skip that boot
+# entirely and leave the grant in place forever.
+#
+# The same shape as every other root-side helper here (appctl, wifi, update):
+# it takes no argument, it is the only writer of the path it owns, and it says
+# what it did in the journal, because on this machine the journal is the only
+# place anything can be said.
+#
+set -uo pipefail
+
+readonly DEVMODE_FLAG=/var/marwanos/devmode
+readonly SRC=/usr/lib/marwanos/sudoers.devmode
+# 50- so it beats nothing in particular and sorts predictably next to the
+# distribution's own drop-ins. No dot in the name: sudo ignores files in
+# sudoers.d whose names contain one, which is a silent no-op if forgotten.
+readonly DST=/etc/sudoers.d/50-marwanos-devmode
+
+if [ ! -e "$DEVMODE_FLAG" ]; then
+    if [ -e "$DST" ]; then
+        rm -f "$DST"
+        echo "<5>devmode flag is gone; removed $DST"
+    else
+        echo "<6>no devmode flag; no sudo rule installed"
+    fi
+    exit 0
+fi
+
+if [ ! -f "$SRC" ]; then
+    echo "<3>$SRC is missing; the devmode terminal will have no sudo" >&2
+    exit 1
+fi
+
+# Checked before it is installed, not after. A malformed drop-in does not
+# break only itself: sudo refuses to parse the whole of sudoers.d and every
+# sudo on the machine starts failing -- on a box whose recovery story is that
+# terminal, that is the worst possible way to be wrong.
+if ! visudo -c -f "$SRC" >/dev/null 2>&1; then
+    echo "<3>$SRC does not parse as sudoers; refusing to install it" >&2
+    exit 1
+fi
+
+# 0440 root:root or sudo ignores it and says nothing useful about why.
+install -m 0440 -o root -g root "$SRC" "$DST"
+echo "<5>devmode flag present; installed $DST (player may sudo)"

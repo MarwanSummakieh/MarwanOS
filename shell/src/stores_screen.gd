@@ -99,8 +99,20 @@ const APPCTL_ALERT_STATES := ["failed", "refused"]
 ## on the machine cannot be opened, and until this existed the tab offered to
 ## open it anyway and launched a `flatpak run` that failed instantly with
 ## nothing on screen to say why.
-const HINT_OPEN := "Open store"
+## What A does on a store tab, and there are now three answers because there are
+## three situations. "Open store" is gone: it opened Big Picture on Valve's
+## storefront, and this panel IS a storefront -- so the button spent its press
+## replacing a page the shell had already drawn with somebody else's copy of it,
+## on the one UI the owner cannot navigate without a flicker.
+const HINT_BROWSE := "Browse"
+const HINT_SIGN_IN := "Sign in to Steam"
 const HINT_INSTALL := "Install"
+## The fallback verb, for the one state where the shell cannot do the job: signed
+## in, installed, and no storefront on disk to browse (a cold machine, or one
+## that has never had a network). Handing over to Valve's client there is not a
+## relapse -- it is the shell being honest that it has nothing to show and the
+## other UI might.
+const HINT_OPEN := "Open store"
 
 ## WHAT THE PANEL IS SHOWING. Four renderings of one pane rather than four
 ## panes: with the content data-driven there is nothing for a second pane to
@@ -138,6 +150,16 @@ const FRONT_ALERT_STATES := ["offline", "failed"]
 ## and everything after that -- including every step of a purchase -- happens
 ## inside Valve's client where it belongs.
 const HINT_OPEN_IN_STEAM := "Open in Steam"
+
+## The primary action on a game's page, by what this machine already has. All
+## three go through steam:// URLs against a client started `-silent`, so none of
+## them puts Valve's UI on the television -- which is the whole reason they
+## exist. See _refresh_detail_actions.
+const HINT_PLAY := "Play"
+const HINT_INSTALL_GAME := "Install"
+## Not a verb, because there is nothing to press: a download is already
+## happening and the row exists to say how far along it is.
+const HINT_DOWNLOADING := "Downloading"
 
 ## What the search half says when there is nothing to draw, by the seam's state
 ## word. Same first-class-render argument as FRONT_STATE_LINES, and the same
@@ -198,6 +220,7 @@ var _detail_price: Label = null
 var _detail_was: Label = null
 var _detail_summary: Label = null
 var _detail_action: ActionRow = null
+var _detail_store_action: ActionRow = null
 var _detail_item: Dictionary = {}
 var _detail_tile: Control = null
 
@@ -521,16 +544,67 @@ func _build_detail() -> Control:
 	_detail_summary.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	detail.add_child(_detail_summary)
 
-	# ONE ACTION, AND IT IS NOT A PURCHASE. See the header: the panel browses,
-	# Valve's client transacts. A row rather than a bare hint because it has to
-	# be focusable -- it is the only thing on this view a pad can land on, and a
-	# view with nothing focusable is a view B is the only escape from.
+	# TWO ACTIONS NOW, AND THE FIRST ONE IS THE POINT OF THIS WHOLE SCREEN.
+	#
+	# It used to be one: "Open in Steam", which handed the game to Big Picture
+	# and stopped. That was the honest limit while the shell could only describe
+	# a store -- but the two things a person actually wants from a game's page,
+	# playing it and getting it, are both reachable through steam:// URLs that
+	# need no UI from Valve at all. So the primary row says Play, or Install, or
+	# how far a download has got, depending on what this machine already has.
+	#
+	# THE SECOND ROW IS THE PURCHASE DOOR and it keeps the old wording. Money
+	# still changes hands only inside Valve's client -- see the header -- and
+	# that is the one thing on this page a steam:// URL must not paper over.
 	_detail_action = ActionRow.new()
 	_detail_action.setup(HINT_OPEN_IN_STEAM, "")
 	_detail_action.activated.connect(_on_detail_action)
 	detail.add_child(_detail_action)
 
+	_detail_store_action = ActionRow.new()
+	_detail_store_action.setup(HINT_OPEN_IN_STEAM, "")
+	_detail_store_action.activated.connect(_on_detail_store_action)
+	detail.add_child(_detail_store_action)
+
+	# One axis, hard stops -- the settings list's table, for the third time on
+	# this screen. Left and right point at self so Control's geometric search
+	# cannot wander out of the pane and into a shelf tile behind it.
+	_detail_action.focus_neighbor_top = _detail_action.get_path_to(_detail_action)
+	_detail_action.focus_neighbor_bottom = _detail_action.get_path_to(_detail_store_action)
+	_detail_action.focus_neighbor_left = _detail_action.get_path_to(_detail_action)
+	_detail_action.focus_neighbor_right = _detail_action.get_path_to(_detail_action)
+	_detail_store_action.focus_neighbor_top = _detail_store_action.get_path_to(_detail_action)
+	_detail_store_action.focus_neighbor_bottom = _detail_store_action.get_path_to(_detail_store_action)
+	_detail_store_action.focus_neighbor_left = _detail_store_action.get_path_to(_detail_store_action)
+	_detail_store_action.focus_neighbor_right = _detail_store_action.get_path_to(_detail_store_action)
+
 	return detail
+
+
+## What this machine already has to say about one Steam appid, from the same
+## installed seam the rail draws: "installed", "downloading", or "" for a game
+## that is not on the disk at all.
+##
+## ASKED OF THE SEAM AND NOT OF STEAM. appscan reads the appmanifests and
+## publishes them; this is a lookup in a list the shell already polls, so a
+## detail page costs no process and no file read to know whether its game is
+## here.
+func _local_state(appid: int) -> String:
+	var id := "steam.%d" % appid
+	for app in Installed.apps:
+		if str(app.get("id", "")) == id:
+			return str(app.get("state", ""))
+	return ""
+
+
+## The live progress line for a downloading game, or empty. appscan puts it in
+## the comment column and installed.gd surfaces it as the subtitle.
+func _local_detail(appid: int) -> String:
+	var id := "steam.%d" % appid
+	for app in Installed.apps:
+		if str(app.get("id", "")) == id:
+			return str(app.get("subtitle", ""))
+	return ""
 
 
 func _build_hints() -> Control:
@@ -559,7 +633,11 @@ func _refresh_hints() -> void:
 	# while the selection is on a game would be advertising a button that acts
 	# on something else.
 	if _mode == MODE_DETAIL:
-		_hints.add_child(TvTheme.hint("A", HINT_OPEN_IN_STEAM))
+		# "Select" rather than a verb, because there are two rows now and A does
+		# whatever the lit one says. Naming one of them here would be advertising
+		# the wrong action half the time -- the settings screen's own reasoning
+		# for the same word.
+		_hints.add_child(TvTheme.hint("A", "Select"))
 		# Named for where it actually goes, which is not always the same place.
 		# "Back to the store" under a result would point at the shelves the
 		# person never opened.
@@ -577,7 +655,7 @@ func _refresh_hints() -> void:
 		_hints.add_child(TvTheme.hint("B", "Back to stores"))
 		return
 
-	_hints.add_child(TvTheme.hint("A", HINT_OPEN if _selected_installed() else HINT_INSTALL))
+	_hints.add_child(TvTheme.hint("A", _page_action_hint()))
 	# The doorway, advertised: the grid is the pane's biggest feature and
 	# nothing else on this screen has ever answered Right, so a person has no
 	# reason to try it unless told.
@@ -898,6 +976,12 @@ func _rebuild_grid() -> void:
 			_tile_rows.append(row)
 
 	_wire_grid_neighbours()
+	# A's verb depends on whether there is anything to browse, so the hint row
+	# is refreshed wherever _tiles changes -- not only where the page is drawn.
+	# The shelves land a second or two after this screen opens on a cold
+	# machine, and without this the row would still say "Open store" over a
+	# storefront that had already arrived.
+	_refresh_hints()
 	ShellLog.info("storefront grid: %d tile(s) in %d row(s)" % [_tiles.size(), _tile_rows.size()])
 
 
@@ -1195,6 +1279,11 @@ func _on_featured_changed(_categories: Array) -> void:
 ## exists for: only the line changes, so only the line is redrawn.
 func _on_account_changed(_signed_in: bool, _persona: String) -> void:
 	_refresh_page_chrome()
+	# AND THE HINT ROW, because A's verb depends on this: signing in from Big
+	# Picture and coming back has to change the button from "Sign in to Steam"
+	# to "Browse". A hint row that kept the old word would be advertising a
+	# door that is already open.
+	_refresh_hints()
 
 
 ## The wishlist arriving, or its detail pages filling in behind it. Goes through
@@ -1386,6 +1475,8 @@ func _render_detail() -> void:
 			str(prices[1]) if not str(prices[1]).is_empty() else "at full price",
 			str(details.get("short_description", "")).length()])
 
+	_refresh_detail_actions()
+
 	_detail_wash.add_theme_stylebox_override("panel",
 		TvTheme.card_art_box(TvTheme.accent_for_id(str(appid))))
 	var art := Steamfront.art_path(appid, true)
@@ -1399,13 +1490,101 @@ func _render_detail() -> void:
 			ShellLog.warn("steamfront: could not load %s" % art)
 
 
-## The one action, and the whole boundary this screen draws. `steam://store/<id>`
+## What the two rows say right now. Called from _render_detail, and again
+## whenever the installed seam changes, so a download that starts while its page
+## is open counts up on screen instead of going quiet until somebody backs out.
+func _refresh_detail_actions() -> void:
+	if _detail_action == null or _detail_store_action == null:
+		return
+	var appid := int(_detail_item.get("appid", 0))
+	var state := _local_state(appid)
+
+	# set_name_text / set_value, NOT setup(): setup only stores strings and the
+	# labels are built once in _ready, so a re-setup on a row already in the tree
+	# changes nothing on screen. That is the bug this page would have shipped
+	# with -- a row that said "Install" forever while the download it started ran
+	# to completion behind it.
+	if state == "installed":
+		_detail_action.set_name_text(HINT_PLAY)
+		_detail_action.set_value("")
+	elif state == "downloading":
+		# The seam's own live line, which appscan built out of the
+		# appmanifest's byte counters. Empty on a manifest Steam has only just
+		# created, and the row still says Downloading -- which is true, and
+		# better than an invented 0%.
+		_detail_action.set_name_text(HINT_DOWNLOADING)
+		_detail_action.set_value(_local_detail(appid))
+	else:
+		_detail_action.set_name_text(HINT_INSTALL_GAME)
+		_detail_action.set_value("")
+
+
+## The primary row. Three verbs, one boundary: every one of these hands a
+## steam:// URL to a client running `-silent`, so the only window that can reach
+## the television is the game's own.
+##
+## DOWNLOADING DOES NOTHING ON PURPOSE. The row is a readout, not a button, and
+## the alternatives are both worse: cancelling a download from a button somebody
+## pressed expecting "play" is destructive, and opening Big Picture to show a
+## progress bar is the UI this screen exists to avoid.
+func _on_detail_action() -> void:
+	if Launcher.is_busy() or _detail_item.is_empty():
+		return
+	var appid := int(_detail_item.get("appid", 0))
+	if appid <= 0:
+		return
+	var state := _local_state(appid)
+	if state == "downloading":
+		ShellLog.info("storefront: A on a game that is already downloading; nothing to do")
+		return
+
+	if state == "installed":
+		# THE SAME COMMAND THE RAIL CARD CARRIES, deliberately not a second
+		# spelling of it: appscan publishes `-silent steam://rungameid/<appid>`
+		# and this is the same game, so a page that launched it differently
+		# would be a second launch path to keep in step with the first.
+		Launcher.launch({
+			"id": "steam.%d" % appid,
+			"title": str(_detail_item.get("name", "")),
+			"accent": str(_selected.get("accent", "")),
+			"exec": ["flatpak", "run", "com.valvesoftware.Steam", "-silent",
+				"steam://rungameid/%d" % appid],
+			"app_id": str(_selected.get("app_id", "")),
+			"icon": Steamfront.art_path(appid),
+		})
+		ShellLog.info("storefront launching installed appid %d" % appid)
+		return
+
+	# NOT HERE YET. `steam://install/<appid>` is Steam's own install URL and it
+	# is the one action on this page whose UI cannot be predicted from here: a
+	# game the account owns starts downloading, and one it does not gets Valve's
+	# own answer, which may be a window. That is the honest limit of a shell that
+	# cannot know what somebody owns -- Steam retired every keyless way to ask,
+	# measured 2026-08-11.
+	#
+	# What makes it recoverable either way is the row above: the moment Steam
+	# writes an appmanifest, appscan publishes the game as `downloading` and this
+	# same page starts counting up. So a press that worked says so within a
+	# couple of seconds, on this screen, without Big Picture.
+	Launcher.launch({
+		"id": "steam.install.%d" % appid,
+		"title": str(_detail_item.get("name", "")),
+		"accent": str(_selected.get("accent", "")),
+		"exec": ["flatpak", "run", "com.valvesoftware.Steam", "-silent",
+			"steam://install/%d" % appid],
+		"app_id": str(_selected.get("app_id", "")),
+		"icon": Steamfront.art_path(appid),
+	})
+	ShellLog.info("storefront requested an install of appid %d" % appid)
+
+
+## The purchase door, and the whole boundary this screen draws. `steam://store/<id>`
 ## is Big Picture's own URL for a game's store page, handed over exactly the way
 ## catalogue.gd's STEAM_STORE hands over `steam://store` -- same client, same
 ## -gamepadui flag, same launch seam. What happens after that is Valve's: the
 ## page, the cart, the card details and the receipt all live inside their client,
 ## and this shell never sees any of it.
-func _on_detail_action() -> void:
+func _on_detail_store_action() -> void:
 	if Launcher.is_busy() or _detail_item.is_empty():
 		return
 	var appid := int(_detail_item.get("appid", 0))
@@ -1446,14 +1625,50 @@ func _on_installed_changed(_apps: Array) -> void:
 	_refresh_status()
 	_refresh_front()
 	_refresh_hints()
+	# AND THE GAME PAGE'S OWN ROWS, which is what makes a download count up while
+	# somebody watches it. appscan republishes apps.tsv every time a manifest's
+	# byte counters move, so this arrives on its own every few seconds for the
+	# whole of a download -- and it is also how Install turns into Downloading,
+	# and Downloading into Play, without anybody leaving the page.
+	if _mode == MODE_DETAIL:
+		_refresh_detail_actions()
+
+
+## What A offers on a store tab. Three situations, three verbs -- see
+## _on_store_opened, which must agree with this or the hint row is a lie.
+func _page_action_hint() -> String:
+	if not _selected_installed():
+		return HINT_INSTALL
+	if not Steamfront.account_signed_in:
+		return HINT_SIGN_IN
+	# NOTHING TO BROWSE IS A REAL STATE and it must not be advertised as one. A
+	# hint reading "Browse" over an empty pane, on a button that then did
+	# nothing, is the dead control this screen has twice been fixed for.
+	return HINT_BROWSE if not _tiles.is_empty() else HINT_OPEN
 
 
 func _on_store_opened(entry: Dictionary) -> void:
-	# A MEANS TWO DIFFERENT THINGS, and which one is not a preference -- an
-	# application that is not on the machine cannot be opened. Before this the
-	# tab launched `flatpak run` regardless, which failed in milliseconds and
-	# left the page exactly as it was, so the button read as broken.
+	# A MEANS THREE DIFFERENT THINGS, and none of them is a preference.
+	#
+	# NOT INSTALLED -- an application that is not on the machine cannot be
+	# opened, so A downloads it. Before this existed the tab launched
+	# `flatpak run` regardless, which failed in milliseconds and left the page
+	# exactly as it was, so the button read as broken.
+	#
+	# NOT SIGNED IN -- the ONE remaining reason this shell opens Big Picture on
+	# purpose. A password is Valve's to collect and this shell will never have a
+	# field for one, so the honest button hands over to the client and stops.
+	#
+	# SIGNED IN -- A goes into the shelves. It used to open Big Picture on
+	# Valve's storefront, which is the page this panel already draws, at this
+	# shell's fidelity, with this shell's pad. Spending the button on a second
+	# copy of what is on screen was the last habit left over from when this
+	# screen could only describe a store instead of being one.
 	var app_id := str(entry.get("app_id", ""))
+	if _selected_installed() and Steamfront.account_signed_in and not _tiles.is_empty():
+		var first: Control = _tiles[0]
+		first.grab_focus()
+		return
 	if not _selected_installed():
 		if app_id.is_empty():
 			ShellLog.error("store %s carries no app_id; cannot install it"
@@ -1472,9 +1687,11 @@ func _on_store_opened(entry: Dictionary) -> void:
 			_page_status.add_theme_color_override("font_color", TvTheme.TEXT_SECONDARY)
 		return
 
-	# Through the launch seam like every launch in the project. The screen
-	# stays open underneath: when the store quits, this page is what the
-	# person lands back on, which is the PS Store's own behaviour too.
+	# Installed but signed out. Through the launch seam like every launch in the
+	# project, and the screen stays open underneath: when the client quits, this
+	# page is what the person lands back on -- by which point the account line
+	# above the shelves will have noticed the sign-in, because the seam re-reads
+	# Steam's loginusers.vdf on every visit to this screen.
 	Launcher.launch(entry)
 
 

@@ -43,11 +43,20 @@ extends RefCounted
 ## in the same UI on current clients, and the first thing to try if a client
 ## update ever changes what -gamepadui does.
 ##
-## steam://store rides along after the flag so Big Picture lands on the
-## storefront -- the page the person asked for by pressing A on a STORE tab.
-## If a client update ever stops honouring the pairing, the failure mode is
-## Big Picture's home screen instead of the store: wrong page, still a
-## drivable UI, which is the direction this line is allowed to fail in.
+## THIS ENTRY IS NOW THE SIGN-IN DOOR AND NOTHING ELSE. It used to be what A on
+## the Steam tab did in every state, back when this shell could only describe a
+## storefront; the shell draws one now -- shelves, search, wishlist, prices, all
+## of it pad-navigable -- so browsing through Valve's client would be replacing
+## the page somebody is looking at with a lower-fidelity copy of it, on the one
+## UI whose flicker is why any of this was built. stores_screen only reaches for
+## this when NOBODY IS SIGNED IN, because a password is Valve's to collect and
+## this shell will never have a field for one.
+##
+## steam://store rides along after the flag so Big Picture lands somewhere
+## sensible rather than on its home screen. If a client update ever stops
+## honouring the pairing, the failure mode is Big Picture's home screen: wrong
+## page, still the place a person can sign in, which is the direction this line
+## is allowed to fail in.
 ##
 ## Phase 1 deletes this alongside the rest of the file: marwand enumerates real
 ## installs and stores stop being a hand-written list.
@@ -55,10 +64,13 @@ const STEAM_STORE := {
 	"id": "store.steam",
 	"title": "Steam",
 	"tagline": "Valve's storefront and library, installed from Flathub",
+	# Shown ONLY before Steam is installed -- once it is, this card is a live
+	# storefront and stores_screen hides every line of prose on it. So this text
+	# is written for exactly one reader: somebody looking at a machine that
+	# cannot yet do any of it.
 	"description": "Browse and buy on the Steam store, and pull your library"
-		+ " down to this machine. A opens Big Picture on the storefront;"
-		+ " X opens the desktop client with the stick as a mouse. Quitting"
-		+ " Steam lands back on this page.",
+		+ " down to this machine. A downloads and installs it; after that this"
+		+ " page becomes the store itself, browsable with the pad.",
 	"accent": "#2A3F5A",
 	# DIRECTLY UNDER THE SESSION'S OWN GAMESCOPE -- the nested-gamescope
 	# detour is over, and the bench journal is why. The nesting shipped as a
@@ -262,6 +274,75 @@ const STORE_DIR := "/var/marwanos/store"
 const STORE_DIR_ENV := "MARWANOS_SHELL_STORE_DIR"
 
 
+## ---------------------------------------------------------------------------
+## THE TERMINAL, AND THE FLAG THAT DECIDES WHETHER IT EXISTS.
+##
+## This machine has no terminal (D6), and that is still true of anything a
+## person could buy: no getty on tty1, no desktop, no console text. What D6
+## has always ALSO said is that a devmode machine gets escape hatches -- sshd
+## and a tty2 getty -- and until now every one of them was reachable only from
+## another computer. The failures this project actually had (the 2026-08-08
+## SSH lockout, the 2026-08-10 doors post-mortem, the afternoon the bench came
+## up on no network and had to be found by sweeping a /24) were all failures
+## where the other computer could not get in and the person on the sofa could
+## see the screen perfectly well. This is that person's terminal. See ADR 0009.
+##
+## THE FLAG IS THE WHOLE GATE, and this side of it is only the rendering half:
+## a settings row that is not built cannot be pressed, but the shell is an
+## unprivileged process and its choices are not a security boundary. The
+## wrapper checks the same flag itself and refuses, in the appctl tradition --
+## the side that acts does not trust the side that asks.
+##
+## THE ENV OVERRIDE IS FOR THE HARNESS, and it is deliberately not a way in on
+## a real machine: /var/marwanos/devmode is root-owned and unwritable by the
+## session user, whereas an environment variable is set by whoever starts the
+## shell -- which on the appliance is greetd, and on a desk or under
+## scripts/xvfb-shell-verify.sh is a developer who already has a shell. It
+## exists so the row can be exercised on a machine that has no /var/marwanos
+## at all, exactly like MARWANOS_SHELL_STATUS_DIR.
+const DEVMODE_FLAG := "/var/marwanos/devmode"
+const DEVMODE_ENV := "MARWANOS_SHELL_DEVMODE"
+
+## The entry id. Prefixed "system." rather than "store." or "steam." because it
+## is neither: the launch seam keys the handoff on "steam.", the stores screen
+## keys its pages on "store.", and this is the shell starting a program that
+## ships with the image. The first member of a namespace that may stay a
+## namespace of one.
+const TERMINAL_ID := "system.terminal"
+
+## The wrapper, not xterm. Everything about how the terminal looks and what
+## shell it runs lives in that file, where it can be read on the machine it
+## runs on -- and where the refusal lives too.
+const TERMINAL_EXEC := "/usr/lib/marwanos/terminal"
+
+
+## Is this machine in dev mode? The flag is a file root touches; anything the
+## shell renders off it must tolerate the answer being no on every shipped
+## machine, which is the normal case rather than the exception.
+static func devmode() -> bool:
+	var override := OS.get_environment(DEVMODE_ENV)
+	if not override.is_empty():
+		# Any value but the explicit off, so DEVMODE=1 and DEVMODE=yes both
+		# do what somebody typing them plainly meant.
+		return override != "0"
+	return FileAccess.file_exists(DEVMODE_FLAG)
+
+
+## The launch entry for the terminal. A function rather than a const for
+## steam_desktop_entry()'s reason -- it is built per press, and nothing holding
+## it can write back into a shared dictionary.
+##
+## No "app_id": there is no desktop entry and no icon to resolve, because this
+## is not an installed application and must never appear on the rail. It is a
+## row on the settings screen and nothing else.
+static func terminal_entry() -> Dictionary:
+	return {
+		"id": TERMINAL_ID,
+		"title": "Terminal",
+		"exec": [TERMINAL_EXEC],
+	}
+
+
 ## THE APPLICATIONS THE PAD BRIDGE COVERS, and how each is driven: desktop
 ## programs with no gamepad support of their own, which the shell drives by
 ## injecting X events while they run (see pad_keys.gd). "keys" walks a
@@ -274,12 +355,18 @@ const STORE_DIR_ENV := "MARWANOS_SHELL_STORE_DIR"
 ## never appear here: Steam's Big Picture and Kodi read the pad themselves,
 ## and double-delivered input is worse than none -- which is also why the
 ## desktop launch has its own id, so Big Picture's cannot match it.
-## "keys" currently has no member: the file manager it was built for
-## (Dolphin) was replaced by the shell's own Files screen, which reads the
-## pad natively. The dialect stays implemented -- the next keyboard-navigable
-## desktop app is one line here.
+## "keys" was built for a file manager (Dolphin) that the shell's own Files
+## screen replaced, and it sat empty for a while. The devmode terminal is what
+## it is for now, and it is a better fit than Dolphin ever was: a shell prompt
+## IS a keyboard-navigable UI, and the dialect's four verbs land exactly where
+## a terminal wants them -- A is Return, B is BackSpace, the stick is the
+## history and the cursor. What the dialect cannot do is put a letter in the
+## line; the app menu's Type does that (see app_overlay.gd), and the two
+## together are the whole input story for a terminal on a machine with no
+## keyboard: press home, choose Type, write the command, press A to run it.
 const PAD_KEY_APPS := {
 	"store.steam.desktop": "pointer",
+	TERMINAL_ID: "keys",
 }
 
 

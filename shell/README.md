@@ -391,6 +391,20 @@ claimed controller (live — it tracks hotplug through `PlayerOne`'s signals).
 On an appliance with no terminal, that screen is a diagnostic surface, not
 filler.
 
+Four rows have since stopped being read-only — Display and Steam windows cycle a
+profile in place, Wi-Fi and Updates open a page — and a fifth is not there at
+all on a normal machine. **Terminal** is built only when
+`/var/marwanos/devmode` exists (or `MARWANOS_SHELL_DEVMODE` is set, for the
+Xvfb harness), and it is the one row that goes through the *launch* seam:
+`Catalogue.terminal_entry()` starts `/usr/lib/marwanos/terminal`, and the pad
+bridge drives it in `keys` mode while the app menu's **Type** puts text in it.
+See [ADR 0009](../docs/adr/0009-a-terminal-behind-the-devmode-flag.md). Because
+this screen can now start a launch, it **hides** for the duration rather than
+merely going deaf like the stores and files screens: its controls are focusable
+Buttons that the pad still reaches while another client owns the screen, and its
+opaque background would paint over the application the app menu makes the shell's
+window transparent to show.
+
 Navigation is the rail's argument rotated 90°: one axis, hard stops at the ends,
 the perpendicular directions pointed at self. Pressing A on a row logs
 `read-only in Phase 0` rather than doing nothing silently — a press that

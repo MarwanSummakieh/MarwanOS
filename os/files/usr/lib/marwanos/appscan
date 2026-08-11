@@ -499,8 +499,28 @@ steam_hero() {
 ## No steamapps directory means Steam is absent or has never downloaded
 ## anything, and both are ordinary states of this appliance rather than
 ## faults: the function returns before its loop and logs nothing.
+## Human-readable bytes, for a progress line read at three metres. GB once the
+## number gets there, because "4700 MB" is a number somebody has to convert in
+## their head while watching a download bar.
+##
+## Integer arithmetic throughout: this runs per manifest per scan cycle, and
+## floating point in a shell is a subprocess. One decimal for GB is the whole of
+## the precision anybody wants here.
+human_bytes() {
+    local bytes="$1"
+    case "$bytes" in ''|*[!0-9]*) printf ''; return ;; esac
+    if [ "$bytes" -ge 1073741824 ]; then
+        printf '%s.%s GB' "$(( bytes / 1073741824 ))" "$(( (bytes % 1073741824) * 10 / 1073741824 ))"
+    elif [ "$bytes" -ge 1048576 ]; then
+        printf '%s MB' "$(( bytes / 1048576 ))"
+    else
+        printf '%s KB' "$(( bytes / 1024 ))"
+    fi
+}
+
+
 steam_games() {
-    local file appid flags name
+    local file appid flags name state detail done_bytes total_bytes percent
 
     [ -d "$STEAM_APPS_DIR" ] || return 0
     for file in "$STEAM_APPS_DIR"/appmanifest_*.acf; do
@@ -511,12 +531,42 @@ steam_games() {
         appid="$(acf_get "$file" appid)"
         case "$appid" in ''|*[!0-9]*) continue ;; esac
 
-        # Bit 4 of StateFlags is StateFullyInstalled. A manifest exists from
-        # the moment a download STARTS, so without this check a half-arrived
-        # game would be a card that launches into Steam's error dialog.
         flags="$(acf_get "$file" StateFlags)"
         case "$flags" in ''|*[!0-9]*) continue ;; esac
-        [ $(( flags & 4 )) -ne 0 ] || continue
+
+        # BIT 4 IS StateFullyInstalled, AND A GAME WITHOUT IT IS NO LONGER
+        # DISCARDED. It used to be: a manifest exists from the moment a download
+        # STARTS, and emitting a half-arrived game as a launchable card is a
+        # button that opens Steam's error dialog. That reasoning was right about
+        # the CARD and wrong about the ROW -- it threw away the only record on
+        # this machine of a download in progress, which is exactly what somebody
+        # who just pressed Install is looking for.
+        #
+        # So a partial game is emitted as `downloading` with no exec. The rail
+        # already knows what to do with that shape: installed.gd renders a
+        # pending card from the comment column and tile.gd refuses to launch one.
+        # It is the same contract the Flathub installs have used since M3, which
+        # is why this needs no new state word anywhere downstream.
+        state=installed
+        detail=""
+        if [ $(( flags & 4 )) -eq 0 ]; then
+            state=downloading
+            # BytesDownloaded / BytesToDownload sit at the AppState level beside
+            # StateFlags. Both are absent on a manifest Steam has only just
+            # created, which is a real moment and renders as the fallback
+            # sentence rather than as "0%".
+            done_bytes="$(acf_get "$file" BytesDownloaded)"
+            total_bytes="$(acf_get "$file" BytesToDownload)"
+            case "$done_bytes$total_bytes" in
+                *[!0-9]*|'') ;;
+                *)
+                    if [ "$total_bytes" -gt 0 ]; then
+                        percent=$(( done_bytes * 100 / total_bytes ))
+                        detail="Downloading -- $percent%, $(human_bytes "$done_bytes") of $(human_bytes "$total_bytes")"
+                    fi
+                    ;;
+            esac
+        fi
 
         name="$(acf_get "$file" name)"
         [ -n "$name" ] || continue
@@ -544,7 +594,11 @@ steam_games() {
         name="${name//$'\n'/ }"
         name="${name//$'\r'/}"
 
-        printf '%s\t%s\n' "$appid" "$name"
+        # Four columns now, and the last two are why: `state` so the rail knows
+        # whether the card can be pressed, `detail` so it can say how far along
+        # a download is. Neither can contain a tab -- one is a word this script
+        # chose and the other is built here out of numbers.
+        printf '%s\t%s\t%s\t%s\n' "$appid" "$name" "$state" "$detail"
     done
 }
 
@@ -556,33 +610,58 @@ steam_games() {
 ## GAMEART at the top of this file for why the extra art went into a second
 ## file rather than a seventh column here.
 scan_steam() {
-    local appid name icon
+    local appid name icon state detail exec_cmd
 
     # Piped rather than read into an array, so a machine with no Steam runs the
     # loop body zero times instead of once with an empty appid. The subshell a
     # pipeline creates costs nothing here: the body only prints.
-    steam_games | while IFS=$'\t' read -r appid name; do
+    steam_games | while IFS=$'\t' read -r appid name state detail; do
         icon="$(steam_art "$appid")"
 
+        # NO EXEC FOR A GAME THAT IS NOT HERE YET, and the empty string is the
+        # load-bearing part. installed.gd skips an `installed` record with no
+        # exec (a card that looks ready and does nothing) but accepts a PENDING
+        # one, and tile.gd refuses to launch anything whose state is not
+        # `installed`. So an empty exec here is what makes a downloading game a
+        # card somebody can see and cannot press, without a line of new code
+        # anywhere downstream.
+        exec_cmd=""
+        if [ "$state" = "installed" ]; then
+            exec_cmd="flatpak run com.valvesoftware.Steam -silent steam://rungameid/$appid"
+        fi
+
         # Launched back through Steam rather than directly: Steam owns the
-        # game's runtime container, Proton prefix and cloud saves, and
-        # -gamepadui keeps the surrounding UI ten-foot. Directly under the
-        # session's gamescope, NOT inside a nested one -- the nested wrapper
-        # shipped for one evening and its inner compositor aborted on this
-        # NVIDIA driver three minutes into the first real game (catalogue.gd
-        # carries the full story). Every word in this exec is spaceless (the
-        # appid is numeric), which the space-joined, space-split exec field
-        # requires -- the title, which may contain anything, never rides in
-        # it.
+        # game's runtime container, Proton prefix and cloud saves. Directly
+        # under the session's gamescope, NOT inside a nested one -- the nested
+        # wrapper shipped for one evening and its inner compositor aborted on
+        # this NVIDIA driver three minutes into the first real game
+        # (catalogue.gd carries the full story). Every word in this exec is
+        # spaceless (the appid is numeric), which the space-joined, space-split
+        # exec field requires -- the title, which may contain anything, never
+        # rides in it.
         #
-        # This still starts a client even when the session already has one warm
-        # in the background: `flatpak run` on a running Steam hands the URL to
-        # the existing instance and exits, which is precisely the speed-up the
-        # background client exists for.
+        # -silent, NOT -gamepadui, AND THAT IS THE WHOLE POINT OF THE SHELL.
+        # This line used to raise Big Picture and then launch the game inside
+        # it, so playing anything meant Valve's CEF UI arriving on the
+        # television first. There is no longer a reason for that: the shell
+        # draws the storefront, the search, the account and the wishlist itself,
+        # and the rail IS the library -- so Big Picture has nothing left to show
+        # here that this machine cannot draw with its own pad. What it does have
+        # is the flicker the owner reported, and a UI nobody asked to see.
+        #
+        # -silent means "start with no window". It is right in both states the
+        # client can be in, which is why it replaces the flag rather than merely
+        # dropping it: against a WARM client `flatpak run` hands the URL over
+        # and exits, and against a COLD one Steam starts windowless and then
+        # launches the game. Removing -gamepadui and passing nothing would have
+        # started the cold client in DESKTOP mode -- a mouse UI on a machine
+        # whose only pointer is a thumbstick, which is worse than what this
+        # replaces.
+        #
+        # So the only window that reaches the screen is the game's, and quitting
+        # it lands back on the rail rather than in somebody else's menu.
         printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
-            "steam.$appid" "$name" "" "$icon" \
-            "flatpak run com.valvesoftware.Steam -gamepadui steam://rungameid/$appid" \
-            "installed"
+            "steam.$appid" "$name" "$detail" "$icon" "$exec_cmd" "$state"
     done
 }
 

@@ -1,0 +1,23 @@
+# The rule that makes the devmode terminal worth opening.
+#
+# NOT READ FROM HERE. sudo only reads /etc/sudoers.d, and this file lives in
+# /usr because /usr is the image and /etc is machine-local state that bootc
+# three-way merges on upgrade. marwanos-devmode-sudo.service copies it into
+# /etc/sudoers.d/50-marwanos-devmode on every boot where
+# /var/marwanos/devmode exists, and deletes it on every boot where it does
+# not. Shipping it directly in /etc would grant this on machines that never
+# asked for it and could never take it back.
+#
+# WHY IT IS ALL AND NOT A LIST. The terminal exists for the failure nobody
+# predicted -- the network that will not come up, the boot that half-worked,
+# the unit whose journal is root-only. A curated command list is a guess at
+# which emergency will happen, and the emergencies this project has actually
+# had (2026-08-08 SSH lockout, 2026-08-10 doors post-mortem) were not on
+# anybody's list. On a machine where the flag is set, root over SSH with
+# baked-in keys is already open; this is the same door, reachable from the
+# sofa instead of from another computer.
+#
+# NOPASSWD because the player account has no password to type -- it is a
+# locked, nologin account that greetd autologins (see 50-marwanos.conf). A
+# password prompt here would be an unanswerable question, not a check.
+player ALL=(ALL) NOPASSWD: ALL

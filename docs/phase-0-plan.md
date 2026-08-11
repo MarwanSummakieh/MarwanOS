@@ -61,7 +61,7 @@ edit repo → podman build → push to registry → (on target) bootc upgrade �
 | D3 | Autologin | `greetd` with the session command directly in config | Purpose-built, tiny, no display-manager baggage; creates a proper logind session so the compositor can take DRM master |
 | D4 | Compositor | Plan A: gamescope as session compositor. Plan B: cage + nested gamescope per app. **Timeboxed spike in M1 — 3 days, then decide and write an ADR** | gamescope-as-DRM-master is the least-tested path on NVIDIA. cage is a kiosk compositor that exists precisely to run one app fullscreen forever. Shell code is identical either way |
 | D5 | Shell delivery | Baked into the image at `/usr/lib/marwanos/shell/`; session script prefers `/var/marwanos/dev-shell/` if present **and** dev mode is on | Image rebuild + reboot per UI tweak would kill iteration speed. `scp` a fresh Godot export to the dev path, restart the shell process, ~10-second loop |
-| D6 | Escape hatches | No getty on tty1, ever. SSH and a tty2 getty exist only when `/var/marwanos/devmode` flag file is present | The "no reachable desktop/terminal" thesis, enforced from day zero, with a deliberate dev-mode bypass that a normal user would never trip |
+| D6 | Escape hatches | No getty on tty1, ever. SSH, a tty2 getty and (since [ADR 0009](adr/0009-a-terminal-behind-the-devmode-flag.md)) a Terminal row on the settings screen exist only when `/var/marwanos/devmode` flag file is present | The "no reachable desktop/terminal" thesis, enforced from day zero, with a deliberate dev-mode bypass that a normal user would never trip. The terminal joined the list because every other hatch needed a second computer and a working network — which is what had failed on both of the days that made them necessary |
 | D7 | Secure Boot | Disable it on the target for Phase 0 | NVIDIA kernel modules + Secure Boot means key enrollment (ublue supports it via MOK). Real problem, wrong phase — revisit if MarwanOS ever ships to other people |
 
 ## Milestones
@@ -184,7 +184,7 @@ Most of this is VM-testable ([ADR 0003](adr/0003-test-targets.md)), and the supe
 ### M4 — guardrails + exit run (~a few days)
 
 - [ ] **Decide the automatic-update policy, and mask the timer if the answer is no.** The base image ships an update timer that is *on*: during M0 it fetched and staged a CI build with nothing asked of it, and the next reboot silently changed the running OS. For an appliance that is meant to boot into a game, an unattended OS swap between sessions is a behaviour to choose deliberately, not inherit. `systemctl mask bootc-fetch-apply-updates.timer` in the image if updates should only ever be operator-initiated
-- [ ] `/var/marwanos/devmode` flag: gates sshd and the tty2 getty; absent by default in a fresh image
+- [ ] `/var/marwanos/devmode` flag: gates sshd, the tty2 getty, the settings screen's Terminal row and the sudo rule that makes it useful; absent by default in a fresh image. The terminal half is shipped and asserted at build time (no `/etc/sudoers.d/50-marwanos-devmode` in the image); sshd is still enabled unconditionally, which is this item's remaining work
 - [ ] Audit the image for accidental escape hatches: no display manager, no desktop session files, no VT-switch into a getty that shouldn't exist
 - [ ] `systemd-analyze` boot-time budget recorded; obvious offenders (NetworkManager-wait-online and friends) deferred out of the boot path
 - [ ] Full exit-criteria run, filmed

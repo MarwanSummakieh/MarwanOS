@@ -1,0 +1,27 @@
+[Unit]
+# Decides, once per boot, whether the devmode sudo rule is installed -- see
+# the script for why this is a service and not a file shipped in /etc.
+#
+# Before greetd so the answer is already settled by the time the session (and
+# therefore the shell, and therefore the terminal it can launch) exists. Not
+# ordered against anything else: it reads one flag under /var and writes one
+# file under /etc, both of which are there as soon as local-fs is.
+#
+# No ConditionPathExists. The boot where the flag has been REMOVED is the one
+# that has to run, and a condition would skip exactly that boot.
+Description=Install or remove the devmode sudo rule
+Documentation=file:///usr/lib/marwanos/devmode-sudo
+After=local-fs.target
+Before=greetd.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/lib/marwanos/devmode-sudo
+StandardOutput=journal
+StandardError=journal
+SyslogLevelPrefix=true
+SyslogIdentifier=marwanos-devmode-sudo
+
+[Install]
+WantedBy=multi-user.target

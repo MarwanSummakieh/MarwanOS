@@ -23,6 +23,12 @@ var _name_text: String = ""
 var _value_text: String = ""
 var _icon_name: String = ""
 var _value: Label = null
+## Held for the same reason _value is, one case later. Until the storefront's
+## game page existed, no row's NAME ever changed once it was built -- a row was
+## "Controller" or "Wi-Fi" forever and only the right-hand value moved. That
+## page's primary row is a verb (Play, Install, Downloading) chosen from what
+## the machine has, and it has to be able to change under a thumb resting on it.
+var _name: Label = null
 
 var _idle_box: StyleBoxFlat
 var _focus_box: StyleBoxFlat
@@ -124,6 +130,7 @@ func _build_contents() -> void:
 	_value.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_value.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	row.add_child(_value)
+	_name = name_label
 
 
 ## Live rows (the controller) update in place rather than being rebuilt, so
@@ -132,6 +139,22 @@ func set_value(value_text: String) -> void:
 	_value_text = value_text
 	if _value != null:
 		_value.text = value_text
+
+
+## Change what the row is CALLED, in place.
+##
+## `set_name_text`, not `set_name`: this extends a Node, Node already has a
+## `name` property with a `set_name` setter behind it, and shadowing that would
+## rename the node in the scene tree instead of relabelling the row -- which
+## would break every focus_neighbor path pointing at it, since those are
+## NodePaths resolved by name.
+##
+## Safe before _ready, like setup(): the text is stored either way and
+## _build_contents reads it when it runs.
+func set_name_text(name_text: String) -> void:
+	_name_text = name_text
+	if _name != null:
+		_name.text = name_text
 
 
 func _on_focus_entered() -> void:

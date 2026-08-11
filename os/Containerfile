@@ -387,6 +387,34 @@ RUN --mount=type=cache,dst=/var/cache/libdnf5,sharing=locked \
 # a tool, not a library, so the dlopen loop below rightly does not know it;
 # the verify block asserts it next to xprop, its sibling in "small X clients
 # the shell shells out to".
+#
+# THE LAST THREE ARE THE DEVMODE TERMINAL, and they are the first packages in
+# this image whose whole purpose is to be reachable by a person. See
+# /usr/lib/marwanos/terminal for what the flag gates and ADR 0009 for why the
+# exception to D6 is a narrowing of it rather than a hole in it.
+#
+#   xterm                    an X11 client that wants nothing this session does
+#                            not already have -- no GPU context, no D-Bus, no
+#                            portal, no desktop. Every prettier emulator wants
+#                            at least one of those, and foot wants a Wayland
+#                            display the shell deliberately does not use.
+#   dejavu-sans-mono-fonts   named rather than left to fontconfig, because the
+#                            wrapper asks for this face BY NAME and
+#                            fontconfig's answer to a missing family is a
+#                            silent substitution -- on a TV that is a terminal
+#                            rendered in a proportional face, which is not a
+#                            terminal. It also drags in fontconfig itself,
+#                            which is why the "deliberately NOT added" note
+#                            above no longer holds for it: the exclusion was
+#                            about Godot never needing it, and this does.
+#   sudo                     journalctl, nmcli, systemctl and bootc are all
+#                            root's, and the player account is a locked nologin
+#                            one. Asserted rather than assumed: it comes from
+#                            the base image today, and a terminal that cannot
+#                            escalate is a terminal that cannot fix the machine
+#                            it is running on. The RULE is not shipped here --
+#                            marwanos-devmode-sudo.service installs it per boot
+#                            off the same flag.
 RUN --mount=type=cache,dst=/var/cache/libdnf5,sharing=locked \
     set -euxo pipefail; \
     dnf -y install \
@@ -394,6 +422,9 @@ RUN --mount=type=cache,dst=/var/cache/libdnf5,sharing=locked \
         gamescope \
         cage \
         xdotool \
+        xterm \
+        dejavu-sans-mono-fonts \
+        sudo \
         vulkan-tools \
         egl-wayland \
         plymouth-plugin-script \
@@ -701,6 +732,14 @@ RUN set -euxo pipefail; \
     chmod 0755 /usr/lib/marwanos/display/profile; \
     chmod 0644 /usr/lib/systemd/system/marwanos-window-profile.service; \
     chmod 0755 /usr/lib/marwanos/window/profile; \
+    chmod 0644 /usr/lib/systemd/system/marwanos-devmode-sudo.service; \
+    chmod 0755 /usr/lib/marwanos/devmode-sudo; \
+    chmod 0755 /usr/lib/marwanos/terminal; \
+    : "sudoers.devmode is deliberately NOT in the 0755 list, for the same"; \
+    : "reason shipped-apps is not: it is DATA read by a program, never run."; \
+    : "The find above has already normalised it to 0644, and the copy that"; \
+    : "sudo actually reads is installed 0440 into /etc/sudoers.d per boot by"; \
+    : "marwanos-devmode-sudo -- a mode sudo enforces itself."; \
     chmod 0755 /usr/lib/marwanos/flatpak-install; \
     chmod 0755 /usr/lib/marwanos/netcheck; \
     chmod 0755 /usr/lib/marwanos/appscan; \
@@ -802,6 +841,12 @@ RUN set -euxo pipefail; \
     : "it matters most. See the script's header."; \
     ln -sf ../marwanos-flightrec.service \
         /usr/lib/systemd/system/multi-user.target.wants/marwanos-flightrec.service; \
+    : "The devmode sudo rule's installer. Enabled UNCONDITIONALLY and gated"; \
+    : "inside the script instead, because the boot that matters most is the"; \
+    : "one where the flag has just been REMOVED -- a unit conditioned on the"; \
+    : "flag would skip exactly that boot and leave the grant behind forever."; \
+    ln -sf ../marwanos-devmode-sudo.service \
+        /usr/lib/systemd/system/multi-user.target.wants/marwanos-devmode-sudo.service; \
     systemctl --no-reload mask getty@tty1.service autovt@tty1.service \
                                serial-getty@ttyS0.service; \
     ln -sf /dev/null /usr/lib/systemd/user/xdg-desktop-portal-gtk.service; \
@@ -839,9 +884,9 @@ RUN set -euxo pipefail; \
     : "drifted between the session and the consumer could have the shell"; \
     : "unmapping its own window under a compositor that was never told to"; \
     : "expect it -- a black television with a healthy journal."; \
-    grep -q 'WINDOW_LIST="steam-split loose steam-aware yield plain"' \
+    grep -q 'WINDOW_LIST="no-bg-steam no-wsi steam-split loose steam-aware yield plain"' \
         /usr/lib/marwanos/session/marwanos-session; \
-    grep -q 'PROFILES=(steam-split loose steam-aware yield plain)' \
+    grep -q 'PROFILES=(no-bg-steam no-wsi steam-split loose steam-aware yield plain)' \
         /usr/lib/marwanos/window/profile; \
     test -x /usr/lib/marwanos/flatpak-install; \
     test -x /usr/lib/marwanos/netcheck; \
@@ -967,6 +1012,25 @@ RUN set -euxo pipefail; \
     : "of their own (the pad-keys bridge); without it any app the bridge"; \
     : "drives would launch fine and then ignore every button on the pad."; \
     command -v xdotool; \
+    : "THE DEVMODE TERMINAL, asserted in all four of its pieces. Every one of"; \
+    : "them fails silently at runtime if it is missing, on the one surface"; \
+    : "that exists to be used when nothing else works: no xterm is a launch"; \
+    : "that returns straight to the rail; no DejaVu Sans Mono is a terminal"; \
+    : "fontconfig renders in whatever it substituted; no sudo is a terminal"; \
+    : "that cannot read the journal it was opened to read."; \
+    command -v xterm; \
+    command -v sudo; \
+    command -v visudo; \
+    fc-match "DejaVu Sans Mono" | grep -qi dejavu; \
+    test -x /usr/lib/marwanos/terminal; \
+    test -x /usr/lib/marwanos/devmode-sudo; \
+    test -s /usr/lib/marwanos/sudoers.devmode; \
+    visudo -c -f /usr/lib/marwanos/sudoers.devmode; \
+    : "AND THE DOOR IS SHUT IN THE IMAGE ITSELF. A shipped stick has no"; \
+    : "devmode flag and must therefore have no sudo rule -- if this file ever"; \
+    : "appears in a build, the grant has stopped being conditional."; \
+    test ! -e /etc/sudoers.d/50-marwanos-devmode; \
+    test -L /usr/lib/systemd/system/multi-user.target.wants/marwanos-devmode-sudo.service; \
     : "jq is how marwanos-storeart parses Valve's appdetails JSON into the"; \
     : "per-game metadata files the shell draws descriptions from. It comes"; \
     : "from the base image rather than a dnf line here, which is exactly why"; \
