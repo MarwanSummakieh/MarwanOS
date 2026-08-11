@@ -38,6 +38,9 @@ const CardMenu = preload("res://src/card_menu.gd")
 const DetailsPanel = preload("res://src/details_panel.gd")
 const Glyphs = preload("res://src/glyphs.gd")
 const ErrorScreen = preload("res://src/error_screen.gd")
+const MosMark = preload("res://src/mos_mark.gd")
+const ServiceTray = preload("res://src/service_tray.gd")
+const ServiceMenu = preload("res://src/service_menu.gd")
 
 ## Same prefix, same meaning as tile.gd's: an entry whose id starts with it is a
 ## Steam library game rather than an application, which is what makes it the one
@@ -86,6 +89,8 @@ var _wifi: Glyphs = null
 ## well as four members because every wiring loop below wants "all of them" --
 ## and a fifth icon arriving should not be a fifth line in four places.
 var _bar_buttons: Array = []
+var _service_tray: ServiceTray = null
+var _service_menu: ServiceMenu = null
 var _store_button: IconButton = null
 var _files_button: IconButton = null
 var _gear_button: IconButton = null
@@ -396,12 +401,24 @@ func _build_topbar() -> Control:
 	# with no gap, reading as one impossible sentence. Caught on the Xvfb run.
 	bar.add_theme_constant_override("separation", TvTheme.HINT_GAP)
 
-	var wordmark := Label.new()
-	wordmark.text = "MarwanOS"
-	wordmark.add_theme_font_size_override("font_size", TvTheme.SIZE_TOPBAR)
-	wordmark.add_theme_color_override("font_color", TvTheme.TEXT_PRIMARY)
-	wordmark.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	bar.add_child(wordmark)
+	# THE MARK, not the name. "MarwanOS" as a string took the width of eight
+	# characters and said the same thing forever; the drawn M.OS says it in a
+	# third of the room, and the room is what the service tray beside it needed.
+	# See mos_mark.gd for why graffiti is three draw calls rather than a font.
+	var mark := MosMark.new()
+	mark.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	bar.add_child(mark)
+
+	# THE SERVICE TRAY, immediately right of the mark, because what it shows is
+	# about the machine rather than about the screen: which background services
+	# are up. Lit or grey per service, and A opens the menu that starts and stops
+	# them. It is added to _bar_buttons below with the rest of the focusables so
+	# the neighbour table picks it up without a special case.
+	_service_tray = ServiceTray.new()
+	_service_tray.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	_service_tray.activated.connect(_open_service_menu)
+	bar.add_child(_service_tray)
+	bar.add_child(_bar_gap())
 
 	var spacer := Control.new()
 	spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -462,6 +479,20 @@ func _build_topbar() -> Control:
 	for button in _bar_buttons:
 		bar.add_child(button)
 		bar.add_child(_bar_gap())
+
+	# THE TRAY JOINS THE FOCUS CHAIN AFTER the loop above, not before it: it was
+	# already parented to the bar at the far left, and letting the loop see it
+	# would re-add it on the right. Index 0 because it IS leftmost, so left off
+	# the store lands on it and the neighbour table needs no special case.
+	#
+	# ONLY WHILE IT HAS SOMETHING TO SHOW. A hidden control in the chain is a
+	# focus trap on exactly one machine -- a fresh one, before the first-boot
+	# installer has finished putting Steam on it -- and that is the machine least
+	# able to recover from a pad that stops responding. _refresh_tray_wiring puts
+	# it back the moment the tray has an icon to draw.
+	if _service_tray != null and _service_tray.visible:
+		_bar_buttons.insert(0, _service_tray)
+	Installed.apps_changed.connect(_on_tray_membership_changed)
 
 	# The network's answer as a glyph next to the time, from SystemStatus. In
 	# the bar for the same reason the controller state is: connectivity coming
@@ -653,6 +684,29 @@ func _populate() -> void:
 ## Everything is still an explicit table someone can read. Down from a card and
 ## up from the bar stay pointed at self, so Control's geometric search can
 ## never wander into the hint row.
+## The tray appears and disappears with what is installed, so its membership of
+## the bar's focus chain has to move with it. Called on every installed-apps
+## change: the tray has already refreshed itself off the same signal by the time
+## this runs, so `visible` is current.
+##
+## Re-wiring rather than reordering by hand, because the neighbour table is
+## derived from _bar_buttons and two ways of deciding the order is how the two
+## end up disagreeing.
+func _on_tray_membership_changed(_apps: Array) -> void:
+	if _service_tray == null:
+		return
+	var present := _bar_buttons.has(_service_tray)
+	if _service_tray.visible == present:
+		return
+	if _service_tray.visible:
+		_bar_buttons.insert(0, _service_tray)
+	else:
+		_bar_buttons.erase(_service_tray)
+	_wire_focus_neighbours()
+	ShellLog.info("service tray %s the bar's focus chain"
+		% ("joined" if _service_tray.visible else "left"))
+
+
 func _wire_focus_neighbours() -> void:
 	var count := _tiles.size()
 	for index in count:
@@ -1543,6 +1597,44 @@ func _set_lower_deck_visible(shown: bool) -> void:
 
 ## The options menu for the selected card. Guarded rather than always available,
 ## and every guard is a state in which the menu would be about the wrong thing.
+## The service menu, from the tray in the bar. Same guards as the card menu: not
+## while another surface owns the screen, and not twice.
+func _open_service_menu() -> void:
+	if _service_menu != null or _details != null:
+		return
+	if Settings.is_open() or Stores.is_open() or Power.is_open() or Files.is_open() \
+			or Launcher.is_busy():
+		return
+
+	_service_menu = ServiceMenu.new()
+	_service_menu.closed.connect(_on_service_menu_closed, CONNECT_ONE_SHOT)
+	# A child of the ROOT rather than of this node, for the overlay's reason: the
+	# rail hides itself while other surfaces are up, and a child of a hidden
+	# Control does not draw.
+	get_tree().root.add_child(_service_menu)
+	# Deaf while it is up: the menu's own _unhandled_input owns B, and both
+	# reacting would close the menu and act on the rail behind it on one press.
+	set_process_unhandled_input(false)
+
+
+func _on_service_menu_closed() -> void:
+	_close_service_menu.call_deferred()
+
+
+func _close_service_menu() -> void:
+	if _service_menu == null:
+		return
+	var menu := _service_menu
+	_service_menu = null
+	menu.get_parent().remove_child(menu)
+	menu.queue_free()
+	set_process_unhandled_input(true)
+	# The menu took focus; hand it back to the tray it came from, so the bar does
+	# not come back ringless and looking like the pad has stopped working.
+	if _service_tray != null and _service_tray.visible:
+		_service_tray.grab_focus()
+
+
 func _open_card_menu() -> void:
 	if _details != null:
 		# The panel owns the screen and the pad while it is up. OPTIONS is about

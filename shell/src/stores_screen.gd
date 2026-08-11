@@ -149,7 +149,10 @@ const FRONT_ALERT_STATES := ["offline", "failed"]
 ## for what somebody might want it to do: it opens Steam, on that game's page,
 ## and everything after that -- including every step of a purchase -- happens
 ## inside Valve's client where it belongs.
-const HINT_OPEN_IN_STEAM := "Open in Steam"
+## The purchase action, and it no longer names Steam because it no longer opens
+## Steam. See _on_detail_store_action: buying happens on Valve's own store page
+## in the browser, which is the last Steam-client door on this screen being shut.
+const HINT_BUY := "Buy in browser"
 
 ## The primary action on a game's page, by what this machine already has. All
 ## three go through steam:// URLs against a client started `-silent`, so none of
@@ -553,16 +556,23 @@ func _build_detail() -> Control:
 	# need no UI from Valve at all. So the primary row says Play, or Install, or
 	# how far a download has got, depending on what this machine already has.
 	#
-	# THE SECOND ROW IS THE PURCHASE DOOR and it keeps the old wording. Money
-	# still changes hands only inside Valve's client -- see the header -- and
-	# that is the one thing on this page a steam:// URL must not paper over.
+	# THE SECOND ROW IS THE PURCHASE DOOR, and it goes to the BROWSER now. Money
+	# still never changes hands in this shell -- see the header -- but it no
+	# longer changes hands in Valve's client on this television either: the store
+	# page opens in Zen, which is a pointer-driven UI this machine already ships
+	# and already knows how to drive with the right stick. That is the last
+	# Steam-client door on this screen, and closing it is the whole point of the
+	# panel existing.
+	#
+	# The first row's text here is a placeholder: _refresh_detail_actions sets
+	# the real verb from what the machine has, before this view is ever shown.
 	_detail_action = ActionRow.new()
-	_detail_action.setup(HINT_OPEN_IN_STEAM, "")
+	_detail_action.setup(HINT_INSTALL_GAME, "")
 	_detail_action.activated.connect(_on_detail_action)
 	detail.add_child(_detail_action)
 
 	_detail_store_action = ActionRow.new()
-	_detail_store_action.setup(HINT_OPEN_IN_STEAM, "")
+	_detail_store_action.setup(HINT_BUY, "")
 	_detail_store_action.activated.connect(_on_detail_store_action)
 	detail.add_child(_detail_store_action)
 
@@ -1578,33 +1588,48 @@ func _on_detail_action() -> void:
 	ShellLog.info("storefront requested an install of appid %d" % appid)
 
 
-## The purchase door, and the whole boundary this screen draws. `steam://store/<id>`
-## is Big Picture's own URL for a game's store page, handed over exactly the way
-## catalogue.gd's STEAM_STORE hands over `steam://store` -- same client, same
-## -gamepadui flag, same launch seam. What happens after that is Valve's: the
-## page, the cart, the card details and the receipt all live inside their client,
-## and this shell never sees any of it.
+## The purchase door, and it goes to the BROWSER. This is the last place on this
+## screen that used to open Valve's client, and it was the hardest one to argue
+## away: buying needs a real store page, a cart and a card field, and none of
+## those are things this shell will ever draw.
+##
+## The answer is that Steam's own store page is a WEBSITE, and this machine ships
+## a browser. `store.steampowered.com/app/<appid>` is the same page the client
+## renders, with the same checkout behind it, driven by a pointer this machine
+## already has -- pad_keys.gd puts the right stick on the cursor for exactly this
+## kind of application. So the transaction still happens entirely on Valve's
+## side, in Valve's UI, and the flickering ten-foot client the owner cannot
+## navigate never enters into it.
+##
+## STILL NO MONEY ANYWHERE NEAR THIS SHELL. What changed is which of somebody
+## else's UIs the handover goes to, not whether there is a handover.
+##
+## The appid is a NUMBER by the time it reaches this line -- the seam parsed it
+## out of Valve's own JSON as an int -- so there is nothing here for a URL to be
+## broken open with.
 func _on_detail_store_action() -> void:
 	if Launcher.is_busy() or _detail_item.is_empty():
 		return
 	var appid := int(_detail_item.get("appid", 0))
 	if appid <= 0:
 		return
+
 	var entry := {
-		# A distinct id from the store tab's, for steam_desktop_entry's reason:
-		# the launch seam, the splash and the pad bridge all key on this, and
-		# "Steam showing one game's page" wants the splash to say the game's
-		# name. It is deliberately NOT in Catalogue.PAD_KEY_APPS -- Big Picture
-		# reads the pad itself, and double-delivered input is worse than none.
-		"id": "store.steam.page",
+		# A distinct id, for steam_desktop_entry's reason: the launch seam, the
+		# splash and the pad bridge all key on this, and "the browser showing one
+		# game's store page" wants the splash to say the game's name. It is also
+		# why this id had to be ADDED to Catalogue.PAD_KEY_APPS as "pointer": a
+		# web page has no controller support of its own, and a checkout nobody
+		# can click is a dead end with a card field on it.
+		"id": "store.steam.buy",
 		"title": str(_detail_item.get("name", "")),
 		"accent": str(_selected.get("accent", "")),
-		"exec": ["flatpak", "run", "com.valvesoftware.Steam", "-gamepadui",
-			"steam://store/%d" % appid],
-		"app_id": str(_selected.get("app_id", "")),
+		"exec": ["flatpak", "run", "app.zen_browser.zen",
+			"https://store.steampowered.com/app/%d/" % appid],
+		"app_id": "app.zen_browser.zen",
 		"icon": Steamfront.art_path(appid),
 	}
-	ShellLog.info("storefront handing appid %d to Steam" % appid)
+	ShellLog.info("storefront opening appid %d in the browser to buy" % appid)
 	Launcher.launch(entry)
 
 

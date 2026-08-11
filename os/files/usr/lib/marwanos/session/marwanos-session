@@ -639,6 +639,47 @@ steam_installed() {
     flatpak info --system "$STEAM_FLATPAK_ID" >/dev/null 2>&1
 }
 
+# ---------------------------------------------------------------------------
+# THE SERVICE SEAM, and it needs no root at all.
+#
+# The shell's top bar shows one icon per background service -- lit when it is
+# running, grey when it is not -- and its menu can start and stop them. Every
+# other reverse channel in this project goes through a privileged consumer
+# because the thing being changed belongs to root. This one does not: the
+# background Steam client runs as `player`, this session runs as `player`, and
+# the shell runs as `player`. Three processes, one uid, and the state they are
+# arguing about is a flatpak owned by that uid.
+#
+# So the files live under $RUNTIME -- /run/user/1000/marwanos -- which logind
+# created for this user and nothing else can write. No unit, no allow-list, no
+# rename-then-read dance against a hostile writer, because there is no privilege
+# boundary here to defend.
+#
+#   this writes   $RUNTIME/services/<id>.state    running | stopped | starting
+#   the shell     $RUNTIME/services/<id>.wanted   1 | 0
+#
+# WHY `wanted` RATHER THAN THE SHELL KILLING THINGS ITSELF. The supervisor below
+# restarts the client when it exits -- that is its whole job -- so a shell that
+# killed Steam directly would watch it come back thirty seconds later and look
+# broken. One owner of the lifecycle, and the shell expresses a WISH rather than
+# performing an action.
+SERVICE_DIR="$RUNTIME/services"
+
+service_state() {
+    install -d -m 0700 "$SERVICE_DIR" 2>/dev/null || return 0
+    printf '%s\n' "$2" > "$SERVICE_DIR/$1.state.tmp" 2>/dev/null \
+        && mv -f "$SERVICE_DIR/$1.state.tmp" "$SERVICE_DIR/$1.state" 2>/dev/null
+}
+
+## Is a service wanted? ABSENT MEANS YES, which is the load-bearing default: a
+## machine nobody has touched runs the client, exactly as it did before this
+## seam existed, and the file only appears once somebody has chosen otherwise.
+service_wanted() {
+    _w=""
+    [ -r "$SERVICE_DIR/$1.wanted" ] && IFS= read -r _w < "$SERVICE_DIR/$1.wanted" 2>/dev/null
+    [ "$_w" != "0" ]
+}
+
 # The background client's own supervision loop, run as a child of the session
 # so it inherits DISPLAY, the journal-connected descriptors and the session
 # user without any of them being passed.
@@ -675,12 +716,52 @@ supervise_steam() {
         # that what the client gets is stated by this line rather than inherited
         # from whatever the session's environment happened to contain -- the
         # difference between a lever and a coincidence.
-        if [ "$WINDOW_PROFILE" = "no-wsi" ]; then
-            flatpak run --env=ENABLE_GAMESCOPE_WSI=0 "$STEAM_FLATPAK_ID" -silent >/dev/null 2>&1
-        else
-            flatpak run --env=ENABLE_GAMESCOPE_WSI=1 "$STEAM_FLATPAK_ID" -silent >/dev/null 2>&1
+        # STOPPED ON REQUEST, and this check is why the loop is shaped this way.
+        # Somebody who turns Steam off from the shell's service menu must find it
+        # still off a minute later; without this the supervisor would restart it
+        # and the menu would read as a switch that does not switch.
+        if ! service_wanted steam; then
+            service_state steam stopped
+            sleep 2
+            continue
         fi
+
+        # BACKGROUNDED, NOT BLOCKING, which is the other half of the same
+        # requirement. `flatpak run` does not return until the client exits, so a
+        # foreground call could not notice a stop request while the thing it
+        # would be stopping was running -- the menu would do nothing until Steam
+        # happened to quit on its own.
+        if [ "$WINDOW_PROFILE" = "no-wsi" ]; then
+            flatpak run --env=ENABLE_GAMESCOPE_WSI=0 "$STEAM_FLATPAK_ID" -silent >/dev/null 2>&1 &
+        else
+            flatpak run --env=ENABLE_GAMESCOPE_WSI=1 "$STEAM_FLATPAK_ID" -silent >/dev/null 2>&1 &
+        fi
+        _steam_pid=$!
+        service_state steam running
+
+        # Watch two things at once: the client, and the wish. `flatpak kill`
+        # rather than killing _steam_pid, for stop_background_steam's reason --
+        # `flatpak run` handed the sandbox to the session helper and is not the
+        # client's parent, so signalling it would leave a logged-in Steam behind.
+        while kill -0 "$_steam_pid" 2>/dev/null; do
+            if ! service_wanted steam; then
+                log "background Steam stopped from the shell's service menu"
+                flatpak kill "$STEAM_FLATPAK_ID" >/dev/null 2>&1 || true
+                break
+            fi
+            sleep 2
+        done
+        wait "$_steam_pid" 2>/dev/null
         _steam_status=$?
+        service_state steam stopped
+
+        # A stop that was ASKED FOR is not a crash, so it must not count against
+        # the restart guard below -- otherwise toggling the menu five times would
+        # exhaust the allowance and the service could never be started again this
+        # boot. Back to the top, where the wanted check parks the loop cheaply.
+        if ! service_wanted steam; then
+            continue
+        fi
 
         _steam_now="$(uptime_seconds)"
         if [ "$((_steam_now - _steam_window_start))" -ge "$STEAM_EXIT_WINDOW" ]; then
@@ -720,6 +801,11 @@ start_background_steam() {
     # is the profile that does not run it, and it is the only test that can tell
     # "Steam attaching reprograms the display" from "this panel flickers anyway".
     if [ "$WINDOW_PROFILE" = "no-bg-steam" ]; then
+        # Said in the state file as well as the journal, so the shell's service
+        # tray draws Steam grey rather than drawing nothing. "Off because
+        # somebody chose a profile" and "off because this seam has never
+        # reported" look identical on a television otherwise.
+        service_state steam stopped
         log "the 'no-bg-steam' profile is set: NO background Steam this session"
         log "games still launch from the rail -- the first one waits out a cold client"
         log "if the screen is calm now, background Steam attaching to gamescope is the flicker"
@@ -727,6 +813,7 @@ start_background_steam() {
     fi
 
     if ! steam_installed; then
+        service_state steam stopped
         log "Steam is not installed; the session starts no background client"
         return 0
     fi

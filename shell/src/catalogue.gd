@@ -366,6 +366,19 @@ static func terminal_entry() -> Dictionary:
 ## keyboard: press home, choose Type, write the command, press A to run it.
 const PAD_KEY_APPS := {
 	"store.steam.desktop": "pointer",
+	# THE BUY PAGE, and it is here because a web page has no controller support
+	# of its own. The store screen's purchase action opens Valve's store page in
+	# the browser rather than in Big Picture (see stores_screen's
+	# _on_detail_store_action), and a checkout nobody can click is not a
+	# purchase route -- it is a dead end with a card field on it.
+	#
+	# NOTE, and it is a real gap rather than a decision: the rail's own Zen card
+	# ("app.zen_browser.zen") is NOT in this table, so a browser opened from the
+	# rail gets no bridge either. That predates this entry. It is left alone here
+	# because adding it changes how an existing card behaves, and double-
+	# delivered input is the failure this table's own header warns about -- but
+	# it is worth settling deliberately rather than by omission.
+	"store.steam.buy": "pointer",
 	TERMINAL_ID: "keys",
 }
 

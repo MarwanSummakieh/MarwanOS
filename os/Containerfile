@@ -828,6 +828,20 @@ RUN set -euxo pipefail; \
     : "sshd_config.d drop-in), so image + network is sufficient for access."; \
     ln -sf /usr/lib/systemd/system/sshd.service \
         /usr/lib/systemd/system/multi-user.target.wants/sshd.service; \
+    : "AND THE SOCKET IS REMOVED, which is the actual fix for the lockout."; \
+    : "Fedora ships sshd BOTH ways -- sshd.service (a daemon that binds 22"; \
+    : "itself) and sshd.socket (socket activation that binds 22 for it) -- and"; \
+    : "the base image had both enabled. Two units contending for one port,"; \
+    : "and on the bench NEITHER started: measured 2026-08-11, the journal had"; \
+    : "no sshd entries at all for the whole boot, the port was refused, and"; \
+    : "the machine was unreachable until someone with a keyboard ran"; \
+    : "systemctl start by hand. That is the failure the persist drop-in was"; \
+    : "written for and could not fix, because Restart= never applies to a"; \
+    : "unit systemd never tried to start."; \
+    : "The service is the one kept, not the socket: it is what the persist"; \
+    : "drop-in configures, and a socket-activated sshd has no long-running"; \
+    : "process for Restart=on-failure to act on."; \
+    rm -f /usr/lib/systemd/system/sockets.target.wants/sshd.socket; \
     : "storeart is enabled through its TIMER, and only the timer: the timer"; \
     : "starts the service half a minute after boot and again every fifteen"; \
     : "minutes, which is what gives an offline boot a second chance at its"; \
@@ -1005,6 +1019,10 @@ RUN set -euxo pipefail; \
     test -s /usr/lib/marwanos/keys/root.keys; \
     test -f /usr/lib/systemd/system/sshd.service; \
     test -L /usr/lib/systemd/system/multi-user.target.wants/sshd.service; \
+    : "The socket must NOT be enabled alongside it -- see the removal above."; \
+    : "Asserted rather than assumed because it comes from the base image, so a"; \
+    : "base bump can put it back and the symptom is a machine with no door."; \
+    test ! -e /usr/lib/systemd/system/sockets.target.wants/sshd.socket; \
     test -s /usr/lib/systemd/system/sshd.service.d/50-marwanos-persist.conf; \
     test -x /usr/lib/marwanos/flightrec; \
     test -L /usr/lib/systemd/system/multi-user.target.wants/marwanos-flightrec.service; \
