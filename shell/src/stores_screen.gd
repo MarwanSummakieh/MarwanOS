@@ -128,7 +128,11 @@ const HINT_INSTALL := "Install"
 ## reason -- so they get the same tile, the same focus wiring, the same left-edge
 ## doorway back to the tabs and the same detail page. What differs is the heading
 ## above them and where B goes, which is what _search_active tracks.
-enum { MODE_PAGE, MODE_GRID, MODE_DETAIL, MODE_SEARCH }
+## MODE_SIGNIN is the QR panel: the same pane the shelves use, swapped for a
+## code somebody scans with their phone. It replaced the last deliberate Big
+## Picture launch on this screen -- see _on_store_opened's NOT SIGNED IN
+## branch for what stands where the client door used to.
+enum { MODE_PAGE, MODE_GRID, MODE_DETAIL, MODE_SEARCH, MODE_SIGNIN }
 
 ## What the grid area says when there are no shelves to draw, by the seam's
 ## state word. EVERY ONE OF THESE IS A FIRST-CLASS RENDER -- the wifi screen's
@@ -185,6 +189,22 @@ const SEARCH_STATE_LINES := {
 ## What Y does, and it is the only button on this screen that opens a keyboard.
 const HINT_SEARCH := "Search"
 
+## What the QR panel says under the code, by the sign-in's status word from
+## the seam. Same first-class-render table shape as FRONT_STATE_LINES, and
+## "approved" is deliberately absent: that sentence carries a name and a
+## caveat, so _render_signin words it. "" is a request the service has not
+## answered yet, which reads the same as starting.
+const SIGNIN_LINES := {
+	"": "Getting a code from Steam",
+	"starting": "Getting a code from Steam",
+	"waiting": "Scan the code with the Steam app on your phone, then approve the sign-in there",
+	"expired": "That code expired -- A gets a fresh one",
+	"failed": "Steam did not answer -- A tries again",
+}
+
+## The sign-in states that name a problem rather than progress.
+const SIGNIN_ALERT_STATES := ["expired", "failed"]
+
 var _tabs: Array = []
 var _selected: Dictionary = {}
 var _hints: HBoxContainer = null
@@ -230,6 +250,13 @@ var _detail_action: ActionRow = null
 var _detail_store_action: ActionRow = null
 var _detail_item: Dictionary = {}
 var _detail_tile: Control = null
+
+## The QR sign-in panel, inside the same pane as the shelves and the detail
+## view -- a fourth rendering, not a fourth pane.
+var _signin_pane: Control = null
+var _signin_qr: TextureRect = null
+var _signin_wash: Panel = null
+var _signin_line: Label = null
 
 var _mode := MODE_PAGE
 
@@ -351,6 +378,11 @@ func _ready() -> void:
 	# neither of them rides on the featured list's signal.
 	Steamfront.account_changed.connect(_on_account_changed)
 	Steamfront.wishlist_changed.connect(_on_wishlist_changed)
+	# The library shelf and the QR panel, each on its own arrival: the library
+	# is the wishlist's sibling, and the sign-in narrates a scan that happens
+	# over minutes while nothing else on this screen changes.
+	Steamfront.library_changed.connect(_on_library_changed)
+	Steamfront.signin_changed.connect(_on_signin_changed)
 
 	ShellLog.info("stores screen up with %d tabs" % _tabs.size())
 
@@ -484,7 +516,75 @@ func _build_front() -> Control:
 	_detail = _build_detail()
 	front.add_child(_detail)
 
+	_signin_pane = _build_signin()
+	front.add_child(_signin_pane)
+
 	return front
+
+
+## The QR sign-in panel. A picture, a sentence, and NOTHING FOCUSABLE -- the
+## selection stays on the store tab the whole time, because there is nothing
+## here to choose: the next action happens on somebody's phone, and the only
+## thing the pad can do about it is leave (B) or retry (A, once the code has
+## expired -- see _on_store_opened).
+##
+## THE CREDENTIAL BOUNDARY, stated where a person could expect a form: this
+## panel never asks for anything. No password field will ever be added here;
+## the approval happens inside Valve's app on a phone that already holds the
+## session, and what this machine keeps is stored root-side where the shell
+## cannot read it. See marwanos-steamfront's THE QR SIGN-IN.
+func _build_signin() -> Control:
+	var pane := VBoxContainer.new()
+	pane.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	pane.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	pane.add_theme_constant_override("separation", TvTheme.SECTION_GAP)
+	pane.visible = false
+
+	var title := Label.new()
+	title.text = "Sign in to Steam"
+	title.add_theme_font_size_override("font_size", TvTheme.SIZE_WORDMARK)
+	title.add_theme_color_override("font_color", TvTheme.TEXT_PRIMARY)
+	title.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	pane.add_child(title)
+
+	# The code, square, at close to the PNG's native size -- see STORE_QR_SIZE.
+	# Left-aligned like everything else in the pane rather than centred: the
+	# pane's left edge is where every heading on this screen already lives.
+	var frame := Control.new()
+	frame.custom_minimum_size = Vector2(TvTheme.STORE_QR_SIZE, TvTheme.STORE_QR_SIZE)
+	frame.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+	frame.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	pane.add_child(frame)
+
+	# The wash while the code is still coming, for the tile's reason: a
+	# rectangle of the right size that the picture lands in, not a layout that
+	# jumps.
+	_signin_wash = Panel.new()
+	_signin_wash.add_theme_stylebox_override("panel", TvTheme.card_idle_box())
+	_signin_wash.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_signin_wash.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	frame.add_child(_signin_wash)
+
+	_signin_qr = TextureRect.new()
+	_signin_qr.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	_signin_qr.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	# NEAREST, and it is load-bearing rather than aesthetic: a QR is a grid of
+	# hard-edged modules and bilinear filtering greys every edge, which is
+	# exactly the contrast a phone camera across a living room needs most.
+	_signin_qr.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+	_signin_qr.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_signin_qr.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_signin_qr.visible = false
+	frame.add_child(_signin_qr)
+
+	_signin_line = Label.new()
+	_signin_line.add_theme_font_size_override("font_size", TvTheme.SIZE_BODY)
+	_signin_line.add_theme_color_override("font_color", TvTheme.TEXT_SECONDARY)
+	_signin_line.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_signin_line.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	pane.add_child(_signin_line)
+
+	return pane
 
 
 ## A game's page, inside the same pane. Built once and repopulated, for the
@@ -661,6 +761,14 @@ func _refresh_hints() -> void:
 	if _mode == MODE_SEARCH:
 		_hints.add_child(TvTheme.hint("A", "Open"))
 		_hints.add_child(TvTheme.hint("Y", "Search again"))
+		_hints.add_child(TvTheme.hint("B", "Back to the store"))
+		return
+	if _mode == MODE_SIGNIN:
+		# A is advertised only when it would do something: retry a code that
+		# has died. While one is live, the next action is on the phone and the
+		# pad's only job is B.
+		if SIGNIN_ALERT_STATES.has(Steamfront.signin_status):
+			_hints.add_child(TvTheme.hint("A", "New code"))
 		_hints.add_child(TvTheme.hint("B", "Back to the store"))
 		return
 	if _mode == MODE_GRID:
@@ -910,6 +1018,10 @@ func _refresh_front() -> void:
 	# Picture and comes back here, and this is what notices.
 	Steamfront.request_account()
 	Steamfront.request_wishlist()
+	# The library rides the same visit, cached for an hour like the front
+	# page -- and each fresh fetch is also what pages in the next batch of
+	# capsules for a big library. See do_library.
+	Steamfront.request_library()
 
 
 func _shelves_changed() -> bool:
@@ -924,6 +1036,13 @@ func _current_signature() -> String:
 	# the first two seconds, and stay that way until the featured list changed.
 	signature += "wishlist:"
 	for item in Steamfront.wishlist_items():
+		signature += "%d," % int(item.get("appid", 0))
+	signature += ";"
+	# The library too, for the wishlist's reason: its shelf must rebuild when
+	# its contents change and only then. Appids alone are enough -- a name
+	# change without an appid change is not a thing Valve's list does.
+	signature += "library:"
+	for item in Steamfront.library_items():
 		signature += "%d," % int(item.get("appid", 0))
 	signature += ";"
 	for category in Steamfront.categories:
@@ -953,6 +1072,20 @@ func _rebuild_grid() -> void:
 	var wishlist: Array = Steamfront.wishlist_items()
 	if not wishlist.is_empty():
 		shelves.append({"id": "wishlist", "name": "Your wishlist", "items": wishlist})
+	# THE LIBRARY IS SECOND, after what they want and before what the shop
+	# wants to sell -- both personal shelves ahead of Valve's, for the
+	# wishlist's own argument. It is the shelf the QR sign-in exists for:
+	# every game the account owns, INCLUDING the ones this disk has never
+	# seen, most recently played first. A tile for a game that is not
+	# installed opens the same detail page as everything else, whose Install
+	# row already knows how to start the download without Valve's UI. Items
+	# arrive whole from library.json (name and appid; owned games carry no
+	# price on purpose), so this shelf never waits on detail pages the way
+	# the wishlist does. Empty renders as no shelf, same as the wishlist:
+	# nobody signed in and an account with no games read the same from here.
+	var library: Array = Steamfront.library_items()
+	if not library.is_empty():
+		shelves.append({"id": "library", "name": "Your library", "items": library})
 	shelves.append_array(Steamfront.categories)
 
 	for category in shelves:
@@ -1054,8 +1187,11 @@ func _refresh_front_status() -> void:
 	if _front_status == null or _front_scroll == null:
 		return
 	var have := not _tiles.is_empty()
-	_front_scroll.visible = have and _mode != MODE_DETAIL
-	_front_status.visible = not have and _mode != MODE_DETAIL
+	# The detail view and the QR panel each take the pane whole, so the
+	# shelves and their stand-in line both step aside for either.
+	var swapped := _mode == MODE_DETAIL or _mode == MODE_SIGNIN
+	_front_scroll.visible = have and not swapped
+	_front_status.visible = not have and not swapped
 	if have:
 		return
 	var state := Steamfront.state
@@ -1293,8 +1429,9 @@ func _on_featured_changed(_categories: Array) -> void:
 	_refresh_front_status()
 
 
-## Signing into Steam from Big Picture and coming back here is the case this
-## exists for: only the line changes, so only the line is redrawn.
+## A QR approval landing -- or a client sign-in made from desktop mode being
+## noticed -- while this screen is up: only the line changes, so only the line
+## is redrawn.
 func _on_account_changed(_signed_in: bool, _persona: String) -> void:
 	_refresh_page_chrome()
 	# AND THE HINT ROW, because A's verb depends on this: signing in from Big
@@ -1325,10 +1462,104 @@ func _on_wishlist_changed(_items: Array) -> void:
 	_refresh_front_status()
 
 
+## The library arriving or changing. It goes through the wishlist's handler
+## because the two shelves want exactly the same treatment -- the signature
+## covers both, so this is one comparison when nothing changed.
+func _on_library_changed(_items: Array) -> void:
+	_on_wishlist_changed([])
+
+
+# ---------------------------------------------------------------------------
+# The QR sign-in
+# ---------------------------------------------------------------------------
+
+## A on the store tab while nobody is signed in. The service starts (or keeps)
+## a QR session and this panel draws whatever it narrates.
+func _open_signin() -> void:
+	_set_mode(MODE_SIGNIN)
+	Steamfront.request_signin()
+	_render_signin()
+	ShellLog.info("storefront sign-in panel opened")
+
+
+## What the panel shows right now: the code if one is on disk, and the seam's
+## status word as a sentence. Re-run on every signin_changed -- which includes
+## the service rotating the code under a slow scanner, so the picture is
+## reloaded rather than cached.
+func _render_signin() -> void:
+	if _signin_pane == null:
+		return
+
+	var status := Steamfront.signin_status
+	var qr := Steamfront.qr_path()
+	_signin_qr.visible = false
+	if not qr.is_empty():
+		var image := Image.new()
+		if image.load(qr) == OK:
+			_signin_qr.texture = ImageTexture.create_from_image(image)
+			_signin_qr.visible = true
+		else:
+			# A half-written PNG mid-rotation; the next render picks up the
+			# finished one. Same contract as every art load here.
+			ShellLog.warn("steamfront: could not load %s" % qr)
+
+	if status == "approved":
+		var who := Steamfront.signin_persona
+		var line := ("Signed in as %s" % who) if not who.is_empty() else "Signed in"
+		# THE KNOWN LIMIT, said here rather than papered over: the web token
+		# signs THE ACCOUNT in -- library, wishlist -- but not Valve's client,
+		# and downloads run through the client. Its own login screen has its
+		# own QR, one time. Only said when it applies.
+		if not Steamfront.signin_client_signed_in:
+			line += ". Before the first download, the Steam client itself still needs its own one-time sign-in."
+		_signin_line.text = line
+		_signin_line.add_theme_color_override("font_color", TvTheme.TEXT_SECONDARY)
+	elif (status.is_empty() or status == "starting") and Steamfront.state == "offline":
+		# The service answers an offline signin through the STATE file and
+		# leaves signin.json alone -- there is no session to narrate -- so
+		# without this line the panel would say "Getting a code" forever on a
+		# machine with no network. Same first-class-render rule as the grid.
+		_signin_line.text = "No network -- signing in needs one"
+		_signin_line.add_theme_color_override("font_color", TvTheme.TEXT_ALERT)
+	else:
+		_signin_line.text = str(SIGNIN_LINES.get(status, SIGNIN_LINES[""]))
+		_signin_line.add_theme_color_override("font_color",
+			TvTheme.TEXT_ALERT if SIGNIN_ALERT_STATES.has(status) else TvTheme.TEXT_SECONDARY)
+
+	# WHAT THE PANE ACTUALLY DREW, for the invisible harness -- the status
+	# word and whether a code is up, never the persona.
+	ShellLog.info("storefront sign-in panel: %s, %s"
+		% [status if not status.is_empty() else "starting",
+			"code on screen" if _signin_qr.visible else "no code"])
+
+
+## The scan moving. Only the panel redraws unless it ended in an approval, in
+## which case the account, the library and the wishlist are all newly askable.
+func _on_signin_changed(status: String, _persona: String, _client: bool) -> void:
+	if _mode == MODE_SIGNIN:
+		_render_signin()
+		_refresh_hints()
+	if status == "approved":
+		# Through _refresh_front, which is the SAME path a normal screen visit
+		# takes rather than a burst of three ad-hoc requests: the seam holds one
+		# request file, so three writes in a frame would leave only the last,
+		# and this routes the re-ask through the established mechanism that
+		# already cycles featured/account/wishlist/library across polls. It
+		# also rebuilds the grid, so the library shelf appears the moment
+		# library.json (which the service invalidated on approval) lands. The
+		# person may still be on the QR panel reading the approved line; the
+		# shelves build behind it and are there when B returns to the store.
+		_refresh_front()
+
+
 func _on_front_state_changed(_state: String, _detail: String) -> void:
 	_refresh_front_status()
 	if _mode == MODE_DETAIL:
 		_render_detail()
+	# The QR panel borrows the state word for exactly one sentence -- the
+	# offline one -- so it redraws when the word moves. See _render_signin.
+	if _mode == MODE_SIGNIN:
+		_render_signin()
 
 
 func _on_app_changed(appid: int, _details: Dictionary) -> void:
@@ -1357,6 +1588,8 @@ func _set_mode(mode: int) -> void:
 	_mode = mode
 	if _detail != null:
 		_detail.visible = mode == MODE_DETAIL
+	if _signin_pane != null:
+		_signin_pane.visible = mode == MODE_SIGNIN
 	_refresh_page_chrome()
 	_refresh_front_status()
 	_refresh_hints()
@@ -1379,27 +1612,41 @@ func _set_mode(mode: int) -> void:
 ##   failed is the opposite: it is the only place that says so, and hiding it to
 ##   tidy the card would be hiding the one line somebody needs.
 func _refresh_page_chrome() -> void:
-	var detail := _mode == MODE_DETAIL
+	# The detail view and the QR panel both take the pane to themselves, so
+	# every line of store chrome steps aside for either.
+	var swapped := _mode == MODE_DETAIL or _mode == MODE_SIGNIN
 	var storefront := _front_available()
 
 	if _page_title != null:
-		_page_title.visible = not detail and not storefront
+		_page_title.visible = not swapped and not storefront
 	if _page_tagline != null:
-		_page_tagline.visible = not detail and not storefront
+		_page_tagline.visible = not swapped and not storefront
 	if _page_status != null:
-		_page_status.visible = not detail and (not storefront or _status_is_news)
+		_page_status.visible = not swapped and (not storefront or _status_is_news)
 
 	if _account_line != null:
-		_account_line.visible = not detail and storefront
+		_account_line.visible = not swapped and storefront
 		if _account_line.visible:
 			# THE SIGN-IN PROMPT IS NOT A FORM, and this line is the whole of the
 			# account boundary on this screen. Nothing here takes a password:
-			# pressing A opens Valve's client, which is where signing in belongs
-			# for the same reason buying does. See the file header.
-			_account_line.text = ("Signed in as %s" % Steamfront.account_persona) \
-				if Steamfront.account_signed_in and not Steamfront.account_persona.is_empty() \
-				else ("Signed in" if Steamfront.account_signed_in
-					else "Not signed in -- A opens Steam, where you can sign in")
+			# pressing A shows a QR code and the approval happens inside Valve's
+			# app on the person's own phone. See _build_signin and the file
+			# header.
+			#
+			# THREE STATES, because a signed-in client is not the same as library
+			# access. A web token is what fetches the owned games, so a machine
+			# with only a client account is told, truthfully, that A adds their
+			# library here -- the door to the scan that a "Signed in as X" alone
+			# would have hidden.
+			if Steamfront.web_signed_in():
+				_account_line.text = ("Signed in as %s" % Steamfront.account_persona) \
+					if not Steamfront.account_persona.is_empty() else "Signed in"
+			elif Steamfront.account_client_signed_in:
+				_account_line.text = (("Signed in as %s on the Steam client" % Steamfront.account_persona) \
+					if not Steamfront.account_persona.is_empty() else "Signed in on the Steam client") \
+					+ " -- A adds your library here"
+			else:
+				_account_line.text = "Not signed in -- A shows a code to scan with your phone"
 
 
 ## Focus arriving on a tile IS entering the grid, and there is no key handler
@@ -1409,6 +1656,9 @@ func _refresh_page_chrome() -> void:
 ## deciding where focus goes, which is the bug class the settings list's
 ## neighbour table exists to avoid.
 func _on_tile_focused() -> void:
+	# MODE_SIGNIN cannot reach here -- the QR panel hides the scroll container
+	# so its tiles are unfocusable, and Right off the tab stays on the tab --
+	# so MODE_PAGE is the only mode a tile-focus arrives from.
 	if _mode == MODE_PAGE:
 		# Which grid it is depends on what is IN it, not on how focus got here:
 		# the left-edge doorway comes back to the tab and going right again
@@ -1672,7 +1922,11 @@ func _on_installed_changed(_apps: Array) -> void:
 func _page_action_hint() -> String:
 	if not _selected_installed():
 		return HINT_INSTALL
-	if not Steamfront.account_signed_in:
+	# THE WEB TOKEN, not "signed in", is what gates this. A machine whose Steam
+	# client is signed in but which never scanned a QR has no library, so it is
+	# still offered the scan -- keying on account_signed_in here is what made
+	# the library unreachable for exactly those users.
+	if not Steamfront.web_signed_in():
 		return HINT_SIGN_IN
 	# NOTHING TO BROWSE ADVERTISES NOTHING. An empty string here makes the hint
 	# row skip A entirely, which is the truthful rendering of a state where A
@@ -1690,17 +1944,29 @@ func _on_store_opened(entry: Dictionary) -> void:
 	# `flatpak run` regardless, which failed in milliseconds and left the page
 	# exactly as it was, so the button read as broken.
 	#
-	# NOT SIGNED IN -- the ONE remaining reason this shell opens Big Picture on
-	# purpose. A password is Valve's to collect and this shell will never have a
-	# field for one, so the honest button hands over to the client and stops.
+	# NOT SIGNED IN -- A shows the QR panel. See below for what this replaced.
 	#
 	# SIGNED IN -- A goes into the shelves. It used to open Big Picture on
 	# Valve's storefront, which is the page this panel already draws, at this
 	# shell's fidelity, with this shell's pad. Spending the button on a second
 	# copy of what is on screen was the last habit left over from when this
 	# screen could only describe a store instead of being one.
+
+	# Already on the QR panel: A retries a dead code and otherwise does
+	# nothing, because the next move is on the phone, not the pad.
+	if _mode == MODE_SIGNIN:
+		if SIGNIN_ALERT_STATES.has(Steamfront.signin_status):
+			Steamfront.request_signin()
+			_render_signin()
+			ShellLog.info("storefront sign-in retried")
+		return
+
 	var app_id := str(entry.get("app_id", ""))
-	if _selected_installed() and Steamfront.account_signed_in and not _tiles.is_empty():
+	# Web-signed-in with something to browse -- go into the shelves. Keyed on
+	# the web token, not on account_signed_in: a client-only account still owes
+	# the person a sign-in (below), because that is what fetches the library
+	# the shelves would show.
+	if _selected_installed() and Steamfront.web_signed_in() and not _tiles.is_empty():
 		var first: Control = _tiles[0]
 		first.grab_focus()
 		return
@@ -1722,23 +1988,26 @@ func _on_store_opened(entry: Dictionary) -> void:
 			_page_status.add_theme_color_override("font_color", TvTheme.TEXT_SECONDARY)
 		return
 
-	# Signed in with nothing to browse: A does NOTHING, on purpose, and quietly.
-	# The status line above is already explaining why the grid is empty; the old
-	# behaviour here opened Big Picture's store page, which in this state (it is
-	# nearly always a machine with no network) was equally empty and drawn by
-	# the one client this screen exists to keep off the television.
-	if Steamfront.account_signed_in:
+	# Web-signed-in with nothing to browse: A does NOTHING, on purpose, and
+	# quietly. The status line above is already explaining why the grid is
+	# empty; the old behaviour here opened Big Picture's store page, which in
+	# this state (it is nearly always a machine with no network) was equally
+	# empty and drawn by the one client this screen exists to keep off the
+	# television.
+	if Steamfront.web_signed_in():
 		ShellLog.info("A on the store tab with nothing to browse; the status line says why")
 		return
 
-	# Installed but signed out -- THE ONE REMAINING CLIENT DOOR, kept until the
-	# QR sign-in flow replaces it: a password is Valve's to collect, and today
-	# the client is the only surface that can collect it. Through the launch
-	# seam like every launch; when the client quits, this page is what the
-	# person lands back on -- by which point the account line above the shelves
-	# will have noticed the sign-in, because the seam re-reads Steam's
-	# loginusers.vdf on every visit to this screen.
-	Launcher.launch(entry)
+	# No web token -- THE QR PANEL, and this is the door that used
+	# to open Big Picture. It was the last deliberate client launch on this
+	# screen, kept because a password was Valve's to collect and the client
+	# was the only surface that could collect one. The QR handshake removed
+	# the premise: the phone that already holds a Steam session is the surface
+	# now, the television only shows a code, and NO STEAM UI EVER APPEARS --
+	# which closes the final exception to that rule. The password still exists
+	# nowhere near this machine; what changed is that Valve's app collects the
+	# approval instead of Valve's client collecting the password.
+	_open_signin()
 
 
 ## Deaf while a launch is up. The launched client owns the screen, but the
@@ -1841,7 +2110,9 @@ func _unhandled_input(event: InputEvent) -> void:
 	# goes deaf the whole time that keyboard is up (see _open_search), so the two
 	# uses of the button can never both be live.
 	if event.is_action_pressed("ui_shell_y"):
-		if _mode == MODE_DETAIL or not _front_available():
+		# Not over the QR either: a keyboard sliding over a code somebody's
+		# phone is mid-scan of would be the screen changing under the camera.
+		if _mode == MODE_DETAIL or _mode == MODE_SIGNIN or not _front_available():
 			return
 		get_viewport().set_input_as_handled()
 		_open_search()
@@ -1872,6 +2143,18 @@ func _unhandled_input(event: InputEvent) -> void:
 	# meaning is returning.
 	if _mode == MODE_SEARCH:
 		_leave_search()
+		return
+	# The QR panel folds back to the store page. The service's session keeps
+	# polling in the background on purpose: a person who closes the panel
+	# after scanning but before the phone finished asking is still mid-sign-in,
+	# and the approval landing a moment later is a success, not a surprise --
+	# the account line and the hint row pick it up through account_changed.
+	if _mode == MODE_SIGNIN:
+		_set_mode(MODE_PAGE)
+		var signin_tab := _selected_tab()
+		if signin_tab != null:
+			signin_tab.grab_focus()
+		ShellLog.info("storefront sign-in panel closed")
 		return
 	if _mode == MODE_GRID:
 		_set_mode(MODE_PAGE)

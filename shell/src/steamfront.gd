@@ -56,6 +56,17 @@ signal account_changed(signed_in: bool, persona: String)
 ## Emitted when the wishlist shelf changes, including to and from empty.
 signal wishlist_changed(items: Array)
 
+## Emitted when the QR sign-in's progress file changes. Status words from the
+## service: "starting", "waiting", "approved", "expired", "failed", plus ""
+## for "no sign-in has ever run". `client_signed_in` rides along because the
+## approved sentence depends on it -- a web token cannot start a download on
+## a Steam client that has never itself signed in, and the panel says so
+## rather than letting the first install fail mysteriously.
+signal signin_changed(status: String, persona: String, client_signed_in: bool)
+
+## Emitted when the library shelf changes, including to and from empty.
+signal library_changed(items: Array)
+
 ## Matches every other seam here. The service answers a cached request in one
 ## poll and a cold one in a second or two; two seconds is the latency of the
 ## screen noticing either.
@@ -117,16 +128,47 @@ var search_term: String = ""
 var account_signed_in := false
 var account_persona := ""
 
+## Which identity answered: "web" when a QR token exists (the one that unlocks
+## the library), "client" when Steam's own client is the only account, "" for
+## nobody. The store screen keys its "offer a sign-in" decision on this rather
+## than on account_signed_in, so a client-signed-in machine with no QR token
+## is still offered the scan that would give it a library. See do_account.
+var account_source := ""
+
+## Whether Valve's own client has an account, independent of the web token. A
+## web sign-in unlocks the library and the wishlist but NOT a download -- the
+## client needs its own one-time sign-in for that -- so the shell says so
+## rather than letting a first install fail without explanation.
+var account_client_signed_in := false
+
+## Convenience: is there a QR token, i.e. library access? The store screen
+## offers a sign-in whenever this is false.
+func web_signed_in() -> bool:
+	return account_source == "web"
+
 ## The wishlist, as appids in the order Valve returned them. The ITEMS are
 ## assembled from the per-app detail cache -- see wishlist_items -- because the
 ## wishlist endpoint returns appids and nothing else.
 var wishlist_appids: Array = []
+
+## The QR sign-in's progress, mirroring signin.json. "" until one has run.
+var signin_status := ""
+var signin_persona := ""
+var signin_client_signed_in := false
+
+## The owned library as {"appid", "name"} items, most recently played first --
+## the order and the fields are the service's, see do_library for why names
+## live here where the wishlist stores bare appids. A library item has no
+## price on purpose: the person owns it.
+var library_entries: Array = []
 
 var _loaded := false
 var _last_featured_raw := ""
 var _last_search_raw := ""
 var _last_account_raw := ""
 var _last_wishlist_raw := ""
+var _last_signin_raw := ""
+var _last_library_raw := ""
 
 ## Detail pages already read off disk, keyed by appid. A cache of file contents
 ## rather than of network answers -- the service owns freshness, and re-reading
@@ -173,6 +215,11 @@ func _ready() -> void:
 	# whose Steam this is and what was on their list last time it looked.
 	_load_account()
 	_load_wishlist()
+	# The library too -- it is the same kind of reboot-surviving answer -- and
+	# the sign-in progress, which on a fresh boot is whatever the service
+	# settled it to (a restart expires any QR that was mid-scan).
+	_load_library()
+	_load_signin()
 
 
 # ---------------------------------------------------------------------------
@@ -198,6 +245,25 @@ func request_account() -> void:
 ## which is a state, not a failure.
 func request_wishlist() -> void:
 	_write_request(["wishlist"])
+
+
+## Begin a QR sign-in. The service renders the challenge into qr.png, polls
+## Valve until a phone approves, and narrates through signin.json -- see
+## signin_changed. Asking again while one is up is answered with the QR
+## already on screen, so a bounced button cannot start a second session.
+##
+## NO CREDENTIAL EVER CROSSES THIS SEAM. The shell's whole part is drawing a
+## picture and reading status words; the approval happens on the person's
+## phone and the token lands root-side where this process cannot read it.
+func request_signin() -> void:
+	_write_request(["signin"])
+
+
+## Ask for the signed-in account's owned games. Answered from disk for an hour
+## like the front page, and answered with an empty shelf when nobody has
+## scanned a QR -- which is a state, not a failure.
+func request_library() -> void:
+	_write_request(["library"])
 
 
 ## Search Valve's store for a term somebody typed on the keyboard.
@@ -274,6 +340,14 @@ func _write_request(fields: Array) -> void:
 # ---------------------------------------------------------------------------
 
 func _poll() -> void:
+	# THE SIGN-IN FILE IS READ ON EVERY POLL, unlike everything else here, and
+	# the reason is that it moves without the state file moving: the background
+	# job narrates a scan that takes as long as a person takes to find their
+	# phone, and the main loop's one-word state was already `done signin` the
+	# whole time. The raw-text comparison inside makes the steady state one
+	# small file read per poll, which is the same price as the state line.
+	_load_signin()
+
 	var line := _read_line(_state_path)
 	var word := line.get_slice("\t", 0).strip_edges()
 	var rest := ""
@@ -303,6 +377,8 @@ func _poll() -> void:
 		_load_account()
 	elif detail == "wishlist":
 		_load_wishlist()
+	elif detail == "library":
+		_load_library()
 	elif detail.begins_with("app."):
 		var appid := int(detail.substr(4))
 		if appid > 0:
@@ -428,13 +504,19 @@ func _load_account() -> void:
 
 	var signed_in := false
 	var persona := ""
+	var source := ""
+	var client := false
 	var parsed = JSON.parse_string(raw)
 	if parsed is Dictionary:
 		signed_in = bool(parsed.get("signed_in", false))
 		persona = str(parsed.get("persona", ""))
+		source = str(parsed.get("source", ""))
+		client = bool(parsed.get("client_signed_in", false))
 
 	account_signed_in = signed_in
 	account_persona = persona
+	account_source = source
+	account_client_signed_in = client
 	# WHETHER, never WHO, matching the service: a display name is somebody's and
 	# the journal is not where it goes.
 	ShellLog.info("steamfront: Steam is %s"
@@ -462,6 +544,80 @@ func _load_wishlist() -> void:
 	ShellLog.info("steamfront: %d wishlist appid(s), %d with a page to draw"
 		% [wishlist_appids.size(), items.size()])
 	wishlist_changed.emit(items)
+
+
+## The QR sign-in's progress, from disk. Re-read every poll -- see _poll for
+## why -- with the raw comparison keeping the steady state to one file read.
+func _load_signin() -> void:
+	var raw := _read_file(_front_dir.path_join("signin.json"))
+	if raw == _last_signin_raw:
+		return
+	_last_signin_raw = raw
+
+	var status := ""
+	var persona := ""
+	var client := false
+	var parsed = JSON.parse_string(raw)
+	if parsed is Dictionary:
+		status = str(parsed.get("status", ""))
+		persona = str(parsed.get("persona", ""))
+		client = bool(parsed.get("client_signed_in", false))
+
+	signin_status = status
+	signin_persona = persona
+	signin_client_signed_in = client
+	# The STATUS and never the persona, matching every other line here: a
+	# display name is somebody's and the journal is not where it goes.
+	ShellLog.info("steamfront: sign-in is %s"
+		% (signin_status if not signin_status.is_empty() else "not running"))
+	signin_changed.emit(signin_status, signin_persona, signin_client_signed_in)
+
+
+## The library's items, from disk. Unlike the wishlist these arrive whole --
+## appid and name in the file, no detail-page assembly -- because the service
+## stores what one GetOwnedGames call already carries. See do_library.
+func _load_library() -> void:
+	var raw := _read_file(_front_dir.path_join("library.json"))
+	if raw == _last_library_raw:
+		return
+	_last_library_raw = raw
+
+	var found: Array = []
+	var parsed = JSON.parse_string(raw)
+	if parsed is Dictionary:
+		for item in parsed.get("items", []):
+			if not (item is Dictionary):
+				continue
+			var appid := int(item.get("appid", 0))
+			var name := str(item.get("name", ""))
+			# The shelves' two-field floor: no appid cannot be opened, no name
+			# cannot be read.
+			if appid <= 0 or name.is_empty():
+				continue
+			found.append({"appid": appid, "name": name})
+	elif not raw.strip_edges().is_empty():
+		ShellLog.warn("steamfront: the stored library is not in a shape this shell knows")
+
+	library_entries = found
+	ShellLog.info("steamfront: %d owned game(s) in the library" % library_entries.size())
+	library_changed.emit(library_entries)
+
+
+## The library as drawable items. Already drawable as stored -- a tile wants
+## an appid, a name and no price -- so this is a copy of the list rather than
+## an assembly. It exists as a function so the screen's shelf-building code
+## treats the wishlist and the library the same way.
+func library_items() -> Array:
+	return library_entries.duplicate()
+
+
+## The sign-in QR, or empty while there is none to draw. Resolved at draw time
+## for art_path's reason: the picture appears a second or two after the
+## request and vanishes when the scan settles, and only the disk knows which
+## state it is in right now.
+func qr_path() -> String:
+	var path := _front_dir.path_join("qr.png")
+	return path if FileAccess.file_exists(path) else ""
 
 
 ## The wishlist as drawable items, assembled from the per-app detail cache.

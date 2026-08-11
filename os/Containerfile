@@ -422,6 +422,7 @@ RUN --mount=type=cache,dst=/var/cache/libdnf5,sharing=locked \
         gamescope \
         cage \
         xdotool \
+        qrencode \
         xterm \
         dejavu-sans-mono-fonts \
         sudo \
@@ -749,6 +750,7 @@ RUN set -euxo pipefail; \
     chmod 0755 /usr/lib/marwanos/usbmount; \
     chmod 0755 /usr/lib/marwanos/storeart; \
     chmod 0755 /usr/lib/marwanos/steamfront; \
+    chmod 0755 /usr/lib/marwanos/steamproto; \
     : "shipped-apps is deliberately NOT in the 0755 list: it is data both"; \
     : "appctl and storeart read, not a program, and the find above has"; \
     : "already normalised it to 0644."; \
@@ -1049,6 +1051,21 @@ RUN set -euxo pipefail; \
     : "did not answer -- both silently, at runtime, on a machine with no"; \
     : "console to ask why."; \
     command -v jq; \
+    : "THE QR SIGN-IN'S THREE LIMBS, each of which fails silently at runtime"; \
+    : "if missing. qrencode draws the challenge the person's phone scans --"; \
+    : "installed by this file's own dnf line, asserted because without it the"; \
+    : "sign-in panel is a wash where a QR should be. python3 runs steamproto,"; \
+    : "the protobuf encoder Valve's auth endpoints require; it arrives from"; \
+    : "the BASE IMAGE like jq does, which is exactly why it is asserted --"; \
+    : "a base bump that dropped it would turn every sign-in and library"; \
+    : "request into a permanent failure with no console to say so. py_compile"; \
+    : "is the same class of check as bash -n on the shell scripts: a syntax"; \
+    : "error must fail the build, not the first scan on somebody's bench."; \
+    command -v qrencode; \
+    command -v python3; \
+    test -x /usr/lib/marwanos/steamproto; \
+    python3 -m py_compile /usr/lib/marwanos/steamproto; \
+    rm -rf /usr/lib/marwanos/__pycache__; \
     : "xprop is how the shell marks its window GAMESCOPE_EXTERNAL_OVERLAY so"; \
     : "gamescope layers it over games; the base image happens to ship it today,"; \
     : "and a base bump that dropped it would silently break overlay stacking."; \

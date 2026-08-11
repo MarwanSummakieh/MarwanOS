@@ -401,6 +401,15 @@ const STORE_SHELF_GAP := 18
 ## the invisible harness catches that the journal never will.
 const STORE_DETAIL_ART_HEIGHT := 300
 
+## The sign-in QR, drawn square because a QR is one. Sized against the same
+## budget as the detail art above -- it lives in the same pane -- and against
+## what the picture is FOR: a phone camera across a living room wants modules
+## it can resolve, and marwanos-steamfront renders them eight pixels each, so
+## ~300 is close to the PNG's native size and the nearest-neighbour scale
+## stays crisp. Smaller would blur modules together; the camera loses before
+## the eye does.
+const STORE_QR_SIZE := 300
+
 ## A discount, and the one place in this file where a hue carries meaning. It
 ## is deliberately NOT the only channel: the tile says "was $59.99 (-70%)" in
 ## words underneath, so the colour is emphasis on a fact already stated rather

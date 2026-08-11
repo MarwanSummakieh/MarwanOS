@@ -28,12 +28,17 @@
 #                     /var/marwanos/store/front/<name>.json  normalised results
 #                     /var/marwanos/store/front/art/*.jpg    the pictures
 #
-# The two requests are:
+# The requests are:
 #
 #   featured                  the front page: three categories of games
 #   app<TAB><appid>           one game's detail, for the panel's sub-view
+#   account                   who Steam is signed in as (local, no network)
+#   wishlist                  the signed-in account's wishlist, as a shelf
+#   search<TAB><term>         one store search
+#   signin                    begin a QR sign-in session (see THE QR SIGN-IN)
+#   library                   the signed-in account's owned games, as a shelf
 #
-# and `<name>` is `featured` or `app.<appid>`. Nothing else is honoured, the
+# and `<name>` is the verb, or `app.<appid>`. Nothing else is honoured, the
 # appid must be digits, and no part of a request is ever interpolated into a
 # shell string or into a path before it has been checked -- the same rule
 # appctl's allow-list enforces, expressed here as a character class because the
@@ -76,6 +81,42 @@
 # a live URL in a file it reads is an invitation for a later change to make it
 # one that does.
 #
+# THE QR SIGN-IN, and where the credential boundary now sits. Steam's owned-
+# games endpoints want authentication, and the one way to get it without a
+# password field is the same QR handshake Valve's own clients use:
+# BeginAuthSessionViaQR returns a challenge URL, the person scans it with the
+# Steam app on their phone, approves there, and PollAuthSessionStatus hands
+# back a refresh token. The password never exists anywhere near this machine
+# -- the phone that already holds the session is the thing that vouches.
+#
+# WHAT THE SHELL SEES OF THAT: a PNG and a status word. The challenge URL is
+# rendered by qrencode into front/qr.png (the same shell-readable picture
+# channel as the capsules) and progress goes through front/signin.json. The
+# REFRESH TOKEN ITSELF lands root-side at
+#
+#   /var/marwanos/secrets/steam-refresh.<steamid64>.token   (0600, dir 0700)
+#
+# and never appears in the journal, in a state file, or anywhere the player
+# uid can read. It is a real credential -- it mints access tokens for the
+# account's private data -- and the whole design of this seam is that the
+# shell renders results and holds nothing worth stealing.
+#
+# The protobuf wire encoding these three endpoints speak lives in the sibling
+# helper /usr/lib/marwanos/steamproto; see its docstring for why it is
+# hand-rolled and why secrets cross into it on stdin rather than argv.
+#
+# MULTI-USER IS "NEWEST TOKEN WINS". Each person scans with their own phone
+# and each approval writes its own token file; the most recently written one
+# is the active account for the library and the wishlist. Signing in again is
+# how you switch. Nothing here ever deletes another person's token.
+#
+# WHAT THIS DOES NOT DO, stated rather than papered over: a web token does
+# not log the Steam CLIENT in. Downloads run through the client, so a brand-
+# new account's first download still needs the client's own one-time sign-in
+# (the client's login screen has its own QR). This service does NOT write
+# tokens into Valve's config.vdf/loginusers.vdf -- that file format is
+# Valve's, undocumented, and holds other people's sessions.
+#
 # Phase 1 note: marwand owns catalogue data, and this seam goes the way of
 # storeart and appscan when it does.
 #
@@ -115,6 +156,20 @@ API_WISHLIST='https://api.steampowered.com/IWishlistService/GetWishlist/v1/'
 API_FEATURED='https://store.steampowered.com/api/featuredcategories'
 API_APP='https://store.steampowered.com/api/appdetails'
 API_SEARCH='https://store.steampowered.com/api/storesearch/'
+
+## The QR sign-in's three endpoints and the owned-games one behind them. The
+## auth trio speak protobuf (see /usr/lib/marwanos/steamproto); GetOwnedGames
+## answers plain JSON once it is handed an access token.
+API_AUTH_BEGIN='https://api.steampowered.com/IAuthenticationService/BeginAuthSessionViaQR/v1/'
+API_AUTH_POLL='https://api.steampowered.com/IAuthenticationService/PollAuthSessionStatus/v1/'
+API_AUTH_TOKEN='https://api.steampowered.com/IAuthenticationService/GenerateAccessTokenForApp/v1/'
+API_OWNED='https://api.steampowered.com/IPlayerService/GetOwnedGames/v1/'
+
+PROTO=/usr/lib/marwanos/steamproto
+
+## Where refresh tokens live: root-owned, 0700 directory, 0600 files, and
+## nothing under it is ever printed. See THE QR SIGN-IN in the header.
+SECRETS_DIR=/var/marwanos/secrets
 
 ## THE CATEGORIES, and this is a judgement made against the real response rather
 ## than from the endpoint's documentation (there is none). What comes back is
@@ -177,6 +232,28 @@ SEARCH_CACHE_SECONDS=60
 ## an arbitrarily long URL.
 SEARCH_TERM_MAX=64
 
+## How long a QR sign-in waits for a phone before giving up. Five minutes is
+## generous for "find your phone, open the Steam app, point it at the TV", and
+## a bound matters: the poll loop is a network call every few seconds against
+## somebody else's endpoint, and an abandoned QR should not turn into an
+## all-night drip of them.
+SIGNIN_TIMEOUT=300
+
+## The floor under the poll interval. Valve's begin answer names its own
+## interval and it has been measured at ONE second -- polite for their native
+## clients, but this is an appliance leaning on a public endpoint, and a
+## person walking to find their phone does not notice the difference between
+## one second and three.
+SIGNIN_POLL_FLOOR=3
+
+## How many library capsules one library fetch will download. A library can be
+## hundreds of games where a shelf is eight, so the art is PAGINATED ACROSS
+## VISITS rather than fanned out: pictures already on disk cost a stat and are
+## skipped, so each fetch reaches this many games deeper into the list. The
+## list is ordered most-recently-played first, which is what makes the first
+## page of it the page a person actually recognises.
+LIBRARY_ART_BOUND=24
+
 ## How often to look for a request. Matches the other three seams: a person has
 ## just pressed a button and is watching the screen.
 POLL=0.5
@@ -206,6 +283,13 @@ install -d -m 0700 -o player -g player "$REQ_DIR" \
 # other seam. Created here too so a run never depends on which got there first.
 install -d -m 0755 /var/marwanos/store "$FRONT_DIR" "$ART_DIR" \
     || { err "cannot create $FRONT_DIR -- there is nowhere to put a storefront"; exit 1; }
+# 0700 root-owned, matching tmpfiles.d: refresh tokens live here and nothing
+# that is not root has any business listing the directory, let alone reading a
+# file in it. FATAL for the request directory's reason -- a sign-in that could
+# never store its token would look approved on the phone and signed out on the
+# television, forever.
+install -d -m 0700 "$SECRETS_DIR" \
+    || { err "cannot create $SECRETS_DIR -- a sign-in would have nowhere to keep its token"; exit 1; }
 
 
 ## One word plus a detail, for the shell to render. Atomic via rename, the same
@@ -639,6 +723,42 @@ steam_account() {
 }
 
 
+## The SteamID64 of the newest refresh token on disk, or return 1 for "nobody
+## has scanned a QR here". Newest-wins is the whole multi-user policy -- see
+## THE QR SIGN-IN in the header -- and mtime is what "newest" means, because
+## the file is written exactly once, at the moment of approval.
+##
+## The id comes out of a FILENAME rather than a file, and the filename was
+## built by this service from a JWT subject steamproto had already checked --
+## but it is re-checked here anyway, digits and length both, because this
+## value goes into a URL and "root wrote it earlier" is a weaker property than
+## "it is seventeen digits right now".
+web_token_steamid() {
+    # A glob and `-nt`, NOT `ls -t | head`: under pipefail, head closing the
+    # pipe early SIGPIPEs ls (exit 141), and the `|| newest=""` then throws
+    # away a perfectly good answer -- a signed-in machine reporting nobody. The
+    # loop opens no pipe. SECRETS_DIR is root-owned 0700 holding this service's
+    # own writes, so these are our filenames, not hostile ones.
+    local newest="" f
+    for f in "$SECRETS_DIR"/steam-refresh.*.token; do
+        # The literal pattern when nothing matches -- nullglob is not set.
+        [ -e "$f" ] || continue
+        if [ -z "$newest" ] || [ "$f" -nt "$newest" ]; then
+            newest="$f"
+        fi
+    done
+    [ -n "$newest" ] || return 1
+    local id="${newest##*/steam-refresh.}"
+    id="${id%.token}"
+    case "$id" in
+        ''|*[!0-9]*) return 1 ;;
+        ?????????????????) ;;
+        *) return 1 ;;
+    esac
+    printf '%s' "$id"
+}
+
+
 ## Publish who is signed in. LOCAL ONLY -- this touches no network at all, which
 ## is why it runs before the online check rather than after it: a machine with no
 ## network still knows perfectly well whose Steam is installed on it, and a card
@@ -646,37 +766,83 @@ steam_account() {
 ## something it can see.
 ##
 ##   { "request": "account", "fetched": <epoch>, "signed_in": true,
-##     "steamid": "765611…", "persona": "Marwan" }
+##     "steamid": "765611…", "persona": "Marwan",
+##     "source": "client", "client_signed_in": true }
 ##
 ## `signed_in: false` with no other fields is a real answer and the common one on
 ## a fresh machine.
+##
+## TWO SOURCES, AND THE WEB TOKEN WINS -- which is the opposite of the first
+## draft, and the reason is the library. The web token is the only identity
+## that unlocks GetOwnedGames, so it is the one the shell must key its "offer a
+## sign-in" decision on: a machine whose CLIENT is signed in but which never
+## scanned a QR has no library access, and if `source` said "client" there the
+## shell would think it was done and never offer the scan that would fix it.
+## So `source` is "web" whenever a token exists, "client" only when that is the
+## sole account, and `client_signed_in` rides alongside as a SEPARATE fact --
+## the shell needs it because a web token cannot start a download on a client
+## that has never itself signed in, and the honest UI for that is a sentence,
+## not a silent failure. The web persona is the account name captured at
+## approval, from the secrets directory's root-only sidecar rather than
+## anything the player uid can write.
 do_account() {
-    local found steamid="" persona="" body
+    local found body
+    local client_id="" client_persona=""
+    local web_id="" web_persona=""
+    local steamid="" persona="" source="" client_signed_in=false
 
     if found="$(steam_account)"; then
-        steamid="${found%%	*}"
-        persona="${found#*	}"
-        [ "$persona" = "$found" ] && persona=""
+        client_id="${found%%	*}"
+        client_persona="${found#*	}"
+        [ "$client_persona" = "$found" ] && client_persona=""
+    fi
+    # DIGITS ONLY, the load-bearing check for everything downstream: the id is
+    # what do_wishlist puts in a URL. Seventeen is the length of every
+    # SteamID64 Valve has issued; the range test is belt and braces on top.
+    case "$client_id" in
+        ''|*[!0-9]*) client_id="" ;;
+        ?????????????????) ;;
+        *) client_id="" ;;
+    esac
+    [ -n "$client_id" ] && client_signed_in=true
+
+    # The web token's id is already shape-checked by web_token_steamid; its
+    # persona sidecar is this service's own write but is display text that
+    # originated on Valve's side, so it gets steam_account's persona treatment.
+    if web_id="$(web_token_steamid)"; then
+        web_persona="$(cat "$SECRETS_DIR/steam-persona.$web_id" 2>/dev/null)" || web_persona=""
+        web_persona="$(printf '%s' "$web_persona" | tr -d '[:cntrl:]')"
+        web_persona="${web_persona:0:64}"
+    else
+        web_id=""
     fi
 
-    # DIGITS ONLY, and this is the load-bearing check for everything downstream:
-    # the id is what do_wishlist puts in a URL. Seventeen is the length of every
-    # SteamID64 Valve has issued; the range test is belt and braces on top.
-    case "$steamid" in
-        ''|*[!0-9]*) steamid="" ;;
-        ?????????????????) ;;
-        *) steamid="" ;;
-    esac
+    # Web wins, client is the fallback. A web sign-in whose persona sidecar was
+    # lost still borrows the client's display name when the two are the same
+    # account, so the card is not left nameless over a name it could show.
+    if [ -n "$web_id" ]; then
+        steamid="$web_id"
+        source="web"
+        persona="$web_persona"
+        [ -z "$persona" ] && [ "$web_id" = "$client_id" ] && persona="$client_persona"
+    elif [ -n "$client_id" ]; then
+        steamid="$client_id"
+        source="client"
+        persona="$client_persona"
+    fi
 
     if [ -n "$steamid" ]; then
         body="$(jq -nc --arg id "$steamid" --arg persona "$persona" \
+            --arg source "$source" --argjson client "$client_signed_in" \
             --argjson now "$(date +%s)" \
             '{request: "account", fetched: $now, signed_in: true,
-              steamid: $id, persona: $persona}' 2>/dev/null)" || body=""
+              steamid: $id, persona: $persona,
+              source: $source, client_signed_in: $client}' 2>/dev/null)" || body=""
     else
         body="$(jq -nc --argjson now "$(date +%s)" \
             '{request: "account", fetched: $now, signed_in: false,
-              steamid: "", persona: ""}' 2>/dev/null)" || body=""
+              steamid: "", persona: "",
+              source: "", client_signed_in: false}' 2>/dev/null)" || body=""
     fi
 
     if [ -z "$body" ]; then
@@ -712,11 +878,15 @@ do_account() {
 ## wishlist answers `{"response":{}}`, which reads here as an empty shelf --
 ## correct, and the same rendering as having no wishlist at all.
 ##
-## THE OWNED LIBRARY IS DELIBERATELY NOT HERE, and not because of the key. Every
-## installed Steam game is ALREADY on the home rail: marwanos-appscan reads the
-## appmanifests and emits a card each. A "your library" shelf on the store card
-## would be the machine's own library listed a second time, which is the exact
-## thing stores_screen.gd's header says the deleted apps shelf was removed for.
+## THE OWNED LIBRARY IS NOT FETCHED HERE, and the reason has changed since this
+## paragraph was first written. It used to say the library was deliberately
+## absent because every installed game is already on the home rail -- which is
+## still true of INSTALLED games, but an account owns games this disk has never
+## seen, and those are exactly what a person wants a library shelf for. The QR
+## sign-in's token is what unlocked them (GetOwnedGames wants authentication;
+## the wishlist never did), so the owned library lives in do_library below,
+## behind that token, and this endpoint stays the one part of an account that
+## is readable with a bare SteamID64.
 ##
 ## THIS IS THE ONE REQUEST THAT MAKES MORE THAN ONE CALL, and the header's rate
 ## rules are amended rather than quietly broken:
@@ -782,6 +952,391 @@ do_wishlist() {
     publish wishlist "$body" || { state failed "cannot write"; return; }
     info "wishlist: $count item(s), $fetched page(s) newly fetched"
     state "done" wishlist
+}
+
+
+# ---------------------------------------------------------------------------
+# signin
+# ---------------------------------------------------------------------------
+
+## Progress for the shell's QR panel, as one small file:
+##
+##   { "request": "signin", "fetched": <epoch>, "status": "waiting",
+##     "persona": "", "client_signed_in": false }
+##
+## Status words: starting, waiting, approved, expired, failed. `persona` is
+## filled only on approved. `client_signed_in` rides along because the panel's
+## approved sentence depends on it -- see THE QR SIGN-IN in the header for the
+## limit it narrates. `fetched` moves on every publish, which is also what
+## tells the shell a rotated QR is worth re-reading (see do_signin_job).
+signin_publish() {
+    local status="$1" persona="${2:-}"
+    local client=false
+    steam_account >/dev/null 2>&1 && client=true
+    local body
+    body="$(jq -nc --arg status "$status" --arg persona "$persona" \
+        --argjson client "$client" --argjson now "$(date +%s)" \
+        '{request: "signin", fetched: $now, status: $status,
+          persona: $persona, client_signed_in: $client}' 2>/dev/null)" || body=""
+    [ -n "$body" ] || { err "could not describe the sign-in"; return 1; }
+    publish signin "$body"
+}
+
+
+## The challenge URL as a picture, atomically, 0644 into the same shell-
+## readable channel every other storefront picture uses.
+##
+## ONLY s.team CHALLENGES ARE RENDERED, and the check is fetch_art's host
+## allow-list argument wearing a different coat: the URL comes out of a
+## response body, and a QR code is an instruction to somebody's PHONE -- the
+## one screen in this whole flow this shell does not control. Rendering an
+## arbitrary URL onto the television for a phone to follow is exactly the
+## shape of mistake the artwork check exists to prevent.
+render_qr() {
+    local url="$1"
+    local dest="$FRONT_DIR/qr.png" tmp="$FRONT_DIR/qr.png.tmp"
+    case "$url" in
+        https://s.team/q/*) ;;
+        *) warn "refusing to render a sign-in challenge that is not Valve's"; return 1 ;;
+    esac
+    # -s 8: eight pixels a module, which at the television's scale survives a
+    # phone camera across a living room. -m 2: the quiet zone the spec wants.
+    if ! qrencode -s 8 -m 2 -o "$tmp" "$url" 2>/dev/null; then
+        rm -f "$tmp"
+        warn "qrencode could not render the sign-in challenge"
+        return 1
+    fi
+    chmod 0644 "$tmp"
+    mv -f "$tmp" "$dest"
+}
+
+
+## Store an approved sign-in: the refresh token root-side, the account name
+## beside it for do_account, and nothing anywhere else. THE TOKEN IS THE ONE
+## REAL CREDENTIAL THIS APPLIANCE HOLDS -- it never reaches the journal, a
+## state file, an argv (steamproto reads it on stdin), or any path the player
+## uid can read. umask rather than chmod-after-write, so there is no window in
+## which the file exists more readable than it ends up.
+signin_store_token() {
+    local refresh="$1" account_name="$2" steamid
+    steamid="$(printf '%s' "$refresh" | "$PROTO" jwt-sub 2>/dev/null)" || steamid=""
+    case "$steamid" in
+        ''|*[!0-9]*) steamid="" ;;
+    esac
+    if [ -z "$steamid" ]; then
+        err "an approved sign-in carried a token this machine could not read"
+        return 1
+    fi
+
+    # Two `local`s, not one: assignments on a single local line run left to
+    # right but the second cannot see the first (shellcheck SC2318).
+    local dest="$SECRETS_DIR/steam-refresh.$steamid.token"
+    local tmp="$dest.tmp"
+    if ! ( umask 077; printf '%s' "$refresh" > "$tmp" ); then
+        rm -f "$tmp"
+        err "cannot store the sign-in token"
+        return 1
+    fi
+    mv -f "$tmp" "$dest" || { rm -f "$tmp"; err "cannot install the sign-in token"; return 1; }
+
+    # The persona sidecar, best-effort: an account whose name cannot be
+    # written still signs in, it just renders as "Signed in" with no name.
+    account_name="$(printf '%s' "$account_name" | tr -d '[:cntrl:]')"
+    account_name="${account_name:0:64}"
+    ( umask 077; printf '%s' "$account_name" > "$SECRETS_DIR/steam-persona.$steamid" ) \
+        || warn "could not keep the account name beside the token"
+
+    rm -f "$FRONT_DIR/qr.png"
+    # THE PERSONAL SHELVES ARE INVALIDATED HERE, and this is the fix for a real
+    # trap. The store screen asks for the library and the wishlist on every
+    # visit, so both were published EMPTY (nobody signed in) and their mtimes
+    # stamped -- and the hour-long cache would then serve those empty files
+    # back for an hour after this approval, so a sign-in that plainly worked
+    # would show no shelves until the cache aged out. Deleting them makes the
+    # next request a cache miss that refetches with the token that now exists.
+    rm -f "$FRONT_DIR/library.json" "$FRONT_DIR/wishlist.json"
+    # WHETHER, never who -- and above all never the token. Same journal rule
+    # as every other line in this file, applied to the one secret that matters.
+    info "a QR sign-in was approved"
+    signin_publish approved "$account_name"
+    return 0
+}
+
+
+## The whole QR session, run as a BACKGROUND job -- the one departure from
+## this service's single-threaded shape, and the reason is arithmetic: the
+## approval takes as long as a person takes to find their phone, minutes
+## against a loop that answers everything else in seconds. Blocking the loop
+## would freeze the storefront for the whole scan.
+##
+## WHAT KEEPS TWO WRITERS HONEST: this job narrates ONLY through signin.json,
+## qr.png and the secrets directory. It never touches the state file -- the
+## main loop owns that -- so the seam's one-word contract stays single-writer.
+##
+## THE POLL IS BOUNDED TWICE: by SIGNIN_TIMEOUT overall, and by the floor
+## under Valve's own interval (measured at ONE second, which is politeness
+## this appliance does not need to spend -- see SIGNIN_POLL_FLOOR).
+do_signin_job() {
+    local req resp parsed client_id challenge request_id interval
+    req="$("$PROTO" begin-req 2>/dev/null)" || req=""
+    if [ -z "$req" ]; then
+        err "could not encode a sign-in request"
+        signin_publish failed
+        return
+    fi
+    resp="$(curl -fsS --max-time "$CURL_MAX_TIME" --retry 1 \
+        --data-urlencode "input_protobuf_encoded=$req" \
+        "$API_AUTH_BEGIN" 2>/dev/null | base64 -w0)" || resp=""
+    if [ -z "$resp" ]; then
+        err "Steam's sign-in endpoint did not answer"
+        signin_publish failed
+        return
+    fi
+    parsed="$(printf '%s' "$resp" | "$PROTO" begin-resp 2>/dev/null)" || parsed=""
+    IFS=$'\t' read -r client_id challenge request_id interval <<< "$parsed"
+    if [ -z "$client_id" ] || [ -z "$challenge" ] || [ -z "$request_id" ]; then
+        err "Steam's sign-in answer could not be read"
+        signin_publish failed
+        return
+    fi
+
+    # The interval arrives as a decimal; the sleep uses whole seconds with the
+    # floor under it. See SIGNIN_POLL_FLOOR for why Valve's own number is not
+    # simply obeyed.
+    local wait_s="${interval%%.*}"
+    case "$wait_s" in ''|*[!0-9]*) wait_s=5 ;; esac
+    [ "$wait_s" -lt "$SIGNIN_POLL_FLOOR" ] && wait_s="$SIGNIN_POLL_FLOOR"
+
+    if ! render_qr "$challenge"; then
+        signin_publish failed
+        return
+    fi
+    signin_publish waiting
+    info "sign-in QR is up; waiting for a phone"
+
+    local deadline=$(( $(date +%s) + SIGNIN_TIMEOUT ))
+    local pollreq pollresp pollparsed new_challenge refresh account_name
+    local misses=0
+    while [ "$(date +%s)" -lt "$deadline" ]; do
+        sleep "$wait_s"
+
+        pollreq="$("$PROTO" poll-req "$client_id" "$request_id" 2>/dev/null)" || pollreq=""
+        if [ -z "$pollreq" ]; then
+            err "could not encode a sign-in poll"
+            rm -f "$FRONT_DIR/qr.png"
+            signin_publish failed
+            return
+        fi
+        if ! pollresp="$(curl -fsS --max-time "$CURL_MAX_TIME" \
+                --data-urlencode "input_protobuf_encoded=$pollreq" \
+                "$API_AUTH_POLL" 2>/dev/null | base64 -w0)"; then
+            # A lossy link in the middle of a scan is not a failed sign-in;
+            # three misses in a row is.
+            misses=$(( misses + 1 ))
+            if [ "$misses" -ge 3 ]; then
+                err "Steam's sign-in poll stopped answering"
+                rm -f "$FRONT_DIR/qr.png"
+                signin_publish failed
+                return
+            fi
+            continue
+        fi
+        misses=0
+
+        # An EMPTY body is protobuf for "every field is default": nothing
+        # approved, nothing rotated, keep waiting. The normal answer, most of
+        # the time.
+        [ -n "$pollresp" ] || continue
+        pollparsed="$(printf '%s' "$pollresp" | "$PROTO" poll-resp 2>/dev/null)" || continue
+        IFS=$'\t' read -r new_challenge refresh account_name <<< "$pollparsed"
+
+        if [ -n "$refresh" ]; then
+            signin_store_token "$refresh" "$account_name" || signin_publish failed
+            return
+        fi
+        if [ -n "$new_challenge" ]; then
+            # Valve rotates the challenge about every thirty seconds and a
+            # phone can only approve a live one, so the picture follows it.
+            # The re-publish is what nudges the shell to re-read the PNG.
+            render_qr "$new_challenge" && signin_publish waiting
+        fi
+    done
+
+    rm -f "$FRONT_DIR/qr.png"
+    signin_publish expired
+    info "sign-in QR expired unanswered"
+}
+
+
+## Answer a signin request: spawn the job, or point at the one already up.
+## `state done` either way -- the request was heard; everything after that is
+## signin.json's story.
+do_signin_start() {
+    if [ -n "$SIGNIN_PID" ] && kill -0 "$SIGNIN_PID" 2>/dev/null; then
+        # A second press while a QR is already on screen. The picture and the
+        # status file are both current; re-answering is what tells the shell
+        # to draw them.
+        info "a sign-in is already waiting on a phone"
+        state "done" signin
+        return
+    fi
+    signin_publish starting
+    do_signin_job &
+    SIGNIN_PID=$!
+    state "done" signin
+}
+
+
+# ---------------------------------------------------------------------------
+# library
+# ---------------------------------------------------------------------------
+
+## The signed-in account's owned games, as a shelf -- INCLUDING the ones this
+## disk has never seen, which is the whole point: the rail already shows what
+## is installed, and this is the half of the library the machine could not
+## know without asking.
+##
+##   { "request": "library", "fetched": <epoch>,
+##     "items": [ { "appid": 620, "name": "Portal 2" }, ... ] }
+##
+## NAMES ARE STORED HERE, WHERE THE WISHLIST STORES BARE APPIDS, and the
+## difference is what each endpoint gives. GetWishlist returns appids and
+## nothing else, so the wishlist shelf is assembled from per-app detail pages
+## and do_wishlist fetches the missing ones. GetOwnedGames returns every name
+## for free in the same single call -- and a library is HUNDREDS of games
+## where a wishlist is bounded at a shelf, so filling detail pages for all of
+## them would be the exact per-item fan-out the header's rate rules forbid. A
+## library tile needs a name and a picture; the detail page is still fetched
+## by do_app, once, when somebody actually opens the game.
+##
+## MOST RECENTLY PLAYED FIRST. The order is the pagination policy as much as
+## the shelf order: art is fetched for at most LIBRARY_ART_BOUND games per
+## fetch, front of the list first, skipping what is already on disk -- so
+## each visit reaches deeper, and the first page of it is the games the
+## person actually recognises. Never-played games sort by total playtime,
+## then by whatever order Valve returned.
+##
+## PRIVACY IS NOT A CASE HERE, and that is the token's doing: an access token
+## minted from the account's own refresh token sees the account's own library
+## regardless of profile privacy. No Web API key, no public-profile
+## requirement -- the QR approval on the phone is the whole of the consent.
+do_library() {
+    local steamid token tokreq tokresp access raw body count
+
+    if ! steamid="$(web_token_steamid)"; then
+        # Not an error and not a failure of the wire: nobody has scanned a QR
+        # on this machine. The honest empty answer, same as the wishlist's.
+        info "asked for a library with no QR sign-in on this machine"
+        publish library '{"request":"library","items":[]}' || true
+        state "done" library
+        return
+    fi
+
+    token="$(cat "$SECRETS_DIR/steam-refresh.$steamid.token" 2>/dev/null)" || token=""
+    if [ -z "$token" ]; then
+        err "the sign-in token file has gone missing or unreadable"
+        state failed "no token"
+        return
+    fi
+
+    # Refresh -> access. The access token lives only in this function's
+    # memory; the refresh token crosses into steamproto on STDIN and into
+    # Valve through curl's own form encoder, and neither token ever reaches a
+    # log line, an argv, or a file the shell can read.
+    tokreq="$(printf '%s' "$token" | "$PROTO" token-req "$steamid" 2>/dev/null)" || tokreq=""
+    if [ -z "$tokreq" ]; then
+        err "could not encode the token exchange"
+        state failed "token"
+        return
+    fi
+    # THE TOKEN NEVER TOUCHES ARGV. $tokreq is the base64 protobuf whose first
+    # field IS the refresh token, and /proc/<pid>/cmdline is world-readable --
+    # so a curl with it in `--data-urlencode "name=$tokreq"` would leak the one
+    # credential this appliance holds to the player uid for the life of the
+    # request. `name@-` reads the value from stdin instead, and printf feeds it
+    # with no trailing newline (a herestring would append one and corrupt the
+    # base64). This is steamproto's stdin rule extended to the wire call.
+    tokresp="$(printf '%s' "$tokreq" | curl -fsS --max-time "$CURL_MAX_TIME" --retry 1 \
+        --data-urlencode "input_protobuf_encoded@-" \
+        "$API_AUTH_TOKEN" 2>/dev/null | base64 -w0)" || tokresp=""
+    if [ -z "$tokresp" ]; then
+        err "Steam's token endpoint did not answer"
+        state failed "no answer"
+        return
+    fi
+    access="$(printf '%s' "$tokresp" | "$PROTO" token-resp 2>/dev/null)" || access=""
+    if [ -z "$access" ]; then
+        # The exchange answered and declined: the refresh token has expired or
+        # been revoked. That is "scan the QR again", not a dead wire, and the
+        # detail is worded for the person who will read it on the screen.
+        warn "Steam declined the stored sign-in; a new QR scan is needed"
+        state failed "sign in again"
+        return
+    fi
+
+    # The access token off argv too, for the refresh token's reason -- it is a
+    # shorter-lived credential but a credential, and a GET puts every other
+    # parameter in the URL where a log or a proxy could keep it. Only the token
+    # rides stdin (`@-`); the steamid is digits and the flags are constants, so
+    # those stay ordinary --data-urlencode arguments.
+    raw="$(printf '%s' "$access" | curl -fsS --max-time "$CURL_MAX_TIME" --retry 1 --get \
+        --data-urlencode "access_token@-" \
+        --data-urlencode "steamid=$steamid" \
+        --data-urlencode "include_appinfo=1" \
+        --data-urlencode "include_played_free_games=1" \
+        "$API_OWNED" 2>/dev/null)" || raw=""
+    if [ -z "$raw" ]; then
+        err "Steam's owned-games endpoint did not answer"
+        state failed "no answer"
+        return
+    fi
+
+    body="$(printf '%s' "$raw" | jq -c --argjson now "$(date +%s)" '
+        {
+            request: "library",
+            fetched: $now,
+            items: ([
+                (.response.games // [])[]
+                | select((.appid | type) == "number")
+                | select(((.name // "") | length) > 0)
+                | {appid: .appid, name: .name,
+                   last: (.rtime_last_played // 0),
+                   played: (.playtime_forever // 0)}
+            ] | sort_by(.last, .played) | reverse | map({appid, name}))
+        }' 2>/dev/null)" || body=""
+    if [ -z "$body" ]; then
+        err "Steam's owned-games answer could not be parsed"
+        state failed "unreadable answer"
+        return
+    fi
+
+    count="$(printf '%s' "$body" | jq -r '.items | length' 2>/dev/null)" || count=0
+    case "$count" in ''|*[!0-9]*) count=0 ;; esac
+
+    # AN EMPTY LIBRARY IS PUBLISHED, do_search's argument: a brand-new account
+    # owning nothing is a real answer about that account, where do_featured's
+    # empty answer is Valve's front page having a bad minute. The token having
+    # WORKED is what tells the two apart -- an outage never gets this far.
+    publish library "$body" || { state failed "cannot write"; return; }
+    info "library: $count owned game(s)"
+
+    # The pictures, bounded and paginated -- see the header comment and
+    # LIBRARY_ART_BOUND. Valve's CDN serves a 460x215 header capsule at a
+    # predictable path for every appid, which is what makes this possible
+    # without an API call per game; fetch_art's host check still stands
+    # between the constant below and anything creative.
+    local appid considered=0 fetched=0
+    while IFS= read -r appid; do
+        case "$appid" in ''|*[!0-9]*) continue ;; esac
+        [ -f "$ART_DIR/$appid.jpg" ] && continue
+        [ "$considered" -ge "$LIBRARY_ART_BOUND" ] && break
+        considered=$(( considered + 1 ))
+        fetch_art "https://cdn.cloudflare.steamstatic.com/steam/apps/$appid/header.jpg" \
+            "$appid.jpg" && fetched=$(( fetched + 1 ))
+    done < <(printf '%s' "$body" | jq -r '.items[].appid' 2>/dev/null)
+    info "$fetched library capsule(s) newly fetched"
+
+    state "done" library
 }
 
 
@@ -926,12 +1481,26 @@ do_search() {
 
 state idle
 
+# A restart orphans any sign-in that was mid-scan: the poll loop died with the
+# old process, so a stored "waiting" would leave the shell drawing a QR nobody
+# is polling. Settled at startup rather than papered over -- the person scans
+# again, which costs one press.
+rm -f "$FRONT_DIR/qr.png"
+if [ -f "$FRONT_DIR/signin.json" ]; then
+    case "$(jq -r '.status // ""' < "$FRONT_DIR/signin.json" 2>/dev/null)" in
+        starting|waiting) signin_publish expired ;;
+    esac
+fi
+
 ## The last request attempted and when, so a repeat of something that FAILED is
 ## refused for RETRY_SECONDS. Kept in memory rather than on disk: a restart of
 ## this service is a rare enough event that forgetting the cooldown across one
 ## is fine, and a file would be state to invalidate.
 last_failed_name=""
 last_failed_at=0
+
+## The background sign-in job, if one is up. See do_signin_start.
+SIGNIN_PID=""
 
 while :; do
     # THE MOVE IS THE SECURITY BOUNDARY, and the reasoning is marwanos-wifi's
@@ -972,6 +1541,16 @@ while :; do
                 ;;
             wishlist)
                 name=wishlist
+                ;;
+            library)
+                name=library
+                ;;
+            signin)
+                # Progress flows through signin.json and qr.png rather than a
+                # stored answer, so a cached file must never answer this verb:
+                # a fresh press deserves a fresh (or at least live) QR.
+                name=signin
+                cache_window=0
                 ;;
             search)
                 # THE TERM IS BOUNDED AND STRIPPED HERE, and neither of those is
@@ -1083,22 +1662,31 @@ while :; do
                     featured) do_featured ;;
                     app)      do_app "$arg" ;;
                     search)   do_search "$arg" ;;
+                    signin)   do_signin_start ;;
+                    library)  do_library ;;
                     wishlist)
                         # The id is looked up here rather than passed in: a
                         # SteamID arriving in a request file would be the shell
                         # telling root whose wishlist to fetch, and the shell has
-                        # no business naming an account. Steam's own file is the
-                        # authority, and do_account has already checked its shape.
+                        # no business naming an account. The root-side authorities
+                        # are the only sources.
+                        #
+                        # WEB TOKEN FIRST, then the client -- the same precedence
+                        # do_account uses, so the wishlist follows the account
+                        # the rest of the screen names rather than a different
+                        # one. web_token_steamid has already shape-checked its id;
+                        # the client's is re-checked below.
                         wl_found=""
                         wl_id=""
-                        if wl_found="$(steam_account)"; then
+                        wl_id="$(web_token_steamid)" || wl_id=""
+                        if [ -z "$wl_id" ] && wl_found="$(steam_account)"; then
                             wl_id="${wl_found%%	*}"
+                            case "$wl_id" in
+                                ''|*[!0-9]*) wl_id="" ;;
+                                ?????????????????) ;;
+                                *) wl_id="" ;;
+                            esac
                         fi
-                        case "$wl_id" in
-                            ''|*[!0-9]*) wl_id="" ;;
-                            ?????????????????) ;;
-                            *) wl_id="" ;;
-                        esac
                         if [ -n "$wl_id" ]; then
                             do_wishlist "$wl_id"
                         else

@@ -37,8 +37,13 @@
 #                at by MARWANOS_SHELL_STORE_DIR -- the /var/marwanos/store tree
 #                WHOLE: icons/<app-id>.png, meta/steam.<appid>.json, AND the
 #                storefront's front/featured.json + front/app.<appid>.json +
-#                front/art/<appid>[.shot].jpg. A fixture built without front/
-#                renders a storefront grid that says "Fetching the storefront"
+#                front/art/<appid>[.shot].jpg, AND the account/sign-in set:
+#                front/account.json (who is signed in), front/wishlist.json +
+#                front/library.json (the personal shelves, appids for the
+#                first and {appid,name} items for the second), front/qr.png +
+#                front/signin.json (the QR sign-in panel's picture and its
+#                status word). A fixture built without front/ renders a
+#                storefront grid that says "Fetching the storefront"
 #                forever, which reads as a bug and is a missing directory.
 #                Without the whole tree a store page draws its fallback glyph
 #                and the details panel has no description from Steam to show.
