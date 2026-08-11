@@ -1,8 +1,34 @@
-# The tearing: twenty trials, and the first evidence that points below the software
+# The tearing is below the software, and it is not the driver version either
 
-**Status (2026-08-11, evening — supersedes everything below, including the
-previous status header): THE ARTIFACT IS PRESENT ON A COMPLETELY STATIC
-SCREEN.** With nothing moving — no input, no animation, no frames being
+**Status (2026-08-11, night — supersedes everything below, including every
+previous status header):**
+
+1. **The artifact is present on a completely static screen.** Nothing moving,
+   nothing being redrawn, and the picture still shimmers. That puts it below the
+   compositor, below the shell, below frame delivery entirely.
+2. **Both driver branches do it.** Booted on 610.43.03 / kernel 7.1.5, at the
+   same 3440x1440@100, same port, same cable, same stock session as the trials
+   that came before it: still shimmers when static, still tears under motion.
+   610.57.04 and 610.43.03 are indistinguishable on this symptom.
+3. **The panel, the cable and the mode are clean on a different laptop** — same
+   monitor, same cable, 3440x1440@100+ over HDMI.
+
+Taken together the leading suspect is now **this laptop's HDMI output
+hardware**: the transmitter, the port, or the board between them. The elimination
+is broad — two drivers, two kernels, two HDMI ports, composition on and off, two
+resolutions, two refresh rates, two different clients, and motion versus no
+motion at all. Nothing above the wire is left holding anything.
+
+The one thing still not separated is stated plainly at the bottom: the other
+laptop ran a different operating system, so "both NVIDIA *Linux* branches
+misprogram this chassis's link" survives as an alternative to "this chassis's
+link is marginal". Both are consistent with everything measured. Neither is a
+software fix.
+
+---
+
+**The finding that reordered the investigation: THE ARTIFACT IS PRESENT ON A
+COMPLETELY STATIC SCREEN.** With nothing moving — no input, no animation, no frames being
 delivered that differ from the last one — the owner reports shimmer and sparkle
 on the picture. That single observation moves the fault below every layer this
 investigation has spent three days in. A compositor that is presenting the same
@@ -60,6 +86,8 @@ monitor's own upscaler blurring a high-frequency artifact.
 | 18 | 3440x1440@100 | on | **HDMI-A-2** | Tearing |
 | 19 | 3440x1440@100, shell pillarboxed at 1920x1080 | on | HDMI-A-2 | (config change, not judged) |
 | 20 | 2560x1080@100 requested | on | HDMI-A-2 | **Void** — see below |
+| 21 | 3440x1440@100 on **610.43.03 / 7.1.5**, static | on | HDMI-A-2 | **Shimmers** |
+| 22 | 3440x1440@100 on **610.43.03 / 7.1.5**, moving | on | HDMI-A-2 | Tearing |
 
 Every trial's mode was verified from the journal (`drm: selecting mode ...` and
 the shell's own `screen 0: ... refresh ...`) before its verdict was recorded, so
@@ -117,52 +145,100 @@ above and is what makes everything else in this section make sense. No
 compositor flag, no refresh rate, no scanout path and no client can explain a
 picture that breaks up while it is not being redrawn.
 
+## The driver was separated after all, and it is not the cause
+
+The 610.43.03 / kernel 7.1.5 deployment turned out not to need any bootloader
+surgery: `ostree admin status` showed it **already staged**. The bench was
+rebooted into it and confirmed on the target — `uname -r` 7.1.5-101.fc43,
+`modinfo -F version nvidia` 610.43.03, `NVIDIA UNIX Open Kernel Module …
+610.43.03` in dmesg — with everything else held still: stock session (greetd
+restored from the pre-trial backup), `hundred` profile, HDMI-A-2, same cable,
+live mode verified at 3440x1440 / 99.99 Hz.
+
+| Driver | Kernel | Static screen | Under motion |
+| --- | --- | --- | --- |
+| 610.57.04 | 7.1.8-100 | Shimmers | Tears (0/6 clean at this mode) |
+| 610.43.03 | 7.1.5-101 | **Shimmers** | **Tears** |
+
+So the driver swap that started all of this was never going to fix anything, in
+either direction. The trade the previous status header described — "610.43.03
+tears / 610.57.04 is clean" — was one lucky observation in six on a symptom that
+is nearly always present, and there is no trade. The remaining honest reason to
+prefer one pin over the other is the *performance* report, which is untested at
+power and confounded with the kernel, and which now has nothing pulling against
+it.
+
+### And the auto-update timer had already fired
+
+The staged deployment was not left over from anything deliberate. Found the same
+evening: `rpm-ostreed-automatic.timer` was enabled and active with
+`AutomaticUpdates: stage`, and it had run 22 minutes earlier, resolved `:latest`
+— the reverted image, carrying 610.43.03 — and staged it. **The next reboot was
+going to change the driver under the investigation with nobody knowing.** Any
+observation made across that reboot would have compared two drivers while
+believing it was comparing two boots of one.
+
+The timer is now masked (`systemctl mask --now rpm-ostreed-automatic.timer`,
+machine-local, reversible with `unmask`). Note that masking is per-deployment
+`/etc`, so it must be re-applied after booting a different deployment. And note
+what pinning does and does not do: it protects a deployment from garbage
+collection; **it does not stop a newer one becoming the default boot.** The
+2026-08-11 warning about `rpm-ostree kargs` being "an upgrade in disguise" was
+right about the mechanism and too narrow about the trigger — nothing had to be
+typed at all.
+
 ## What is NOT separated, and this is the honest limit
 
-The other-laptop test changed **two** things at once — a different GPU *and* a
-different operating system with a different driver. So "the panel, cable and
-mode are fine" is solid, but **this laptop's HDMI transmitter has not been
-separated from this laptop's driver**. Both remain live:
+The driver *version* is now separated and eliminated. What is **not** separated
+is "this chassis's HDMI hardware" from "the NVIDIA Linux driver in general",
+because the one clean reference — the other laptop — changed the GPU *and* the
+operating system at the same time. Two readings survive, and both are outside
+this repository's reach:
 
-- The GPU's HDMI output on this chassis is marginal at these rates, in a way the
-  other laptop's is not. Fits the static shimmer, fits the per-modeset severity
-  changes (link training re-runs at every modeset), fits the weak improvement at
-  lower pixel clocks.
-- The NVIDIA driver programs this link badly — drive strength, scrambling, SCDC,
-  bit depth — in a way Windows on the other machine does not. A driver absolutely
-  can produce static corruption; this is not a "software can't do that" argument.
+- **This laptop's HDMI output is marginal at these rates.** Fits the static
+  shimmer, fits the severity moving across modesets (a marginal link re-trains
+  at every modeset), fits the weak improvement at lower pixel clocks, fits both
+  drivers behaving identically.
+- **Both NVIDIA Linux branches program this chassis's link badly** — drive
+  strength, scrambling/SCDC, bit depth — in a way the other laptop's stack does
+  not. A driver can absolutely produce static corruption; "software can't do
+  that" is not an argument available here. This reading is still a filable NVIDIA
+  bug, and the fact that two branches fourteen point-releases apart are identical
+  makes it a long-standing one rather than a regression.
+
+Separating these needs something this bench cannot currently offer: the same
+laptop, same port, under a different operating system; or a DisplayPort cable,
+which the owner does not have. Until one of those exists, the file should not
+claim to know which.
 
 Note also that the resolution gradient is weak and confounded. 1920x1080 scored
 2/3, but a 16:9 mode on a 21:9 panel is upscaled by the *monitor*, and upscaling
 softens exactly the kind of high-frequency sparkle being judged. A better score
 there may be a blurrier picture rather than a healthier link.
 
-## The next experiment, and it is cheap
+## What this means for the product, which is the part that outlives the bug
 
-**Boot the old driver locally.** The 610.43.03 / kernel 7.1.5 deployment tree is
-still on disk at
-`/ostree/deploy/default/deploy/3bf1e336…0/` (confirmed with `modinfo -F version`
-on its `nvidia.ko.xz`) but has **no BLS entry**, so it is not currently
-bootable. Writing a third entry in `/boot/loader/entries/` is machine-local,
-purely additive, reversible by deleting the file, and touches neither the pinned
-deployment nor `:latest`. If the static shimmer is present on 610.43.03 as well,
-driver *version* is out and the transmitter becomes the leading suspect; if
-610.43.03 is clean on a static screen across three trials, it is a driver
-regression and the report writes itself.
+The appliance is meant to drive a TV, and the owner's stated next target is
+**4K at 60 Hz**. That is not an easier signal than the one failing today — it is
+the same class or worse. 3840x2160@60 in RGB 8bpc is about **594 MHz** of TMDS
+character rate; 3440x1440@100 is about 582 MHz. If this machine cannot hold 582
+MHz cleanly, it will not hold 4K60 RGB either, and the plan should not assume
+otherwise.
 
-That is the one remaining experiment that separates the two live suspects, and
-it costs a reboot rather than an image build.
+The routes that actually buy margin, in order of how much they cost the picture:
 
-## HAZARD, found while working and not yet acted on
+- **HDMI 2.1 FRL.** A different signalling scheme entirely rather than faster
+  TMDS, and the sink advertises HDMI Forum support. If the driver negotiates FRL
+  the margin question changes shape completely. Worth measuring before assuming
+  anything, because it is the only route that costs nothing.
+- **YCbCr 4:2:0.** Halves the rate for 4K60. Cheap in bandwidth, visible on UI
+  text, and this connector currently reports `ycbcr_420_allowed=0`.
+- **Lower refresh.** 4K at 30 Hz is unusable for a games appliance; 1440p or
+  1080p at 60 is the realistic fallback and is what the trial data weakly
+  favours.
 
-`rpm-ostreed-automatic.timer` is **enabled and active** on the bench, with
-`AutomaticUpdates: stage`, and it next fires roughly six hours after this was
-written. When it does it will resolve `:latest`, stage it, and make it the
-**default boot** — which means the next reboot lands on 610.43.03 and the
-pinned 610.57.04 deployment silently stops being what the machine runs. The pin
-protects the deployment from garbage collection; it does not stop a newer one
-becoming default. Masking the timer is a one-line machine-local change and has
-not been made without asking.
+None of these is a fix for the fault. They are what a product does about a link
+it cannot fully trust.
 
 ## The trial harness, which is still installed
 
@@ -184,14 +260,19 @@ no build was pulled, because the bench's booted deployment is pinned to a driver
 - `revert` — restores `/etc/greetd/config.toml` from the backup taken before the
   first edit and restarts greetd onto the stock session.
 
-**greetd's config is currently pointed at the trial session** and the live mode
-is `3440 1440 100 NESTED=1920x1080 -S fit` — the owner's chosen configuration:
-native 3440x1440@100 on the wire with the shell rendered at 1920x1080 and
-pillarboxed inside it. Note plainly what that does and does not do: it fixes the
-*shape* of a 16:9 picture on a 21:9 panel, and it changes the link not at all —
-the wire still carries 3440x1440@100. It is not a tearing workaround and was not
-chosen as one. It also costs sharpness, since the UI is now upscaled 1.33x to
-fill the output.
+**greetd is back on the stock session** (`revert` was run before the reboot), so
+the harness is installed but inert — it changes nothing until greetd is pointed
+at it again. It survives on both deployments' `/etc`, so it is there for the
+next round without re-uploading anything.
+
+The pillarboxed configuration tried during this session —
+`3440 1440 100 NESTED=1920x1080 -S fit`, native 3440x1440@100 on the wire with
+the shell rendered at 1920x1080 and pillarboxed inside it — was reverted with
+the rest. It fixes the *shape* of a 16:9 picture on a 21:9 panel and changes the
+link not at all; it is not a tearing workaround and was not chosen as one. It
+also costs sharpness, since the UI is upscaled 1.33x to fill the output. If it
+is wanted for real it belongs in the image as a display profile, not in a
+machine-local shim.
 
 ## Corrections to earlier records in this file
 
