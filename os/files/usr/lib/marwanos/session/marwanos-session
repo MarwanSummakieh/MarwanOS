@@ -432,8 +432,19 @@ readonly PROFILE_REFRESH_FAST=100
 # configurations, each removing a different part of the above, and whichever one
 # the owner stops on names the cause.
 #
-#   no-bg-steam  The session starts NO background client. THE CLEAN
-#                DISCRIMINATOR, and the first thing to try: if the screen is calm
+# 2026-08-12 SETTLED IT FROM THE OTHER END. The owner ordered the background
+# client gone outright -- this appliance ships its own Steam client now, and
+# the day's fresh install showed what `plain` really does: Valve's flatpak
+# arrives signed OUT, the -silent client maps its login window anyway
+# (-silent suppresses raising, not mapping), gamescope focuses what maps, and
+# the television demands a Steam sign-in from a machine that draws its own.
+# So no-bg-steam stopped being a diagnostic and became the default, below.
+# The remaining profiles keep their diagnostic value for whatever still
+# flickers with a game actually on screen.
+#
+#   no-bg-steam  The session starts NO background client. THE DEFAULT since
+#                2026-08-12 (the owner's instruction), and still THE CLEAN
+#                DISCRIMINATOR: if the screen is calm
 #                until a game is launched by hand, the background client's
 #                attachment is the cause and everything below is noise. If it
 #                still flickers with no Steam process on the machine at all, the
@@ -471,30 +482,34 @@ readonly PROFILE_REFRESH_FAST=100
 #                exactly one fullscreen candidate. No gamescope flags at all --
 #                this word is read by the SHELL, not by this script. See
 #                shell/src/window_profile.gd and Kiosk.yield_screen.
-#   plain        Today's exact behaviour, and THE DEFAULT. Every other word here
-#                is a theory about a flicker nobody has reproduced off the
-#                bench, and a theory is not a thing to boot somebody's only
-#                machine into without being asked.
+#   plain        The pre-2026-08-12 behaviour: a warm background client on
+#                every boot. No longer the default -- see no-bg-steam above --
+#                and kept selectable for the launch-latency trade and for
+#                reproducing the old configuration on demand.
 #
 # Under /var and no default file baked, for PROFILE_FILE's reason verbatim.
 readonly WINDOW_PROFILE_FILE="/var/marwanos/window.profile"
 
-# Today's behaviour. See `plain` above: this changes nothing until somebody
-# chooses otherwise from the couch.
-readonly WINDOW_DEFAULT="plain"
+# NO BACKGROUND CLIENT, on the owner's 2026-08-12 instruction ("remove steam
+# completely") -- see the no-bg-steam entry above for what the day measured
+# and what the word costs (a first launch that waits out a cold client, and
+# nothing else: appscan reads manifests off disk and the shell draws its own
+# library).
+readonly WINDOW_DEFAULT="no-bg-steam"
 
-# Where a rejected window profile lands, and the same word as the default
-# because the same argument applies twice: `plain` is the configuration this
-# machine has actually booted, repeatedly.
-readonly WINDOW_FALLBACK="plain"
+# Where a rejected window profile lands, and the same word as the default:
+# no-bg-steam is `plain` minus one launch -- the gamescope argument list is
+# identical -- so it is exactly as proven a boot as the old fallback was.
+readonly WINDOW_FALLBACK="no-bg-steam"
 
 # In the order the settings screen cycles them, and the order IS the diagnosis:
 # the two that address the symptom actually reported -- a windowless client
 # blacking the screen -- come first, because they are the only ones that can
 # explain it. The four window-arrangement profiles follow for the case where
-# something still flickers once a game is on screen, and today's behaviour is
-# last. Kept identical to the PROFILES list in /usr/lib/marwanos/window/profile
-# so "the next one" means the same thing on both sides of the seam.
+# something still flickers once a game is on screen, and the old warm-client
+# behaviour is last. Kept identical to the PROFILES list in
+# /usr/lib/marwanos/window/profile so "the next one" means the same thing on
+# both sides of the seam.
 readonly WINDOW_LIST="no-bg-steam no-wsi steam-split loose steam-aware yield plain"
 
 log()  { printf '<6>%s: %s\n' "$TAG" "$*" >&2; }

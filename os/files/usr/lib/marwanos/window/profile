@@ -79,11 +79,12 @@ PROFILES=(no-bg-steam no-wsi steam-split loose steam-aware yield plain)
 # this file still has to start, and this service still has to answer "what is it
 # set to" on a machine where the session has never run.
 #
-# `plain` is TODAY'S EXACT BEHAVIOUR and that is the whole of why it is the
-# default. Every other word here is a theory about a flicker nobody has been
-# able to reproduce off the bench; a theory is not a thing to boot somebody's
-# only machine into without being asked.
-DEFAULT=plain
+# `no-bg-steam` since 2026-08-12, on the owner's instruction that Valve's
+# client never runs unasked: this appliance ships its own Steam client, and
+# the day's fresh install showed `plain` warming a signed-OUT Valve client
+# whose login window gamescope then focused. The session's WINDOW_DEFAULT
+# block carries the full story; the two words are kept identical by hand.
+DEFAULT=no-bg-steam
 
 POLL=0.5
 

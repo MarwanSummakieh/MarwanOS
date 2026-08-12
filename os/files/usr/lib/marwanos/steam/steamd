@@ -1356,7 +1356,7 @@ installed_appids() {
 ## refresh, front of the list first, skipping what is already on disk -- so each
 ## visit reaches deeper and the first page is the games a person recognises.
 do_library() {
-    local steamid="" token="" tokreq="" tokresp="" access="" raw="" body="" count=0
+    local steamid="" token="" tokreq="" tokresp="" access="" raw="" body="" count=0 tokrc=0
 
     if ! steamid="$(token_steamid)"; then
         # Not an error and not a failure of the wire: nobody has scanned a QR on
@@ -1391,12 +1391,31 @@ do_library() {
     # appliance holds to the player uid for the life of the request. `name@-`
     # reads the value from stdin instead, and printf feeds it with NO TRAILING
     # NEWLINE: a herestring would append one and corrupt the base64.
+    # The exit code is kept because 2>/dev/null once cost an evening: a
+    # malformed request 400s, -f folds that into exit 22, and "did not answer"
+    # read as a dead wire while Valve was answering every call. 22 is an HTTP
+    # error, 6/7/28 are DNS, connect and timeout -- different repairs, and the
+    # journal should say which. Measured 2026-08-12.
+    tokrc=0
     tokresp="$(printf '%s' "$tokreq" | curl -fsS --max-time "$CURL_MAX_TIME" --retry 1 \
         --data-urlencode "input_protobuf_encoded@-" \
-        "$API_AUTH_TOKEN" 2>/dev/null | base64 -w0)" || tokresp=""
+        "$API_AUTH_TOKEN" 2>/dev/null | base64 -w0)" || tokrc=$?
     if [ -z "$tokresp" ]; then
-        err "Steam's token endpoint did not answer"
-        state failed "no answer"
+        if [ "$tokrc" -eq 0 ]; then
+            # 200 WITH AN EMPTY BODY IS AN ANSWER: it is how this endpoint
+            # refuses a token whose platform it does not serve (x-eresult 63,
+            # measured 2026-08-12). This machine's tokens are SteamClient-
+            # platform on purpose -- the audience DepotDownloader needs -- and
+            # the HTTPS exchange serves web-platform tokens only, so on the
+            # current design this branch is the library's honest dead end, not
+            # a retry and not a re-scan. protocodec's token-req docstring
+            # carries the full measurement.
+            warn "Steam's web exchange refuses a client-platform token; the library cannot fill on this design"
+            state failed "exchange refused"
+        else
+            err "Steam's token endpoint did not answer (curl exit $tokrc)"
+            state failed "no answer"
+        fi
         return 0
     fi
     access="$(printf '%s' "$tokresp" | "$PROTO" token-resp 2>/dev/null)" || access=""

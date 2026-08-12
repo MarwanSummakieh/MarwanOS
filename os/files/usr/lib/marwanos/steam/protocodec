@@ -127,6 +127,13 @@ def _uint(field: int, value: int) -> bytes:
     return _tag(field, 0) + _varint(value)
 
 
+def _fixed64(field: int, value: int) -> bytes:
+    # No omission rule here: zero is not a value the one caller can produce
+    # (it validates digits first, and a SteamID64 is never zero), and a fixed
+    # field's whole point is that its width does not depend on its value.
+    return _tag(field, 1) + struct.pack("<Q", value)
+
+
 def _read_varint(data: bytes, pos: int) -> "tuple[int, int]":
     value = 0
     shift = 0
@@ -345,14 +352,35 @@ def poll_resp() -> None:
 
 
 def token_req(steamid: str) -> None:
+    """GenerateAccessTokenForApp, whose steamid is FIXED64 -- measured.
+
+    The first spelling encoded field 2 as a varint like every other integer in
+    this file, and the endpoint answered HTTP 400 -- an nginx HTML page, no
+    x-eresult header: the request never parsed at all. This message declares
+    steamid as fixed64 where PollAuthSessionStatus's client_id is a varint --
+    same service, two integer wire types -- and with fixed64 the same token
+    and the same steamid parse fine. Measured live on the bench 2026-08-12.
+
+    KNOW WHAT THIS CALL STILL CANNOT DO, measured the same evening: the HTTPS
+    endpoint serves WEB-platform tokens only. Handed this appliance's
+    SteamClient-audience refresh token (aud=client,web,renew,derive -- the
+    audience begin_req exists to mint) it answers 200 with an EMPTY body and
+    x-eresult 63; with the token doubled as an access_token form field,
+    eresult 15; login.steampowered.com/jwt/finalizelogin, error 15; the
+    refresh token as a bearer on a plain API call, 401. A client-platform
+    token derives web access tokens only over a CM connection -- the protocol
+    SteamKit speaks and this file deliberately does not. steamd names the
+    200-empty answer honestly rather than retrying it.
+    """
     if not steamid.isdigit():
         _fail("steamid must be digits")
     refresh_token = sys.stdin.read().strip()
     if not refresh_token:
         _fail("no refresh token on stdin")
-    # 1 refresh_token, 2 steamid, 3 renewal_type. renewal_type is 0 (no renewal
-    # requested) and therefore not written at all -- see _uint.
-    _print_b64(_string(1, refresh_token) + _uint(2, int(steamid)))
+    # 1 refresh_token, 2 steamid (fixed64 -- see above), 3 renewal_type.
+    # renewal_type is 0 (no renewal requested) and therefore not written at
+    # all -- see _uint.
+    _print_b64(_string(1, refresh_token) + _fixed64(2, int(steamid)))
 
 
 def token_resp() -> None:

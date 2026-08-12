@@ -91,13 +91,15 @@ const LABELS := {
 	"loose": "Apps size themselves",
 	"steam-aware": "Compositor knows Steam",
 	"yield": "Shell steps aside",
-	"plain": "Standard",
+	"plain": "Warm Steam on boot",
 }
 
 ## Matches WINDOW_DEFAULT in marwanos-session and DEFAULT in the root service.
-## `plain` is today's exact behaviour, which is why it is the default: every
-## other word is a theory about a flicker nobody has reproduced off the bench.
-const DEFAULT_PROFILE := "plain"
+## `no-bg-steam` since 2026-08-12: the owner ordered Valve's client out of the
+## boot path -- this appliance draws its own Steam client, and a warm signed-out
+## Valve client puts its login window on the television. `plain` (a warm client
+## on every boot) stays selectable for the faster first launch.
+const DEFAULT_PROFILE := "no-bg-steam"
 
 var state: String = "unknown"
 var profile: String = ""
