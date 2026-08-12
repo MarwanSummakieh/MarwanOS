@@ -99,9 +99,26 @@ while pgrep -x gamescope-wl >/dev/null 2>&1 || pgrep -x gamescope >/dev/null 2>&
 done
 log "gamescope released after $((waited * 200))ms"
 
-# The boot's own plymouthd was quit by marwanos-plymouth-quit.service by the
-# time the ready flag exists, so this starts a fresh one. If one somehow is
-# still alive, plymouthd exits nonzero and the --ping below is what decides.
+# START FROM A KNOWN PLYMOUTH STATE, because the unit's After= cannot be
+# trusted to deliver one. This service and marwanos-plymouth-quit.service are
+# both triggered by path units watching the same file, and path activation
+# starts each in its OWN transaction -- an ordering dependency between units in
+# different transactions is not enforced. So the boot's plymouthd may still be
+# alive here, and it is a DEACTIVATED one: it holds no DRM master, which means
+# `plymouth show-splash` against it draws nothing and does no modeset, and the
+# scrub would report success having settled nothing. Quitting first costs a
+# fraction of a second and removes the whole race.
+if plymouth --ping 2>/dev/null; then
+    log "a plymouthd from boot is still alive; quitting it before starting our own"
+    plymouth quit
+    gone=0
+    while pgrep -x plymouthd >/dev/null 2>&1; do
+        ((gone++))
+        ((gone > 25)) && { warn "plymouthd will not exit; the scrub may be a no-op"; break; }
+        sleep 0.2
+    done
+fi
+
 plymouthd --mode=boot || log "plymouthd exited nonzero (one may already be running)"
 sleep 1
 
@@ -113,6 +130,34 @@ fi
 plymouth show-splash
 log "splash up: this is the modeset that settles the link"
 sleep "$SPLASH_DWELL"
+
+# DEACTIVATE, NOT QUIT, and this is not a detail. `plymouth quit` tears the
+# splash off the screen and leaves the VT underneath it visible -- the owner
+# watched the 2026-08-12 cold boot and reported "the linux start text showed
+# up", which is the exact regression marwanos-plymouth-hold.service exists to
+# prevent and which this script had reintroduced halfway through the boot.
+# `deactivate` releases DRM master (so gamescope can take it, which is the
+# whole point of the cycle) while leaving the splash's last frame in the
+# framebuffer with nothing repainting it until the compositor's own modeset.
+# Frozen splash, then the shell. No console text, no black.
+plymouth deactivate
+log "splash frozen and DRM released; bringing the session back"
+
+# Started here rather than left to the EXIT trap so the reap below happens
+# after the session is actually up. The trap stays armed regardless -- it is
+# what covers every path that does not reach this line.
+restore_session
+
+# Now reap the daemon. It has no DRM master and draws nothing at this point, so
+# quitting is bookkeeping rather than anything the screen can see -- but a
+# plymouthd left running for the rest of the boot is the stray daemon
+# marwanos-plymouth-quit.path's header refuses to leave behind, and this script
+# has no business shipping the thing that unit was written to avoid.
+reaped=0
+while ! pgrep -x gamescope-wl >/dev/null 2>&1; do
+    ((reaped++))
+    ((reaped > 100)) && { warn "gamescope has not come back after 20s"; break; }
+    sleep 0.2
+done
 plymouth quit
-sleep 1
-log "splash down; the session comes back next"
+log "session back after $((reaped * 200))ms; plymouthd reaped"
