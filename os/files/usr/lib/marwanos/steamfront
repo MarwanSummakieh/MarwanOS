@@ -1011,6 +1011,42 @@ render_qr() {
 }
 
 
+## Field N (1-based) of a tab-separated record, or nothing.
+##
+## THE SECOND TIME THIS TRAP HAS COST THIS PROJECT A FEATURE, which is why this
+## is a copy of marwanos-storeart's `tsv_field` rather than a fresh idea -- read
+## that one's comment too. Tab counts as IFS WHITESPACE in the shell's
+## field-splitting rules even when IFS holds nothing else, so a leading empty
+## field is discarded and every field after it shifts one place LEFT.
+##
+## What it cost here, measured on the bench 2026-08-11 22:31:38. steamproto's
+## poll-resp writes "<new_challenge>\t<refresh_token>\t<account_name>", and on
+## the one response that matters -- the approval -- Valve sends no new challenge,
+## so the line begins with a tab. `IFS=$'\t' read -r new_challenge refresh
+## account_name` therefore put the REFRESH TOKEN in new_challenge and the
+## ACCOUNT NAME in refresh, and signin_store_token was handed the string
+## `bronzefesta` as the credential. jwt-sub refused it -- correctly, it is not a
+## JWT -- and the owner's scan died as "an approved sign-in carried a token this
+## machine could not read" with the real token still sitting in the wrong
+## variable. Sign-in could never have worked, on any machine, at any time.
+##
+## The two shapes that DID work are why this survived a shipped feature: a
+## rotation response puts its value first, and begin-resp's first field is a
+## client_id printed with %d and never empty. So the QR appeared, the QR
+## rotated, and only the approval was broken.
+tsv_field() {
+    local record="$1" want="$2" i=1
+    while [ "$i" -lt "$want" ]; do
+        case "$record" in
+            *$'\t'*) record="${record#*$'\t'}" ;;
+            *) return 0 ;;
+        esac
+        i=$(( i + 1 ))
+    done
+    printf '%s' "${record%%$'\t'*}"
+}
+
+
 ## Store an approved sign-in: the refresh token root-side, the account name
 ## beside it for do_account, and nothing anywhere else. THE TOKEN IS THE ONE
 ## REAL CREDENTIAL THIS APPLIANCE HOLDS -- it never reaches the journal, a
@@ -1018,13 +1054,25 @@ render_qr() {
 ## uid can read. umask rather than chmod-after-write, so there is no window in
 ## which the file exists more readable than it ends up.
 signin_store_token() {
-    local refresh="$1" account_name="$2" steamid
+    local refresh="$1" account_name="$2" steamid shape
     steamid="$(printf '%s' "$refresh" | "$PROTO" jwt-sub 2>/dev/null)" || steamid=""
     case "$steamid" in
         ''|*[!0-9]*) steamid="" ;;
     esac
     if [ -z "$steamid" ]; then
+        # THE SHAPE GOES TO THE JOURNAL, THE TOKEN GOES NOWHERE. The first
+        # live approval (2026-08-11 22:31:38) died right here, and it died
+        # holding the wrong string entirely -- the caller's tab-splitting had
+        # handed it the account name (see tsv_field). This branch was right to
+        # refuse and right to store nothing; what was missing was any way to
+        # tell "Valve sent us something odd" from "we mangled it ourselves",
+        # and without that the answer cost a bench session and a spent scan.
+        # One line of shape would have said `length=11 parts=1` and ended it.
+        # jwt-shape prints lengths, part counts and claim NAMES only; see its
+        # docstring for the boundary.
+        shape="$(printf '%s' "$refresh" | "$PROTO" jwt-shape 2>/dev/null)" || shape=""
         err "an approved sign-in carried a token this machine could not read"
+        [ -n "$shape" ] && err "the refused token's shape: $shape"
         return 1
     fi
 
@@ -1093,7 +1141,14 @@ do_signin_job() {
         return
     fi
     parsed="$(printf '%s' "$resp" | "$PROTO" begin-resp 2>/dev/null)" || parsed=""
-    IFS=$'\t' read -r client_id challenge request_id interval <<< "$parsed"
+    # tsv_field, not `read` -- see its comment. This site works either way today
+    # (a %d client_id is never empty), and it is spelled the safe way anyway so
+    # that the next person to add a field ahead of the challenge does not have to
+    # rediscover the shift for a third time.
+    client_id="$(tsv_field "$parsed" 1)"
+    challenge="$(tsv_field "$parsed" 2)"
+    request_id="$(tsv_field "$parsed" 3)"
+    interval="$(tsv_field "$parsed" 4)"
     if [ -z "$client_id" ] || [ -z "$challenge" ] || [ -z "$request_id" ]; then
         err "Steam's sign-in answer could not be read"
         signin_publish failed
@@ -1148,7 +1203,14 @@ do_signin_job() {
         # the time.
         [ -n "$pollresp" ] || continue
         pollparsed="$(printf '%s' "$pollresp" | "$PROTO" poll-resp 2>/dev/null)" || continue
-        IFS=$'\t' read -r new_challenge refresh account_name <<< "$pollparsed"
+        # THE LINE THE WHOLE FEATURE TURNED ON. An approval's first field is
+        # empty, and `read` with IFS=$'\t' swallows a leading empty field and
+        # shifts the rest left -- so this used to hand the account name to
+        # signin_store_token as the credential and throw the real token away.
+        # See tsv_field.
+        new_challenge="$(tsv_field "$pollparsed" 1)"
+        refresh="$(tsv_field "$pollparsed" 2)"
+        account_name="$(tsv_field "$pollparsed" 3)"
 
         if [ -n "$refresh" ]; then
             signin_store_token "$refresh" "$account_name" || signin_publish failed

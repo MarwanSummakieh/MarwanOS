@@ -55,6 +55,23 @@
 #                is that copy, rename and delete can be exercised against it.
 #                Without it the Home place is the container's HOME -- an
 #                empty tmpfs, which only ever proves the empty state.
+#   SERVICES_DIR the background-service seam: <id>.state files ("running",
+#                "stopped", "crashed") and optionally <id>.wanted, as the
+#                session's supervisor would have written them. What it drives is
+#                the bell's badge, the service menu's rows and the quick
+#                settings panel's copy of the same words.
+#
+#                COPIED IN, NOT MOUNTED, and it is the only fixture that is --
+#                every other one is a read-only bind because the shell only
+#                reads it. This seam is READ AND WRITTEN: pressing A on a row
+#                puts a `<id>.wanted` file next to the state, which is the whole
+#                mechanism under test, so a read-only mount would fail the press
+#                rather than prove it. The destination is XDG_RUNTIME_DIR's
+#                marwanos/services, a tmpfs podman makes at start, so the files
+#                go in with podman cp once the container is up.
+#
+#                To assert a press landed, read the wish back out afterwards:
+#                  podman exec marwanos-verify-99 cat /godothome/marwanos/services/steam.wanted
 #   MEDIA_DIR    fake drives, bind-mounted straight over /run/media (which is
 #                a tmpfs in the container, so the real path is writable and
 #                needs no override in the shell). Same two-level shape as the
@@ -218,6 +235,23 @@ podman run -d --name "$CTR" \
     "$RUNTIME_IMAGE" \
     --rendering-method gl_compatibility --audio-driver Dummy --max-fps 30 \
     >/dev/null || die "container did not start"
+
+# Seeded before the window is even waited for, so the shell's first poll of the
+# seam already sees it and no row has to be watched changing its mind.
+if [[ -n "${SERVICES_DIR:-}" ]]; then
+    say "Seeding the services seam from $SERVICES_DIR"
+    podman exec "$CTR" mkdir -p /godothome/marwanos/services \
+        || die "could not create the services seam inside the container"
+    seeded=0
+    for f in "$SERVICES_DIR"/*; do
+        [[ -f "$f" ]] || continue
+        podman cp "$f" "${CTR}:/godothome/marwanos/services/$(basename "$f")" \
+            || die "could not copy $(basename "$f") into the services seam"
+        seeded=$(( seeded + 1 ))
+    done
+    (( seeded > 0 )) || die "SERVICES_DIR=$SERVICES_DIR held no files"
+    say "Seeded $seeded service file(s)"
+fi
 
 say "Waiting for the shell window"
 export DISPLAY="127.0.0.1${DISP}"

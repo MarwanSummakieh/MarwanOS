@@ -34,9 +34,16 @@ const ActionRow = preload("res://src/action_row.gd")
 ## What a service row says on the right -- service_menu.gd's table, and the two
 ## must keep agreeing: the same service shown through two doors with two
 ## vocabularies would read as two different services.
+##
+## "Crashed" was added to both on 2026-08-12 and the drift this warns about had
+## already happened in the draft: the word went into service_menu's copy alone,
+## so the SAME crashed Steam read as "Crashed" through the bell and "Not
+## reported yet" -- the fallback -- through this panel. The Containerfile now
+## greps both copies for it, because nothing at runtime compares them.
 const STATE_WORDS := {
 	"running": "Running",
 	"stopped": "Stopped",
+	"crashed": "Crashed",
 	"unknown": "Not reported yet",
 }
 

@@ -30,9 +30,21 @@ const ActionRow = preload("res://src/action_row.gd")
 
 ## What a row says on the right, by what the service is doing. The pending words
 ## are verbs because something is happening; the settled ones are states.
+##
+## "Crashed" is deliberately not softened: the supervisor is still retrying on
+## a slow backoff, and A on the row retries immediately (crashed is not
+## "running", so _on_row's toggle asks for a start). The word on the row is
+## what sends a person to the journal instead of to the power button.
+##
+## THE ACCEPTED GAP: because crashed reads as not-running, A on a crashed row
+## always means start, so a crashed service cannot be STOPPED from here. That is
+## the cheaper half of the trade -- the supervisor's backoff reaches half an
+## hour between attempts, so there is little left to stop -- and the expensive
+## half would be a second action on a row that has one button.
 const STATE_WORDS := {
 	"running": "Running",
 	"stopped": "Stopped",
+	"crashed": "Crashed",
 	"unknown": "Not reported yet",
 }
 

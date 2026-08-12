@@ -64,6 +64,187 @@ Passing a copy fixed it.
 **Still unproven: hardware.** No boot on the bench, so the sandbox path (the
 harness runs as root and skips it), the real GPU, gamescope and a live network
 have never seen this. That is the next thing.
+---
+
+## Steam on the appliance: the crash-loop was SELinux, and the session now heals it (2026-08-12)
+
+**The symptom** (bench, 2026-08-11 22:22–22:25): background Steam exited with
+status 1 five times in 150 seconds and the supervisor "gave up until the next
+boot". The owner pressed Start on the service row at 22:27:46 and nothing
+happened — the supervisor had already returned. Its output went to /dev/null,
+so the journal held the counting and not the cause.
+
+**The cause, measured on one boot of one image:** greetd's PAM stack runs
+`pam_selinux`, which selects `unconfined_u:unconfined_r:unconfined_t:s0-s0:c0.c1023`
+(`res=success` in the audit log) — and greetd 0.10.3 never applies it. The
+first session of a boot went through the login lane and ran Steam fine; every
+**restarted** session comes from the greeter lane (`default_session`), lands in
+`xdm_t`, and under enforcing policy `xdm_t` may not `remount` `device_t` or
+`dosfs_t` — which bwrap must do to build any flatpak sandbox. So on any session
+after the first, **every** `flatpak run` — which since mowser landed means Steam
+and every game, i.e. everything this appliance is for — died in ~2s:
+`bwrap: Can't bind mount /oldroot/dev on /newroot/dev: … Permission denied`.
+The gamescope-was-down confound was resolved against it: the 22:23 session's
+crashes all happened with its compositor up (pid 76908, still alive at 22:39).
+
+**The fixes (this build):**
+
+- **The session leaves xdm_t itself.** After the systemd-cat re-exec,
+  marwanos-session checks `id -Z`, probes `runcon` with a throwaway child, and
+  re-execs into the exact context pam_selinux already selected. Probed before
+  committed, env-guarded against loops, degrades loudly to today's behaviour.
+  `setexec`, the `xdm_t → unconfined_t` transition, and the two remounts
+  (denied to `xdm_t`, allowed to `unconfined_t`) were all confirmed read-only
+  against the bench's live enforcing policy via `/sys/fs/selinux/access`.
+
+  **And the first version of it would have bricked the boot.** A domain
+  transition needs `entrypoint` on the file being `execve`'d, and the draft
+  wrote `exec runcon "$CON" "$SELF"` while probing with `/bin/sh`. Those are
+  two different files with two different types, and the bench says they answer
+  differently:
+
+  | file | type | `unconfined_t … entrypoint` |
+  |---|---|---|
+  | `/usr/lib/marwanos/session/marwanos-session` | `lib_t` | **DENIED** |
+  | `/bin/sh` | `bin_t` | ALLOWED |
+  | `/usr/bin/bash` | `shell_exec_t` | ALLOWED |
+
+  So the probe would have said yes and the real `exec` would have failed — and
+  a failed `exec` exits a non-interactive shell, greetd respawns the session,
+  and the env guard does not survive the process: a respawn loop at boot speed
+  with nothing on the television. The shipped line is
+  `exec runcon "$CON" /bin/sh "$SELF" "$@"`, which makes the file the kernel
+  checks the same `bin_t` interpreter the probe just proved and carries the
+  script as data. Everything under `/usr/lib` is `lib_t`, so the alternative
+  was relabelling. **If you ever add another `runcon`/`setexeccon` exec in this
+  tree, exec the interpreter by name.**
+- **Steam's last words survive.** `flatpak run` now writes through a
+  `tail -n 40` co-process into tmpfs; an un-asked nonzero exit logs the last
+  20 lines at warning level (first failure and guard-trip only). The quiet
+  path stays quiet.
+- **"Giving up until the next boot" is gone.** Five consecutive fast failures
+  now mean a `crashed` state the shell draws (amber bell badge, "Crashed" on
+  the service row), retries that back off 60s→30min, and a couch retry: the
+  service menu's A press rewrites the wish file and the supervisor treats the
+  fresh mtime as permission to retry immediately with a clean slate. A run
+  that survives 5 minutes clears the counter.
+
+---
+
+## The QR sign-in was broken by a tab, and could never have worked (2026-08-12)
+
+The store's sign-in got its first real phone approval on the bench at 22:31:38
+and died one line later: *"an approved sign-in carried a token this machine
+could not read"*. Everything up to that point works and is bench-confirmed —
+`signin` request heard, challenge fetched, **qr.png rendered** (329 bytes,
+22:31:25), shell drew *"sign-in is waiting"* then *"code on screen"*, phone
+scanned, Valve returned an approval in 13 seconds.
+
+**The cause is one shell rule.** `steamproto poll-resp` writes
+`<new_challenge>\t<refresh_token>\t<account_name>`, and on an approval Valve
+sends **no** new challenge — so the line starts with a tab. Tab counts as IFS
+*whitespace* in the shell's field-splitting rules even when IFS holds nothing
+else, so `IFS=$'\t' read -r new_challenge refresh account_name` **discards the
+leading empty field and shifts everything left**: the refresh token landed in
+`new_challenge`, the account name landed in `refresh`, and
+`signin_store_token` was handed the string `bronzefesta` as the credential.
+`jwt-sub` refused it — correctly; it is not a JWT — and the real token was
+thrown away with the variable.
+
+Two shapes hid it for a whole shipped feature: a *rotation* response puts its
+value first, and `begin-resp`'s first field is a `%d` client_id that is never
+empty. So the QR appeared, the QR rotated every 30s, and **only the approval**
+was broken.
+
+**This is the second time this exact trap has cost this tree a feature** —
+`marwanos-storeart` hit it in its own way and already carried a hand-walked
+`tsv_field`. steamfront now carries the same helper, both parse sites use it,
+and the Containerfile greps both files for it plus the absence of the
+collapsing `read`.
+
+Proven without spending another scan: a synthetic approval body (field 3 =
+Valve-shaped JWT, field 6 = account name, field 2 absent) through the real
+`steamproto` and the real `tsv_field` yields `refresh` = the token and
+`jwt-sub` = `76561198257799568`; the old parse yields `bronzefesta` and
+`jwt-shape` prints `length=11 parts=1`. Rotation, empty-body and `begin-resp`
+shapes all still parse.
+
+Also from this: a refused token now logs a **shape-only** diagnosis (lengths,
+part count, claim names — never material) via the new `jwt-shape` subcommand,
+and `jwt-sub` accepts any SteamID-sized digit string rather than exactly 17
+(explicitly *not* the fix — Valve re-validates the subject on every use).
+
+---
+
+## What is actually confirmed, for both of the above (2026-08-12)
+
+Read this before trusting either section. Nothing in this build has booted on
+the bench: it is **pinned** on a good deployment while the tearing
+investigation owns its boot schedule, so this work was deliberately shipped
+without a `bootc upgrade`.
+
+**And then the bench confirmed it a second time, by accident.** Mid-session
+somebody upgraded and rebooted it onto `ac909b1` (the mowser image; the pinned
+610.57.04 deployment is now the *rollback*, and the booted one runs 610.43.03 —
+flagged for whoever owns the driver pin). On that fresh boot the session and the
+shell are **`unconfined_t`**, there is exactly **one** `xdm_t` denial in the
+whole boot against 87 on the old one, **Steam is `running`**, and a stop/start
+from the service menu at 08:29 worked. That is the same claim from the opposite
+side: a **first** session comes through greetd's login lane, gets pam's context,
+and everything works — which is precisely why this bug reads as intermittent and
+why it went a day misattributed. The 22:03 boot's session was a *restarted* one
+(greetd at pid 76800, session at 76818, nineteen minutes into a boot) and it was
+`xdm_t`. Nothing else distinguishes the two.
+
+**Measured on the bench (read-only, gamescope up, sibling session undisturbed;
+deployment `a2bddec9`, now the rollback):**
+
+- the old crash-loop and give-up, with its compositor **up** — the
+  gamescope-was-down confound is dead
+- the session, the shell and greetd all sitting in `xdm_t`, enforcing on
+- 29 × `xdm_t → device_t remount` and 29 × `xdm_t → dosfs_t remount` denials
+  this boot, plus 29 × `xdm_t → unconfined_t : system { start }` (flatpak's
+  per-app scope, denied the same way)
+- every permission the walk needs: ALLOWED. Every permission bwrap needs:
+  DENIED to `xdm_t`, ALLOWED to `unconfined_t`
+- the `lib_t` entrypoint refusal that killed the draft's `exec` line
+- the QR rendering, the phone approving, and the exact refusal message
+
+**Proven off-hardware, deterministically:** the tab-shift (real `steamproto` +
+real `tsv_field`, synthetic approval body, both parses side by side); the
+`crashed` row and its couch retry (real shell binary under Xvfb with a seeded
+services seam — screenshot shows the amber bell badge and *Steam — Crashed*,
+and A on the row writes the start wish); a full image build with the verify
+block, which now also greps the two `STATE_WORDS` copies and both ends of the
+tab-split contract.
+
+**Not verified, and needs one live scan on an image carrying this:** that the
+library *fills* after a good sign-in, and Install-from-the-shelf. The path
+after `signin_store_token` (refresh→access exchange, GetOwnedGames,
+cache-bust) has never run with a real token, and no fixture can stand in for it
+— only Valve can mint the token. Also unverified: that a restarted session
+really does keep its flatpaks alive now. That is the one thing only a boot can
+answer.
+
+When it is tested, note that **Install from the shelf is two presses**, not
+one: A on a library tile opens the game's storefront page
+(`storefront page opened for appid N`) and A on that page's action does the
+install (`apps: install requested for …`). A shelf tile that seems not to
+install on the first press is behaving as designed.
+
+**One flag for mowser, untested and worth knowing before its first boot.**
+Until this change the shell itself ran in `xdm_t` — measured, not inferred:
+`/proc/<shell pid>/attr/current` said so on the bench. CEF's sandbox does the
+same class of namespace and mount work bwrap does, and `xdm_t` is precisely the
+domain that was denied it; an in-process CEF `abort()` takes the shell down
+with it, which is the black TV the mowser section warns about. After this
+change the session (and therefore the shell, and therefore CEF) runs as
+`unconfined_t`, which is strictly more permissive — so this fix plausibly
+removes a first-boot failure mowser has never had the chance to hit. **Nobody
+has measured what CEF's sandbox actually needs from policy**, so treat that as
+a lead, not a result: if the shell dies on mowser's first hardware boot,
+`journalctl | grep denied` and the shell's own domain are the first two things
+to read.
 
 ---
 

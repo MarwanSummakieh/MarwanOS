@@ -422,6 +422,19 @@ COPY --from=mowser-build /payload/libmowser.so /build/shell/bin/libmowser.so
 RUN set -euxo pipefail; \
     grep -q '^name="Linux"$' /build/shell/export_presets.cfg; \
     grep -q '^binary_format/embed_pck=true$' /build/shell/export_presets.cfg; \
+    : "THE SERVICE VOCABULARY, asserted in both copies. A background service is"; \
+    : "shown through two doors -- the bell's service menu and the quick settings"; \
+    : "panel -- and each carries its own STATE_WORDS table by design, so neither"; \
+    : "screen depends on the other to draw. The cost is drift, and the drift"; \
+    : "happened the day `crashed` was added: it went into service_menu alone, so"; \
+    : "one crashed Steam read as \"Crashed\" through the bell and \"Not reported"; \
+    : "yet\" -- the unknown fallback -- through the panel. Neither the export nor"; \
+    : "the smoke run can see that: both tables parse, both screens build, and the"; \
+    : "only symptom is a wrong word on a television. This is the one place that"; \
+    : "can compare them, because the GDScript exists here and nowhere in the"; \
+    : "shipped image -- the binary is a single packed file."; \
+    grep -q '"crashed": "Crashed"' /build/shell/src/service_menu.gd; \
+    grep -q '"crashed": "Crashed"' /build/shell/src/quick_settings.gd; \
     rm -rf /build/shell/.godot
 
 # Import and export are two steps because only --export-debug and --export-pack
@@ -1505,6 +1518,47 @@ RUN set -euxo pipefail; \
     test -x /usr/lib/marwanos/steamproto; \
     python3 -m py_compile /usr/lib/marwanos/steamproto; \
     rm -rf /usr/lib/marwanos/__pycache__; \
+    : "The refused-token diagnosis is a cross-file contract: steamfront calls"; \
+    : "steamproto's jwt-shape when jwt-sub refuses an approved sign-in, and a"; \
+    : "steamproto that lost the subcommand would turn the one line that"; \
+    : "explains a dead scan back into silence. Grepped from both ends because"; \
+    : "nothing at runtime checks the seam."; \
+    grep -q 'jwt-shape' /usr/lib/marwanos/steamfront; \
+    grep -q '"jwt-shape"' /usr/lib/marwanos/steamproto; \
+    : "THE TAB SPLIT, asserted because it has now silently broken two separate"; \
+    : "features in this tree. Tab is IFS WHITESPACE to the shell even when IFS"; \
+    : "holds nothing else, so a leading empty field is swallowed and every"; \
+    : "value after it shifts one place left. storeart hit it first (its own"; \
+    : "tsv_field comment) and steamfront hit it on the ONE response that"; \
+    : "mattered: an approval, whose first field is the new challenge Valve does"; \
+    : "not send. The refresh token landed in new_challenge, the account name"; \
+    : "landed in refresh, and the owner's scan died as an unreadable token."; \
+    : "So both files must carry the hand-walked splitter, the poll parse must"; \
+    : "actually use it, and the collapsing read must NOT come back -- the last"; \
+    : "one negated with || exit, because set -e ignores !-pipelines."; \
+    : ""; \
+    : "AND THE ABSENCE GREP IS ANCHORED TO CODE, not to the substring, which is"; \
+    : "the kodi/zen lesson arriving a second time: the first spelling of it was"; \
+    : "a bare `read -r new_challenge` and it failed this build on steamfront's"; \
+    : "OWN COMMENT -- the paragraph that quotes the broken line to explain why"; \
+    : "the helper exists. A leading-whitespace + IFS= anchor matches the"; \
+    : "statement and cannot match a ## docstring, so the prose that records the"; \
+    : "bug is free to name it."; \
+    grep -q '^tsv_field()' /usr/lib/marwanos/steamfront; \
+    grep -q '^tsv_field()' /usr/lib/marwanos/storeart; \
+    grep -q 'refresh="$(tsv_field "$pollparsed" 2)"' /usr/lib/marwanos/steamfront; \
+    ! grep -qE '^[[:space:]]*IFS=.*read -r new_challenge' /usr/lib/marwanos/steamfront \
+        || { echo "steamfront parses an approval with the collapsing IFS read again"; exit 1; }; \
+    : "runcon is how the session leaves greetd's xdm_t domain -- greetd fails"; \
+    : "to apply pam_selinux's selected context, and under enforcing policy"; \
+    : "xdm_t cannot host bwrap's mount setup, so every flatpak -- which since"; \
+    : "mowser means Steam and every game -- dies in seconds on any restarted"; \
+    : "session. The"; \
+    : "session script probes runcon before trusting it and degrades loudly,"; \
+    : "but a coreutils split that dropped the binary would put the appliance"; \
+    : "back in that state silently -- so the build refuses instead."; \
+    command -v runcon; \
+    grep -q 'runcon' /usr/lib/marwanos/session/marwanos-session; \
     : "xprop is how the shell marks its window GAMESCOPE_EXTERNAL_OVERLAY so"; \
     : "gamescope layers it over games; the base image happens to ship it today,"; \
     : "and a base bump that dropped it would silently break overlay stacking."; \

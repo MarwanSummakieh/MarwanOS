@@ -19,8 +19,14 @@ extends Node
 ## The files live under XDG_RUNTIME_DIR, which logind made for this user and
 ## nothing else can write:
 ##
-##   the session writes  <runtime>/marwanos/services/<id>.state    running|stopped
+##   the session writes  <runtime>/marwanos/services/<id>.state    running|stopped|crashed
 ##   this writes         <runtime>/marwanos/services/<id>.wanted   1|0
+##
+## `crashed` is stopped-with-a-diagnosis: the supervisor hit its fast-failure
+## limit and is retrying on a slow backoff. A on the row still means "start",
+## and the supervisor treats the rewritten wish as permission to retry
+## immediately -- the mtime bump is the signal, which is why set_wanted always
+## writes even when the file already says 1.
 ##
 ## A WISH, NOT AN ACTION, and that distinction is the whole design. The session's
 ## supervisor restarts the client when it exits -- that is its job -- so a shell
@@ -124,9 +130,9 @@ func _installed(app_id: String) -> bool:
 	return false
 
 
-## "running", "stopped", or "unknown" when nothing has been written yet -- a desk
-## run, or a boot too early for the supervisor to have said anything. Unknown is
-## drawn as grey but worded differently; see service_menu.
+## "running", "stopped", "crashed", or "unknown" when nothing has been written
+## yet -- a desk run, or a boot too early for the supervisor to have said
+## anything. Unknown is drawn as grey but worded differently; see service_menu.
 func state_of(id: String) -> String:
 	return str(_states.get(id, "unknown"))
 
@@ -193,8 +199,23 @@ func _poll() -> void:
 		# The wish has landed once the state agrees with it. Cleared on the
 		# state rather than on a timer, so a supervisor that never acts leaves
 		# the row saying so instead of quietly reverting to a lie.
+		#
+		# `crashed` clears a pending start too: it IS the supervisor's answer
+		# -- "I tried, it died again". Without this the row would say
+		# "Starting" forever after a failed retry, and _on_row's pending guard
+		# would swallow every further press. Measured on 2026-08-11: a start
+		# wish written against a dead supervisor left the row stuck exactly
+		# that way.
+		#
+		# THE PRICE, chosen deliberately: the supervisor wakes on a two-second
+		# slice, so for a moment after a press the row says "Crashed" again
+		# rather than "Starting", and only then flips to "Running". Gating this
+		# on the state file being newer than the wish would word those two
+		# seconds better and would also restore the swallow -- a supervisor
+		# that never answers never updates its mtime either. A row that briefly
+		# understates is better than a row a person cannot press.
 		var pending := str(_pending.get(id, ""))
-		if pending == "start" and word == "running":
+		if pending == "start" and (word == "running" or word == "crashed"):
 			_pending.erase(id)
 			changed = true
 		elif pending == "stop" and word == "stopped":

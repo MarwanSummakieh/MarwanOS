@@ -70,6 +70,90 @@ if [ -z "${MARWANOS_SESSION_LOGGING:-}" ] && command -v systemd-cat >/dev/null 2
     exec systemd-cat --level-prefix=true -t "$TAG" "$SELF" "$@"
 fi
 
+# ---------------------------------------------------------------------------
+# THE SELINUX DOMAIN, and the second job this script finishes for greetd.
+# After the systemd-cat re-exec on purpose: everything this block says goes to
+# the journal, not the panel.
+#
+# greetd's PAM stack runs pam_selinux, and pam_selinux does its job -- the boot
+# journal carries `op=pam_selinux ... selected-context=unconfined_u:unconfined_r
+# :unconfined_t:s0-s0:c0.c1023 res=success` for the first session of every
+# boot. greetd (0.10.3) then fails to apply that selection to the process it
+# execs, and the greeter lane -- default_session, which is THIS script again
+# whenever a session ends and restarts -- never runs the selection at all. So
+# every session runs in greetd's own domain, xdm_t, and restarted sessions do
+# not even have pam's answer on record.
+#
+# Measured on the bench, 2026-08-11, one boot, one image:
+#
+#   session 1:  Steam starts, runs, fills its caches. Flatpaks work.
+#   sessions 2+ (every greetd restart): every `flatpak run` -- which since
+#   mowser is Steam and every game, i.e. everything this appliance exists to
+#   run -- dies in ~2 seconds. bwrap's sandbox setup has to
+#   remount /dev and /boot/efi inside its namespace, and enforcing policy
+#   denies xdm_t exactly that:
+#
+#     avc: denied { remount } scontext=..:xdm_t.. tcontext=..:device_t..
+#     avc: denied { remount } scontext=..:xdm_t.. tcontext=..:dosfs_t..
+#
+#   Five fast exits later the Steam supervisor stopped retrying, and the
+#   appliance had no warm client and nothing anywhere saying why.
+#
+# So the session finishes pam's own sentence: if it finds itself in xdm_t it
+# re-execs into the context pam_selinux already selected and audited. runcon
+# is the same mechanism every Fedora graphical login uses -- setexeccon plus
+# execve -- and targeted policy allows the xdm_t -> unconfined_t walk because
+# gdm depends on it. The context is hardcoded rather than recomputed because
+# pam already computed exactly this string and greetd dropped it; nothing in
+# the image is guaranteed to be able to recompute it.
+#
+# PROBED BEFORE COMMITTED. A bare `exec runcon` on a policy that refuses the
+# walk would kill the session; greetd would restart it; the env guard dies
+# with the process -- a respawn loop at boot speed with no picture. The
+# throwaway probe fails in a child instead, and a refusal leaves the session
+# where it is today: flatpaks broken, shell working, journal saying which.
+#
+# AND THE PROBE EXECS WHAT THE REAL LINE EXECS, which is the whole reason the
+# real line goes through the interpreter by name. A domain transition needs
+# `entrypoint` on the file being execve'd, and this script is NOT a valid
+# entrypoint for the domain it is walking into. Measured read-only against the
+# bench's live policy, 2026-08-12:
+#
+#   /usr/lib/marwanos/session/marwanos-session   lib_t         entrypoint DENIED
+#   /bin/sh                                      bin_t         entrypoint ALLOWED
+#   /usr/bin/bash                                shell_exec_t  entrypoint ALLOWED
+#
+# So `exec runcon "$CON" "$SELF"` was a line that could only fail -- and fail
+# AFTER a probe against /bin/sh had said yes, which is the one shape of bug
+# this block cannot afford: exec failure exits a non-interactive shell, greetd
+# respawns, and the env guard does not survive the process. Exec'ing /bin/sh
+# with the script as its argument makes the file the kernel checks the same
+# bin_t interpreter the probe just proved, and the script rides along as data
+# on a path unconfined_t may read. Every /usr/lib file is lib_t, so relabelling
+# would be the alternative and this is one word instead.
+#
+# THE ENV GUARD, not a context re-check, is what breaks the loop: if the
+# transition ever silently landed back in the same domain, a re-check would
+# exec forever. Same pattern, same reason as MARWANOS_SESSION_LOGGING above.
+# A machine without SELinux answers `id -Z` with nothing and skips the block.
+if [ -z "${MARWANOS_SESSION_CONTEXT:-}" ]; then
+    MARWANOS_SESSION_CONTEXT=1
+    export MARWANOS_SESSION_CONTEXT
+    case "$(id -Z 2>/dev/null)" in
+        *:xdm_t:*)
+            MARWANOS_SESSION_CON="unconfined_u:unconfined_r:unconfined_t:s0-s0:c0.c1023"
+            if command -v runcon >/dev/null 2>&1 \
+                && runcon "$MARWANOS_SESSION_CON" /bin/sh -c ':' 2>/dev/null; then
+                printf '<6>%s: %s\n' "$TAG" "greetd left this session in SELinux domain xdm_t; re-entering as $MARWANOS_SESSION_CON" >&2
+                exec runcon "$MARWANOS_SESSION_CON" /bin/sh "$SELF" "$@"
+            fi
+            printf '<3>%s: %s\n' "$TAG" "this session is stuck in SELinux domain xdm_t and runcon could not leave it" >&2
+            printf '<3>%s: %s\n' "$TAG" "every flatpak will fail in seconds: bwrap's mount setup is denied to xdm_t (journalctl | grep denied)" >&2
+            printf '<3>%s: %s\n' "$TAG" "Steam and every game will not start until this is fixed; the shell and mowser are unaffected" >&2
+            ;;
+    esac
+fi
+
 # D5. The client is baked into the image; the override is a directory under
 # /var so a fresh Godot export can be scp'd onto a running target and restarted
 # in seconds, instead of costing an image rebuild and a reboot per UI tweak.
@@ -120,8 +204,8 @@ readonly CRASH_WINDOW=60
 # Steam's own UI by hand.
 readonly STEAM_FLATPAK_ID="com.valvesoftware.Steam"
 
-# Thirty seconds between attempts; five attempts inside five minutes and then
-# nothing until the next boot.
+# Thirty seconds between attempts; five fast failures in a row and the retry
+# slows down instead of stopping.
 #
 # The delay is deliberately unlike the client's, which restarts with no backoff
 # at all because somebody is staring at a blank TV until it comes back. Nobody
@@ -129,14 +213,27 @@ readonly STEAM_FLATPAK_ID="com.valvesoftware.Steam"
 # for, and half a minute is still short enough that a game launched a minute
 # later finds a warm client.
 #
-# The cap is what keeps a broken Steam out of the journal. An install that
-# cannot start at all would otherwise print a line every thirty seconds for the
-# life of the session, on a machine whose only triage surface is journalctl.
-# Five lines and one final explanation is the whole of what this is allowed to
-# cost, and it does not get a second budget until the machine reboots.
+# THIS USED TO GIVE UP "UNTIL THE NEXT BOOT", and 2026-08-11 is why it no
+# longer does. A session-restart bug (see THE SELINUX DOMAIN above) made every
+# Steam start die in two seconds; the guard tripped in two and a half minutes
+# and then latched, on a machine with no terminal and nothing on the TV saying
+# so. The owner pressed Start on the service menu's Steam row and a supervisor
+# that had already returned ignored the wish forever. Permanent surrender is
+# the wrong shape for an appliance: what replaced it is a `crashed` state the
+# shell can draw, retries that back off to STEAM_BACKOFF_MAX seconds apart --
+# quiet enough for the journal, alive enough to recover when the cause heals
+# -- and a couch retry: a fresh start wish from the service menu resets the
+# guard immediately. See supervise_steam.
+#
+# STEAM_EXIT_WINDOW is now the run length that counts as a real session: a
+# client that stayed up five minutes earned its failure count back. Five
+# minutes because a crash-at-startup -- the only kind observed -- is measured
+# in seconds, and anything that survived past login and cache reads was
+# genuinely running.
 readonly STEAM_RESTART_DELAY=30
 readonly STEAM_EXIT_LIMIT=5
 readonly STEAM_EXIT_WINDOW=300
+readonly STEAM_BACKOFF_MAX=1800
 
 # How long to wait for the compositor to say it is up. See start_gamescope for
 # why this is a readiness handshake and not a check for a nonzero exit.
@@ -675,8 +772,13 @@ steam_installed() {
 # rename-then-read dance against a hostile writer, because there is no privilege
 # boundary here to defend.
 #
-#   this writes   $RUNTIME/services/<id>.state    running | stopped | starting
+#   this writes   $RUNTIME/services/<id>.state    running | stopped | crashed
 #   the shell     $RUNTIME/services/<id>.wanted   1 | 0
+#
+# `crashed` is `stopped` with a diagnosis: the supervisor is still there and
+# still retrying, but slowly, and a person should either wait or press Start.
+# The shell draws it in the service menu and the bell's badge; a fresh start
+# wish is what turns it back into a normal retry (see steam_pause).
 #
 # WHY `wanted` RATHER THAN THE SHELL KILLING THINGS ITSELF. The supervisor below
 # restarts the client when it exits -- that is its whole job -- so a shell that
@@ -714,6 +816,102 @@ service_wanted() {
     [ "$_w" != "0" ]
 }
 
+# Sleep for $1 seconds in two-second slices, watching the wish file the whole
+# time. A plain `sleep 1800` would make the crashed state's slowest retry an
+# unresponsive half hour: a stop wish would sit unhonoured, and the couch
+# retry below could not exist at all.
+#
+# Returns 1 the moment a FRESH start wish lands -- the wanted file rewritten
+# since this pause began, which is what the service menu's A press does even
+# when the file already said 1 (services.gd always writes; the mtime bump is
+# the signal). Returns 0 otherwise: the wait ran out, or a stop wish ended it
+# early and the loop's top will park.
+#
+# `-nt` is not POSIX test but every sh this script runs under -- bash-as-sh on
+# the image and in the build container -- has carried it for decades.
+#
+# AND A MARK THAT COULD NOT BE WRITTEN DISABLES THE COMPARISON RATHER THAN
+# DEFAULTING TO YES. `-nt` is true when the second file does not EXIST, so a
+# missing mark would make every pause report a fresh wish, return 1 instantly,
+# and turn the crashed state's slow retry into a tight loop relaunching a
+# client that is genuinely broken -- the one behaviour this whole change was
+# asked not to produce. Losing the couch retry's immediacy on a machine whose
+# runtime directory has stopped accepting writes is the cheaper failure.
+steam_pause() {
+    _pause_end=$(( $(uptime_seconds) + $1 ))
+    _pause_wf="$(service_dir)/steam.wanted"
+    _pause_mark="$RUNTIME/steam-pause.mark"
+    if ! : > "$_pause_mark" 2>/dev/null; then
+        warn "cannot write $_pause_mark; a start from the menu will wait out the retry delay"
+        _pause_mark=""
+    fi
+    while [ "$(uptime_seconds)" -lt "$_pause_end" ]; do
+        if ! service_wanted steam; then
+            return 0
+        fi
+        if [ -n "$_pause_mark" ] && [ -f "$_pause_wf" ] \
+            && [ "$_pause_wf" -nt "$_pause_mark" ]; then
+            return 1
+        fi
+        sleep 2
+    done
+    return 0
+}
+
+# Give the tail co-process a moment to see EOF and flush the capture file.
+# Bounded: a sandbox straggler holding the fifo's write end open must not
+# wedge the supervisor, so after a few seconds the tail is killed and that
+# round's capture is whatever reached the disk -- usually nothing, because
+# tail on a pipe writes only at EOF. In practice EOF is prompt: bwrap is pid 1
+# of the sandbox's pid namespace, so when the client exits the kernel kills
+# every straggler and their fifo fds close together.
+steam_reap_console() {
+    [ -n "${_steam_tail_pid:-}" ] || return 0
+    _reap_tries=0
+    while kill -0 "$_steam_tail_pid" 2>/dev/null; do
+        if [ "$_reap_tries" -ge 4 ]; then
+            kill "$_steam_tail_pid" 2>/dev/null
+            break
+        fi
+        _reap_tries=$((_reap_tries + 1))
+        sleep 1
+    done
+    wait "$_steam_tail_pid" 2>/dev/null
+    _steam_tail_pid=""
+    rm -f "$_steam_fifo"
+}
+
+# The captured tail of Steam's own output, into the journal at warning level
+# with the exit status it preceded. Called only for exits nobody asked for,
+# and only twice per crash streak -- the first failure and the one that trips
+# the guard -- so a service that stays crashed for hours does not carry its
+# last words into the journal every retry.
+#
+# This exists because of 2026-08-11: background Steam exited with status 1
+# five times, thirty seconds apart, and the one line that named the cause -- a
+# bwrap mount denial printed to the stream this loop used to point at
+# /dev/null -- was thrown away five times. On a nonzero exit those discarded
+# lines are exactly the diagnosis; this is what would have made that afternoon
+# a one-line journal read.
+steam_dump_console() {
+    # Three different silences, said differently, because "printed nothing" is a
+    # claim about STEAM and only one of these is about Steam. A run with no
+    # capture at all was this script's failure, not the client's, and reporting
+    # it as the client's would send the next person to the wrong file.
+    if [ -z "${_steam_tail_pid_used:-}" ]; then
+        warn "background Steam exited with status $1; its output was not captured (no fifo)"
+        return 0
+    fi
+    if ! [ -s "${_steam_console:-}" ]; then
+        warn "background Steam exited with status $1 and printed nothing"
+        return 0
+    fi
+    warn "background Steam exited with status $1; the last lines it printed:"
+    tail -n 20 "$_steam_console" | while IFS= read -r _sline || [ -n "$_sline" ]; do
+        warn "  steam| $_sline"
+    done
+}
+
 # The background client's own supervision loop, run as a child of the session
 # so it inherits DISPLAY, the journal-connected descriptors and the session
 # user without any of them being passed.
@@ -728,8 +926,20 @@ service_wanted() {
 # Nothing here can delay or block the shell. It runs in the background, it is
 # started after the client, and every path through it either sleeps or returns.
 supervise_steam() {
-    _steam_exits=0
-    _steam_window_start="$(uptime_seconds)"
+    # Consecutive fast failures, not exits in a fixed window. A run that
+    # survives STEAM_EXIT_WINDOW seconds was a real session and clears the
+    # count; anything shorter is one more strike. The fixed window this
+    # replaces existed to tell unlucky from broken before a permanent
+    # give-up, and the give-up is gone -- run length answers the same
+    # question with less bookkeeping, and time spent parked in the crashed
+    # state cannot quietly refill the allowance the way elapsed window time
+    # did.
+    _steam_fails=0
+    _steam_backoff="$STEAM_RESTART_DELAY"
+    _steam_console="$RUNTIME/steam-console.tail"
+    _steam_fifo="$RUNTIME/steam-console.fifo"
+    _steam_tail_pid=""
+    _steam_was_stopped=""
 
     while :; do
         # STOPPED ON REQUEST, and this check is why the loop is shaped this way.
@@ -743,22 +953,52 @@ supervise_steam() {
         # wish can be written there is no game for `flatpak kill` to take down.
         if ! service_wanted steam; then
             service_state steam stopped
+            _steam_was_stopped=1
             sleep 2
             continue
         fi
 
-        # BACKGROUNDED, NOT BLOCKING, which is the other half of the same
-        # requirement. `flatpak run` does not return until the client exits, so a
-        # foreground call could not notice a stop request while the thing it
-        # would be stopping was running -- the menu would do nothing until Steam
-        # happened to quit on its own.
+        # A start after a stop is a human decision, and it resets the guard the
+        # same way the couch retry below does: whoever pressed it may have fixed
+        # what was crashing, and owes the client a fresh allowance either way.
+        if [ -n "$_steam_was_stopped" ]; then
+            _steam_was_stopped=""
+            _steam_fails=0
+            _steam_backoff="$STEAM_RESTART_DELAY"
+        fi
+
+        # THE RING BUFFER. Steam's own output used to go straight to /dev/null
+        # -- rightly, on the quiet path: the client narrates asset loads,
+        # controller enumeration and CEF chatter at info level, and an hour of
+        # it would bury every other service on this machine. But on a NONZERO
+        # exit those discarded lines are exactly the diagnosis (see
+        # steam_dump_console), so the stream now runs through `tail -n 40` into
+        # a tmpfs file: constant memory, nothing written until the client
+        # exits, and the quiet path stays quiet because nothing reads the file
+        # unless an exit was worth explaining.
         #
-        # Steam's own output goes to /dev/null rather than to the journal: the
-        # client narrates asset loads, controller enumeration and CEF chatter at
-        # info level, and an hour of it would bury every other service on this
-        # machine. What is worth knowing -- started, stopped, not coming back --
-        # is said in this script's own voice, which is also the only voice
-        # `journalctl -t marwanos-session` can be searched with.
+        # A fifo plus a tail co-process rather than a pipeline, so $! and
+        # `wait` still name `flatpak run` itself -- the exit status is the
+        # whole point. If the fifo cannot be made, the old /dev/null behaviour
+        # is the fallback: capture is a diagnostic, not a dependency.
+        rm -f "$_steam_fifo" "$_steam_console"
+        _steam_tail_pid=""
+        # Survives the reap, which clears _steam_tail_pid: steam_dump_console
+        # runs after it and has to tell "Steam said nothing" from "we captured
+        # nothing".
+        _steam_tail_pid_used=""
+        _steam_out="/dev/null"
+        if mkfifo "$_steam_fifo" 2>/dev/null; then
+            tail -n 40 < "$_steam_fifo" > "$_steam_console" 2>/dev/null &
+            _steam_tail_pid=$!
+            _steam_tail_pid_used=1
+            _steam_out="$_steam_fifo"
+        fi
+
+        # BACKGROUNDED, NOT BLOCKING. `flatpak run` does not return until the
+        # client exits, so a foreground call could not notice a stop request
+        # while the thing it would be stopping was running -- the menu would do
+        # nothing until Steam happened to quit on its own.
         #
         # THE WSI LEVER, and --env is how it has to be spelled. This session
         # exports ENABLE_GAMESCOPE_WSI=1 for everything, but Steam runs inside a
@@ -767,12 +1007,11 @@ supervise_steam() {
         # sandbox explicitly. Passed on EVERY profile except no-wsi rather than
         # only on no-wsi, so what the client gets is stated by this line rather
         # than inherited -- the difference between a lever and a coincidence.
-        if [ "$WINDOW_PROFILE" = "no-wsi" ]; then
-            flatpak run --env=ENABLE_GAMESCOPE_WSI=0 "$STEAM_FLATPAK_ID" -silent >/dev/null 2>&1 &
-        else
-            flatpak run --env=ENABLE_GAMESCOPE_WSI=1 "$STEAM_FLATPAK_ID" -silent >/dev/null 2>&1 &
-        fi
+        _steam_wsi=1
+        [ "$WINDOW_PROFILE" = "no-wsi" ] && _steam_wsi=0
+        flatpak run --env=ENABLE_GAMESCOPE_WSI="$_steam_wsi" "$STEAM_FLATPAK_ID" -silent > "$_steam_out" 2>&1 &
         _steam_pid=$!
+        _steam_started="$(uptime_seconds)"
         service_state steam running
 
         # Watch two things at once: the client, and the wish. `flatpak kill`
@@ -790,34 +1029,64 @@ supervise_steam() {
         wait "$_steam_pid" 2>/dev/null
         _steam_status=$?
         service_state steam stopped
+        steam_reap_console
 
         # A stop that was ASKED FOR is not a crash, so it must not count against
-        # the restart guard below -- otherwise toggling the menu five times would
-        # exhaust the allowance and the service could never be started again this
-        # boot. Back to the top, where the wanted check parks the loop cheaply.
+        # the guard and its last words are nobody's business. Back to the top,
+        # where the wanted check parks the loop cheaply.
         if ! service_wanted steam; then
             continue
         fi
 
-        _steam_now="$(uptime_seconds)"
-        if [ "$((_steam_now - _steam_window_start))" -ge "$STEAM_EXIT_WINDOW" ]; then
-            _steam_exits=0
-            _steam_window_start="$_steam_now"
+        _steam_ran=$(( $(uptime_seconds) - _steam_started ))
+        if [ "$_steam_ran" -ge "$STEAM_EXIT_WINDOW" ]; then
+            _steam_fails=0
+            _steam_backoff="$STEAM_RESTART_DELAY"
         fi
-        _steam_exits=$((_steam_exits + 1))
+        _steam_fails=$((_steam_fails + 1))
 
-        # A fixed window rather than a sliding one, for the same reason the
-        # client's guard uses one: a client that exits four times every five
-        # minutes forever is broken in a way somebody can still see, and a
-        # sliding window would silence it permanently on the fourth exit.
-        if [ "$_steam_exits" -ge "$STEAM_EXIT_LIMIT" ]; then
-            warn "background Steam exited $_steam_exits times in under ${STEAM_EXIT_WINDOW}s (last status $_steam_status); giving up until the next boot"
-            warn "games still launch from the home menu -- they will just wait out a cold client first"
-            return 0
+        if [ "$_steam_status" -ne 0 ]; then
+            if [ "$_steam_fails" -eq 1 ] || [ "$_steam_fails" -eq "$STEAM_EXIT_LIMIT" ]; then
+                steam_dump_console "$_steam_status"
+            fi
         fi
 
-        log "background Steam exited with status $_steam_status; restarting it in ${STEAM_RESTART_DELAY}s"
-        sleep "$STEAM_RESTART_DELAY"
+        # Under the limit: the ordinary thirty-second respawn, same as ever.
+        if [ "$_steam_fails" -lt "$STEAM_EXIT_LIMIT" ]; then
+            log "background Steam exited with status $_steam_status after ${_steam_ran}s; restarting it in ${STEAM_RESTART_DELAY}s"
+            if ! steam_pause "$STEAM_RESTART_DELAY"; then
+                _steam_fails=0
+                _steam_backoff="$STEAM_RESTART_DELAY"
+            fi
+            continue
+        fi
+
+        # CRASHED, and crashed is a state, not a verdict. The old code gave up
+        # until the next boot here, which on 2026-08-11 meant: a session bug
+        # killed five starts in 150 seconds, the guard latched, the owner
+        # pressed Start on the service row and a supervisor that had already
+        # returned ignored it. Now the state file says `crashed` (the bell goes
+        # amber, the row names it), retries continue with doubling delays up to
+        # STEAM_BACKOFF_MAX apart -- two journal lines an hour at the floor,
+        # not a hammering -- and a fresh start wish from the couch retries
+        # immediately with a clean slate.
+        service_state steam crashed
+        if [ "$_steam_fails" -eq "$STEAM_EXIT_LIMIT" ]; then
+            _steam_backoff=$((STEAM_RESTART_DELAY * 2))
+            warn "background Steam exited $_steam_fails times in a row without lasting ${STEAM_EXIT_WINDOW}s (last status $_steam_status)"
+            warn "the service is CRASHED: retrying in ${_steam_backoff}s, then ever more slowly up to ${STEAM_BACKOFF_MAX}s apart"
+            warn "the bell menu's Steam row can retry it immediately; games still launch, they just wait out a cold client"
+        else
+            warn "background Steam is still crashing (status $_steam_status); next retry in ${_steam_backoff}s"
+        fi
+        if steam_pause "$_steam_backoff"; then
+            _steam_backoff=$((_steam_backoff * 2))
+            [ "$_steam_backoff" -gt "$STEAM_BACKOFF_MAX" ] && _steam_backoff="$STEAM_BACKOFF_MAX"
+        else
+            log "a fresh start was asked from the couch; retrying Steam now with a clean slate"
+            _steam_fails=0
+            _steam_backoff="$STEAM_RESTART_DELAY"
+        fi
     done
 }
 

@@ -37,6 +37,8 @@ decoder each, plus one JWT reader:
                             -> b64 protobuf for GenerateAccessTokenForApp
   token-resp   b64 on stdin -> the access token, or nothing
   jwt-sub      JWT on stdin -> the token's subject (a SteamID64), digits only
+  jwt-shape    JWT on stdin -> a one-line, secret-free description of why
+                               jwt-sub might have refused it
 
 Field numbers were measured against the live service rather than taken from
 any published .proto, and the decoder is a WALKER rather than a schema: it
@@ -289,9 +291,51 @@ def jwt_sub() -> None:
         _fail("unreadable JWT payload")
         return
     sub = str(claims.get("sub", ""))
-    if not sub.isdigit() or len(sub) != 17:
+    # 15..20 digits rather than exactly 17, and this is NOT the fix for the
+    # 2026-08-11 sign-in failure -- that was a tab-splitting bug in the caller
+    # (marwanos-steamfront's tsv_field) which fed this function an account
+    # name, and no width check here would have saved it. The relaxation stands
+    # on its own smaller argument: nothing in this image depends on the width.
+    # The subject names the token's file and rides the token exchange as a
+    # parameter Valve re-validates against the token's real contents on every
+    # use, so a future SteamID that is not 17 digits should not be refused by
+    # this machine's arithmetic. All digits and SteamID-sized is the whole of
+    # what is actually required; jwt-shape below says which part a refused
+    # token failed, which is the part that was really missing.
+    if not sub.isdigit() or not 15 <= len(sub) <= 20:
         _fail("JWT subject is not a SteamID64")
     sys.stdout.write(sub)
+
+
+def jwt_shape() -> None:
+    """A secret-free description of a token jwt-sub refused.
+
+    2026-08-11, on the bench: the first QR approval a phone ever granted this
+    machine ended in "an approved sign-in carried a token this machine could
+    not read" -- and the token was rightly never stored, so nothing remained
+    to diagnose. This prints only SHAPE: lengths, part counts, claim NAMES and
+    whether the subject is digits. No token material, no claim values, so the
+    root-side caller can put the answer straight in the journal and the next
+    refused approval diagnoses itself.
+    """
+    token = sys.stdin.read().strip()
+    parts = token.split(".")
+    out = ["length=%d" % len(token), "parts=%d" % len(parts)]
+    if len(parts) == 3:
+        payload = parts[1] + "=" * (-len(parts[1]) % 4)
+        try:
+            claims = json.loads(base64.urlsafe_b64decode(payload))
+        except (ValueError, base64.binascii.Error):
+            claims = None
+        if isinstance(claims, dict):
+            sub = str(claims.get("sub", ""))
+            out.append("payload=json")
+            out.append("claims=%s" % ",".join(sorted(str(k) for k in claims)[:12]))
+            out.append("sub_len=%d" % len(sub))
+            out.append("sub_digits=%s" % ("yes" if sub.isdigit() else "no"))
+        else:
+            out.append("payload=unreadable")
+    sys.stdout.write(" ".join(out))
 
 
 def main() -> None:
@@ -313,6 +357,8 @@ def main() -> None:
         token_resp()
     elif command == "jwt-sub" and not args:
         jwt_sub()
+    elif command == "jwt-shape" and not args:
+        jwt_shape()
     else:
         _fail("unknown subcommand or wrong arguments")
 
