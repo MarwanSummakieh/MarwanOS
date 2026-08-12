@@ -159,6 +159,9 @@ var _prose_status: Label = null
 var _signin_pane: Control = null
 var _signin_wash: Panel = null
 var _signin_qr: TextureRect = null
+## The square that holds the wash and the code. Hidden outright when no scan is
+## live -- see _build_signin.
+var _signin_frame: Control = null
 var _signin_line: Label = null
 var _signin_row: ActionRow = null
 ## Which published code is on screen, as the `fetched` stamp it arrived with.
@@ -381,7 +384,13 @@ func _build_signin() -> Control:
 	# which is worked from what a phone camera across a living room can resolve
 	# rather than from what looks balanced. Left-aligned like every heading on
 	# this screen rather than centred.
-	var frame := Control.new()
+	# HELD IN A MEMBER because the whole frame has to disappear when there is no
+	# code coming. It carries the wash as well as the picture, and a wash with
+	# nothing on its way is a grey square sitting above the sign-in row looking
+	# like an image that failed to load -- which is what the signed-out screen
+	# drew until somebody screenshotted it.
+	_signin_frame = Control.new()
+	var frame := _signin_frame
 	frame.custom_minimum_size = Vector2(TvTheme.STORE_QR_SIZE, TvTheme.STORE_QR_SIZE)
 	frame.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
 	frame.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -491,10 +500,22 @@ func _build_hints() -> Control:
 ## Which of the four this screen is right now. The order is the order of the
 ## questions: is the client here, is anybody signed in, did somebody ask for a
 ## code.
+## THE SHELF NEEDS A WEB TOKEN, NOT AN ACCOUNT, and the distinction is the whole
+## of this function. `Steam.account_signed_in` is true when EITHER identity
+## exists -- our QR token, or merely Valve's client having a session of its own
+## -- and only the first can fetch a library. Keying on it sent a machine whose
+## client was signed in but which had never had a QR scanned straight to
+## VIEW_LIBRARY, where it drew the person's own name above an empty shelf and
+## never offered the scan that was the one thing missing (bench, 2026-08-12).
+##
+## So: a web token draws the shelf, and anything less offers the code. The
+## client's own account is still worth knowing -- the sign-in pane says whether
+## it will be able to start a DRM'd game once the shelf works -- but it is not
+## what this decision is made of. See Steam.account_source.
 func _decide_view() -> int:
 	if not _client_installed():
 		return VIEW_ABSENT
-	if Steam.account_signed_in:
+	if Steam.account_has_library_access():
 		return VIEW_LIBRARY
 	if _signin_open:
 		return VIEW_SIGNIN
@@ -573,13 +594,31 @@ func _render_signin() -> void:
 
 	if _view == VIEW_SIGNED_OUT:
 		# Nothing has been asked for yet: the row is the whole pane.
+		_signin_frame.visible = false
 		_signin_qr.visible = false
 		_signin_drawn_fetched = -1
-		_signin_line.text = ""
 		_signin_row.visible = true
 		_signin_row.set_name_text("Sign in")
 		_signin_row.set_value("Scan a code with the Steam app on your phone")
+
+		# THE ONE CASE THAT NEEDS A SENTENCE, and it is the case that sent
+		# somebody to a shelf they could not fill: Valve's client is signed in,
+		# so the machine plainly knows who they are, and the screen is
+		# nevertheless asking them to sign in. Without a word here that reads as
+		# the machine having forgotten them. It has not -- it is that the
+		# client's session cannot fetch a library, and only a scanned code can.
+		if Steam.account_client_signed_in and not Steam.account_persona.is_empty():
+			_signin_line.text = (
+				"Steam is signed in as %s on this machine, but the library"
+				+ " needs its own code."
+			) % Steam.account_persona
+		else:
+			_signin_line.text = ""
 		return
+
+	# A scan is live (or has just ended): the square comes back, carrying the
+	# wash until the picture lands.
+	_signin_frame.visible = true
 
 	if Steam.signin_fetched != _signin_drawn_fetched:
 		var qr := Steam.qr_path()

@@ -220,6 +220,35 @@ var account_persona := ""
 ## the first launch fail without explanation.
 var account_client_signed_in := false
 
+## WHICH identity account.json is describing: "web" (a QR token this shell's own
+## sign-in won) or "client" (Valve's client knows somebody, and that is all we
+## have). Empty means nobody at all.
+##
+## THIS FIELD DECIDES WHETHER THE SHELF IS OFFERED, and it exists because the
+## obvious reading of `signed_in` is wrong in exactly one case that is also the
+## COMMON one on a machine somebody has used before. `signed_in` is true when
+## EITHER identity exists, so a bench whose Valve client had been signed in for
+## a day -- but which had never had a QR scanned -- reported signed_in with
+## source "client", and the screen went straight to a library it could never
+## fill. Measured on the bench 2026-08-12: account.json said
+## `"signed_in":true,"source":"client"`, library.json said `"items":[]`, and
+## marwanos-steam said "asked for a library with no QR sign-in on this machine".
+## The person saw their own name over an empty shelf with no way to fix it,
+## because the one control that would have fixed it -- the QR -- is only drawn
+## when the screen believes nobody is signed in.
+##
+## The protocol specification called this exact shot before a line was written:
+## the web token is the only identity that unlocks the library, so it is the one
+## the UI must key on, and reporting the client as though it were enough would
+## mean never offering the scan that would fix it.
+var account_source := ""
+
+
+## Has THIS shell got what it needs to draw a library -- a web token, not
+## somebody else's session. See account_source.
+func account_has_library_access() -> bool:
+	return account_source == "web"
+
 ## The QR sign-in's progress, mirroring signin.json. "" until one has run.
 var signin_status := ""
 var signin_persona := ""
@@ -577,17 +606,20 @@ func _load_account() -> void:
 	var signed_in := false
 	var persona := ""
 	var client := false
+	var source := ""
 	var parsed: Variant = JSON.parse_string(raw)
 	if parsed is Dictionary:
 		signed_in = bool(parsed.get("signed_in", false))
 		persona = str(parsed.get("persona", ""))
 		client = bool(parsed.get("client_signed_in", false))
+		source = str(parsed.get("source", ""))
 	elif not raw.strip_edges().is_empty():
 		ShellLog.warn("steam: the stored account is not in a shape this shell knows")
 
 	account_signed_in = signed_in
 	account_persona = persona
 	account_client_signed_in = client
+	account_source = source
 	# WHETHER, never WHO. A display name is somebody's, and the journal on this
 	# machine is read by whoever can reach it over SSH.
 	ShellLog.info("steam: %s" % ("signed in" if account_signed_in else "not signed in"))
