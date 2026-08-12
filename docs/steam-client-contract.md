@@ -74,7 +74,9 @@ unprivileged half telling root whose data to fetch.
 | `failed` | detail carries a short reason |
 
 `detail` is the request name, or on `failed` a short reason: `no token`,
-`sign in again`, `no answer`, `cannot write`, `not owned`, `no space`.
+`scan needed` (the library's own token is missing — one more QR fixes it),
+`sign in again`, `no answer`, `exchange refused`, `cannot write`, `not owned`,
+`no space`.
 
 **One writer.** The async sign-in job and the download workers narrate through
 their own files and must never write this one.
@@ -82,11 +84,15 @@ their own files and must never write this one.
 ## Result files
 
 ```jsonc
-// signin.json — the QR panel's whole story
-{ "status": "starting|waiting|approved|expired|failed",
+// signin.json — the QR panel's whole story. "waiting" is the first (downloads)
+// code, "second" the library's own; "approved" means BOTH tokens landed.
+{ "status": "starting|waiting|second|approved|expired|failed",
   "fetched": <epoch>, "persona": "", "client_signed_in": false }
 
-// account.json
+// account.json — `source` is the shelf's gate: "web" only when the library's
+// own token exists; "client" for every lesser identity (Valve's session, or
+// the downloads token without the second scan), so the screen keeps offering
+// the one code that is missing.
 { "signed_in": true, "steamid": "765611…", "persona": "…",
   "source": "web|client|", "client_signed_in": true, "fetched": <epoch> }
 
@@ -154,16 +160,29 @@ Requirements that hold for every fetch:
 
 ## Sign-in
 
-Full wire detail is in the protocol specification. The one thing that cannot be
-got wrong, and which the deleted implementation got wrong by default:
+Full wire detail is in the protocol specification. **Two QR phases, two
+tokens**, and both halves were measured the hard way (2026-08-12):
 
-**The QR session must be begun as `platform_type = SteamClient` with
-`website_id = "Client"`.** SteamKit only submits a stored refresh token whose
-audience includes `client`, so a `WebBrowser`-audience token — the natural
-output of a flow designed around web API calls — is rejected at logon and the
-downloader silently falls back to asking for a password nobody can type. A
-`SteamClient` token carries `["web","client"]` and serves both our own API calls
-and DepotDownloader, which is what makes one scan enough for the whole feature.
+1. **The downloads phase** begins as `platform_type = SteamClient`,
+   `website_id = "Client"`. SteamKit only submits a stored refresh token whose
+   audience includes `client`, so a `WebBrowser`-audience token is rejected at
+   logon and the downloader silently falls back to asking for a password
+   nobody can type. Stored as `secrets/steam-refresh.<steamid>.token`.
+2. **The library phase** begins as `platform_type = WebBrowser`,
+   `website_id = "Store"`, immediately after the first approval, published as
+   status `second`. It exists because the SteamClient token's `web` audience
+   is reachable only over a CM connection: Valve's HTTPS exchange
+   (`GenerateAccessTokenForApp`, whose `steamid` is **fixed64**) serves
+   web-platform tokens exclusively and answers a client-platform one with
+   200-empty/x-eresult 63 (`finalizelogin`: error 15; direct bearer: 401).
+   Stored as `secrets/steam-web.<steamid>.token`; `library` exchanges it for
+   an access token and calls `GetOwnedGames`.
+
+A machine holding the downloads token but not the library one (an interrupted
+second phase, or a `/var` from before it existed) publishes `source: "client"`
+and answers `library` with `failed / scan needed`; the `signin` verb detects
+that state and runs the second phase alone, so the repair is one scan, never
+two.
 
 Tokens are stored `0600` under `/var/marwanos/secrets/`, written under
 `umask 077` rather than chmod-after-write, one file per account, newest mtime

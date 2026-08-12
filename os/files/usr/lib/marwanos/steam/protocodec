@@ -28,7 +28,9 @@ begun as the Steam CLIENT, not as a web browser. Read that comment before
 changing anything there -- the deleted implementation had it the other way and
 the resulting token cannot download a game.
 
-  begin-req                 -> b64 protobuf for BeginAuthSessionViaQR
+  begin-req [client|web]    -> b64 protobuf for BeginAuthSessionViaQR; no
+                               argument means client (the build asserts those
+                               bytes), web begins the library's own session
   begin-resp   b64 on stdin -> TSV: client_id, challenge_url, request_id_b64,
                                poll interval in seconds
   poll-req CLIENT_ID REQUEST_ID_B64
@@ -248,8 +250,8 @@ def _print_b64(data: bytes) -> None:
 # The subcommands
 # ---------------------------------------------------------------------------
 
-def begin_req() -> None:
-    """BeginAuthSessionViaQR, begun AS THE STEAM CLIENT.
+def begin_req(kind: str) -> None:
+    """BeginAuthSessionViaQR: as THE STEAM CLIENT by default, as a BROWSER on request.
 
     THIS IS THE FIELD THAT DECIDES WHETHER GAMES CAN BE DOWNLOADED, and the
     deleted implementation had it wrong. It sent platform_type = 2
@@ -268,10 +270,19 @@ def begin_req() -> None:
     nobody can type.
 
     platform_type = 1 (k_EAuthTokenPlatformType_SteamClient) with
-    website_id = "Client" yields ["web", "client"] instead: one token that
-    serves both our own API calls and the downloader, which is what makes ONE
-    scan enough for the whole feature rather than two sign-ins for one account.
-    Measured 2026-08-12; see docs/adr/0010-our-own-steam-client.md, trap 1.
+    website_id = "Client" yields ["web", "client"] instead: the token the
+    downloader accepts. Measured 2026-08-12; see
+    docs/adr/0010-our-own-steam-client.md, trap 1.
+
+    AND THEN THE SAME EVENING MEASURED WHY ONE SCAN IS STILL NOT ENOUGH. The
+    "web" in that audience is real but reachable only over a CM connection:
+    Valve's HTTPS token exchange serves WEB-platform tokens exclusively and
+    refuses a SteamClient one outright (the token-req docstring carries the
+    numbers). So the library needs a token of its own, and `begin-req web`
+    exists for it: platform_type = 2 (WebBrowser) with website_id = "Store",
+    the shape whose exchange the HTTPS endpoint is actually for. One approval
+    per session is Valve's rule, which makes the sign-in two scans -- the
+    client one for downloads, the web one for the shelf. steamd orders them.
 
     Field numbers measured live 2026-08-11: 1 device_friendly_name,
     2 platform_type, 4 website_id. The device name is what the person's phone
@@ -279,6 +290,13 @@ def begin_req() -> None:
     anything configurable -- somebody approving a scan should see the appliance
     that asked.
     """
+    if kind == "web":
+        _print_b64(
+            _string(1, "MarwanOS")
+            + _uint(2, 2)
+            + _string(4, "Store")
+        )
+        return
     _print_b64(
         _string(1, "MarwanOS")
         + _uint(2, 1)
@@ -479,7 +497,9 @@ def main() -> None:
         _fail("no subcommand")
     command, args = argv[0], argv[1:]
     if command == "begin-req" and not args:
-        begin_req()
+        begin_req("client")
+    elif command == "begin-req" and args in (["client"], ["web"]):
+        begin_req(args[0])
     elif command == "begin-resp" and not args:
         begin_resp()
     elif command == "poll-req" and len(args) == 2:

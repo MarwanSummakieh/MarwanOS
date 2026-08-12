@@ -81,6 +81,7 @@ const SIGNIN_LINES := {
 	"": "Getting a code from Steam",
 	"starting": "Getting a code from Steam",
 	"waiting": "Scan the code with the Steam app on your phone, then approve the sign-in there",
+	"second": "Approved -- one more scan fills your library. Scan this second code the same way",
 	"expired": "That code expired -- A gets a fresh one",
 	"failed": "Steam did not answer -- A tries again",
 }
@@ -602,12 +603,14 @@ func _render_signin() -> void:
 		_signin_row.set_value("Scan a code with the Steam app on your phone")
 
 		# THE ONE CASE THAT NEEDS A SENTENCE, and it is the case that sent
-		# somebody to a shelf they could not fill: Valve's client is signed in,
-		# so the machine plainly knows who they are, and the screen is
-		# nevertheless asking them to sign in. Without a word here that reads as
-		# the machine having forgotten them. It has not -- it is that the
-		# client's session cannot fetch a library, and only a scanned code can.
-		if Steam.account_client_signed_in and not Steam.account_persona.is_empty():
+		# somebody to a shelf they could not fill: the machine plainly knows
+		# who they are -- Valve's client has a session, or the first QR phase
+		# already stored the downloads token -- and the screen is nevertheless
+		# asking them to sign in. Without a word here that reads as the machine
+		# having forgotten them. It has not -- it is that neither of those
+		# identities can fetch a library, and only the second scanned code can.
+		if (Steam.account_client_signed_in or Steam.account_signed_in) \
+				and not Steam.account_persona.is_empty():
 			_signin_line.text = (
 				"Steam is signed in as %s on this machine, but the library"
 				+ " needs its own code."
@@ -639,9 +642,9 @@ func _render_signin() -> void:
 	if status == "approved":
 		var who := Steam.signin_persona
 		var line := ("Signed in as %s" % who) if not who.is_empty() else "Signed in"
-		# THE KNOWN LIMIT, said here rather than papered over. The token this scan
-		# mints is the client's as well as the web's -- that is the one thing
-		# ADR 0010 says cannot be got wrong -- but Valve's client keeps its own
+		# THE KNOWN LIMIT, said here rather than papered over. "approved" now
+		# means BOTH scans landed -- downloads token and library token, see the
+		# contract's sign-in section -- but Valve's client keeps its own
 		# account, and a game with Steam DRM will not start until the client has
 		# signed in once itself. Only said when it applies.
 		if not Steam.signin_client_signed_in:

@@ -934,15 +934,16 @@ client_account() {
 ## card that forgot the account whenever the wifi dropped would be lying about
 ## something it can see from where it stands.
 ##
-## TWO SOURCES, AND THE TOKEN WINS. The refresh token is the only identity that
-## unlocks the library, so it is the one the shell must key its "offer a sign-in"
-## decision on: a machine whose CLIENT is signed in but which has never had a QR
-## scanned has no library access, and if `source` said "client" there the shell
-## would think it was done and never offer the scan that would fix it. So
-## `source` is "web" whenever a token exists, "client" only when that is the sole
-## account, and `client_signed_in` rides alongside as a SEPARATE fact -- the
-## shell needs it because a Steam-DRM game cannot start without that client's own
-## session, and the honest UI for that is a sentence rather than a dead button.
+## TWO SOURCES, AND THE LIBRARY TOKEN WINS. The web token is the only identity
+## that unlocks the shelf, so it is the one the shell must key its "offer a
+## sign-in" decision on: a machine whose CLIENT is signed in -- Valve's, or our
+## own downloads token without the second phase -- has no library access, and
+## if `source` claimed "web" there the shell would think it was done and never
+## offer the scan that would fix it. So `source` is "web" only when
+## steam-web.<sid>.token exists, "client" for every lesser identity, and
+## `client_signed_in` rides alongside as a SEPARATE fact -- the shell needs it
+## because a Steam-DRM game cannot start without Valve's client's own session,
+## and the honest UI for that is a sentence rather than a dead button.
 do_account() {
     local found="" body=""
     local client_id="" client_persona=""
@@ -975,7 +976,18 @@ do_account() {
 
     if [ -n "$web_id" ]; then
         steamid="$web_id"
-        source="web"
+        # `source` IS THE SHELF'S GATE, so it answers the shelf's question:
+        # "web" only when the library's own token exists. A machine holding
+        # only the downloads token is signed in -- installs will work once the
+        # shelf can offer one -- but its shelf cannot fill, and calling it
+        # "web" is exactly the empty-shelf-over-a-person's-own-name trap the
+        # bench measured on 2026-08-12. "client" keeps the screen offering the
+        # one code that is missing, and the signin verb asks for just that one.
+        if [ -e "$SECRETS_DIR/steam-web.$web_id.token" ]; then
+            source="web"
+        else
+            source="client"
+        fi
         persona="$web_persona"
         # A sign-in whose persona sidecar was lost still borrows the client's
         # display name when the two are the same account, rather than being left
@@ -1083,13 +1095,17 @@ render_qr() {
 
 
 ## Store an approved sign-in: the refresh token root-side, the account name
-## beside it for do_account, and nothing anywhere else.
+## beside it for do_account, and nothing anywhere else. `kind` names the file:
+## "client" is the downloads identity (the one DepotDownloader is seeded from)
+## and "web" is the library's own -- two files because Valve's HTTPS exchange
+## serves only web-platform tokens, which is the whole reason the sign-in has
+## two phases. See the contract's sign-in section.
 ##
 ## umask RATHER THAN chmod-after-write, so there is no window in which the file
 ## exists more readable than it ends up. The token crosses into protocodec on
 ## stdin, never as an argument.
 signin_store_token() {
-    local refresh="$1" account_name="$2"
+    local kind="$1" refresh="$2" account_name="$3"
     local steamid="" shape=""
     steamid="$(printf '%s' "$refresh" | "$PROTO" jwt-sub 2>/dev/null)" || steamid=""
     case "$steamid" in
@@ -1113,6 +1129,7 @@ signin_store_token() {
     # Two `local` statements rather than one: assignments on a single `local`
     # line run left to right but the second cannot see the first (SC2318).
     local dest="$SECRETS_DIR/steam-refresh.$steamid.token"
+    [ "$kind" = "web" ] && dest="$SECRETS_DIR/steam-web.$steamid.token"
     local tmp="$dest.tmp"
     # No trailing newline. The file is read back and piped verbatim into
     # protocodec and into curl, and a stray byte on the end of a JWT is a
@@ -1143,37 +1160,38 @@ signin_store_token() {
     # would show an empty library and no reason anywhere. Deleting it makes the
     # next request a cache miss that refetches with the token that now exists.
     rm -f "$VAR_DIR/library.json"
-    # WHETHER, never who -- and above all never the token.
-    info "a QR sign-in was approved"
-    signin_publish approved "$account_name" || true
+    # The finishing sentence belongs to the orchestrator -- after the client
+    # phase the honest word is "second", not "approved" -- so this only keeps
+    # the name for it. WHETHER, never who -- and above all never the token.
+    SIGNIN_PERSONA="$account_name"
+    info "a QR sign-in was approved ($kind)"
     return 0
 }
 
 
-## The whole QR session, run as a BACKGROUND job. The one departure from this
-## service's single-threaded shape, and the reason is arithmetic: an approval
-## takes as long as a person takes to find their phone, minutes against a loop
-## that answers everything else in seconds, and blocking would freeze the client
-## for the length of a scan.
+## One QR phase: begin a session as `kind`, draw the code, poll until a phone
+## approves, store the token. `word` is what signin.json says while the code is
+## up -- "waiting" for the first scan, "second" for the library's -- and the
+## shell words each of them for a person holding a phone.
 ##
-## WHAT KEEPS TWO WRITERS HONEST: this narrates ONLY through signin.json, qr.png
-## and the secrets directory. It never touches steam.state -- the main loop owns
-## that, and the seam's one-word contract stays single-writer.
+## Returns 0 only with a token stored; every other exit has already published
+## its own bad news, so the orchestrator below simply stops.
 ##
 ## THE POLL IS BOUNDED THREE WAYS: by SIGNIN_TIMEOUT overall, by the floor under
 ## Valve's own interval, and by SIGNIN_MISS_LIMIT consecutive transport failures.
 ## The sleep comes FIRST, before the first poll: the QR has only just been drawn
 ## and nobody has had time to look at it, so an immediate poll is a request that
 ## can only answer "not yet".
-do_signin_job() {
+signin_qr_phase() {
+    local kind="$1" word="$2"
     local req="" resp="" parsed=""
     local client_id challenge request_id interval
 
-    req="$("$PROTO" begin-req 2>/dev/null)" || req=""
+    req="$("$PROTO" begin-req "$kind" 2>/dev/null)" || req=""
     if [ -z "$req" ]; then
         err "could not encode a sign-in request"
         signin_publish failed || true
-        return 0
+        return 1
     fi
     # The begin request holds no credential, so it may ride an argument -- but it
     # is spelled the same way as the two calls that DO carry one, because the
@@ -1185,7 +1203,7 @@ do_signin_job() {
     if [ -z "$resp" ]; then
         err "Steam's sign-in endpoint did not answer"
         signin_publish failed || true
-        return 0
+        return 1
     fi
     parsed="$(printf '%s' "$resp" | "$PROTO" begin-resp 2>/dev/null)" || parsed=""
     client_id="$(tsv_field "$parsed" 1)"
@@ -1195,7 +1213,7 @@ do_signin_job() {
     if [ -z "$client_id" ] || [ -z "$challenge" ] || [ -z "$request_id" ]; then
         err "Steam's sign-in answer could not be read"
         signin_publish failed || true
-        return 0
+        return 1
     fi
 
     # The interval arrives as a decimal; the sleep uses whole seconds with the
@@ -1209,10 +1227,10 @@ do_signin_job() {
 
     if ! render_qr "$challenge"; then
         signin_publish failed || true
-        return 0
+        return 1
     fi
-    signin_publish waiting || true
-    info "a sign-in QR is up; waiting for a phone"
+    signin_publish "$word" || true
+    info "a sign-in QR is up ($kind); waiting for a phone"
 
     local now deadline
     now="$(date +%s)"
@@ -1231,7 +1249,7 @@ do_signin_job() {
             err "could not encode a sign-in poll"
             rm -f "$QR"
             signin_publish failed || true
-            return 0
+            return 1
         fi
         if ! pollresp="$(printf '%s' "$pollreq" | curl -fsS --max-time "$CURL_MAX_TIME" \
                 --data-urlencode "input_protobuf_encoded@-" \
@@ -1241,7 +1259,7 @@ do_signin_job() {
                 err "Steam's sign-in poll stopped answering"
                 rm -f "$QR"
                 signin_publish failed || true
-                return 0
+                return 1
             fi
             continue
         fi
@@ -1265,7 +1283,10 @@ do_signin_job() {
         # response, and taking the rotation first would redraw the QR and go back
         # to waiting while holding the token that ends the session.
         if [ -n "$refresh" ]; then
-            signin_store_token "$refresh" "$account_name" || signin_publish failed || true
+            if ! signin_store_token "$kind" "$refresh" "$account_name"; then
+                signin_publish failed || true
+                return 1
+            fi
             return 0
         fi
         if [ -n "$new_challenge" ]; then
@@ -1281,13 +1302,51 @@ do_signin_job() {
                 ''|0|*[!0-9]*) ;;
                 *) client_id="$new_client_id" ;;
             esac
-            render_qr "$new_challenge" && signin_publish waiting || true
+            render_qr "$new_challenge" && signin_publish "$word" || true
         fi
     done
 
     rm -f "$QR"
     signin_publish expired || true
     info "a sign-in QR expired unanswered"
+    return 1
+}
+
+
+## The whole sign-in, run as a BACKGROUND job. The one departure from this
+## service's single-threaded shape, and the reason is arithmetic: an approval
+## takes as long as a person takes to find their phone, minutes against a loop
+## that answers everything else in seconds, and blocking would freeze the client
+## for the length of a scan.
+##
+## WHAT KEEPS TWO WRITERS HONEST: this narrates ONLY through signin.json, qr.png
+## and the secrets directory. It never touches steam.state -- the main loop owns
+## that, and the seam's one-word contract stays single-writer.
+##
+## TWO PHASES, TWO SCANS, because Valve grants one approval per begun session
+## and this appliance needs two token platforms: SteamClient for the downloader
+## (trap 1 of ADR 0010) and WebBrowser for the library, since the HTTPS token
+## exchange refuses client-platform tokens outright -- measured 2026-08-12, the
+## full numbers in protocodec's token-req docstring. The client phase is SKIPPED
+## when its token already exists and only the web one is missing: that is the
+## retry after a phase-two failure and every machine signed in before the
+## second phase shipped, and neither should cost a person the scan they have
+## already done. Both tokens present means somebody pressed sign-in on a
+## signed-in machine -- a deliberate re-sign-in (or account switch), so both
+## phases run and both files are replaced.
+do_signin_job() {
+    local sid=""
+    sid="$(token_steamid)" || sid=""
+    if [ -n "$sid" ] && [ ! -e "$SECRETS_DIR/steam-web.$sid.token" ]; then
+        info "the downloads token is already here; asking only for the library scan"
+        # The name for the final publish, from the sidecar the first scan kept.
+        SIGNIN_PERSONA="$(cat "$SECRETS_DIR/steam-persona.$sid" 2>/dev/null)" || SIGNIN_PERSONA=""
+        SIGNIN_PERSONA="$(clean_text "$SIGNIN_PERSONA")"
+    else
+        signin_qr_phase client waiting || return 0
+    fi
+    signin_qr_phase web second || return 0
+    signin_publish approved "$SIGNIN_PERSONA" || true
 }
 
 
@@ -1304,7 +1363,7 @@ do_signin_start() {
     if [ -n "$SIGNIN_PID" ] && kill -0 "$SIGNIN_PID" 2>/dev/null; then
         current="$(signin_status)" || current=""
         case "$current" in
-            starting|waiting) ;;
+            starting|waiting|second) ;;
             *) current="waiting" ;;
         esac
         info "a sign-in is already waiting on a phone"
@@ -1368,10 +1427,17 @@ do_library() {
         return 0
     fi
 
-    token="$(cat "$SECRETS_DIR/steam-refresh.$steamid.token" 2>/dev/null)" || token=""
+    # THE LIBRARY'S OWN TOKEN, not the downloads one that named the steamid.
+    # The two are separate files because Valve's HTTPS exchange serves only
+    # web-platform tokens (measured 2026-08-12; protocodec's token-req
+    # docstring has the numbers), which is why the sign-in runs two QR phases.
+    token="$(cat "$SECRETS_DIR/steam-web.$steamid.token" 2>/dev/null)" || token=""
     if [ -z "$token" ]; then
-        err "the sign-in token file has gone missing or unreadable"
-        state failed "no token"
+        # An expected state, not a fault: the second phase was interrupted, or
+        # this /var predates it. The signin verb sees the missing half and asks
+        # for one code only, so the repair is a single scan.
+        info "the library needs its own scan on this machine"
+        state failed "scan needed"
         return 0
     fi
 
@@ -1404,13 +1470,13 @@ do_library() {
         if [ "$tokrc" -eq 0 ]; then
             # 200 WITH AN EMPTY BODY IS AN ANSWER: it is how this endpoint
             # refuses a token whose platform it does not serve (x-eresult 63,
-            # measured 2026-08-12). This machine's tokens are SteamClient-
-            # platform on purpose -- the audience DepotDownloader needs -- and
-            # the HTTPS exchange serves web-platform tokens only, so on the
-            # current design this branch is the library's honest dead end, not
-            # a retry and not a re-scan. protocodec's token-req docstring
-            # carries the full measurement.
-            warn "Steam's web exchange refuses a client-platform token; the library cannot fill on this design"
+            # measured 2026-08-12 against a SteamClient token). The stored
+            # library token is web-platform on purpose, so landing here means
+            # either the wrong kind of token ended up in the web file or Valve
+            # moved the goalposts -- both worth a journal line that is not
+            # "did not answer". protocodec's token-req docstring carries the
+            # full measurement.
+            warn "Steam's web exchange refused the stored library token outright"
             state failed "exchange refused"
         else
             err "Steam's token endpoint did not answer (curl exit $tokrc)"
@@ -1592,6 +1658,10 @@ last_failed_at=0
 
 ## The background sign-in job, if one is up. See do_signin_start.
 SIGNIN_PID=""
+# The display name the most recent stored approval carried, set by
+# signin_store_token inside the sign-in job's subshell and read by its
+# orchestrator for the final "approved" publish. Never a token, never an id.
+SIGNIN_PERSONA=""
 
 ## Epoch until which the store-page pass stands down after a 429. In memory for
 ## the failure cooldown's reason -- a restart forgetting it costs at most one

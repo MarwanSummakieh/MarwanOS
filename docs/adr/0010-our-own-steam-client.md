@@ -77,8 +77,22 @@ Three findings were measured on 2026-08-12 and each would have cost a build:
    audience includes `client`. A token begun with `platform_type = WebBrowser`
    (which is what a sign-in designed around web API calls naturally produces,
    and what the deleted code produced) is rejected at logon. A `SteamClient`
-   token carries `["web","client"]` and serves both our own API calls and
-   DepotDownloader — so there is **one** sign-in, not two.
+   token carries `["web","client"]` and is what DepotDownloader needs.
+
+   **Corrected the same evening (2026-08-12): the "one sign-in, not two"
+   conclusion this finding originally drew was measured false.** The `web` in
+   that audience is reachable only over a CM connection: Valve's HTTPS token
+   exchange (`GenerateAccessTokenForApp`) serves web-platform tokens
+   exclusively and refuses a SteamClient one outright — 200-empty with
+   x-eresult 63, and every HTTPS side door refuses too (`finalizelogin`
+   error 15, direct bearer 401). Community clients (SteamKit, steam-session,
+   ASF) all route client-token derivation through the CM protocol, which this
+   repo deliberately does not speak. So the sign-in is **two QR phases**: a
+   SteamClient session for downloads, then a WebBrowser session whose token
+   fills the library over plain HTTPS. One extra scan per ~200-day token
+   lifetime, against a CM implementation nobody has to maintain. The wire
+   detail lives in protocodec's token-req docstring; the seam vocabulary in
+   the contract's sign-in section.
 
 2. **The DepotDownloader binary path is pinned forever.** Its credential cache
    lives in .NET isolated storage under a directory named from a hash of the
