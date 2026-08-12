@@ -13,11 +13,18 @@ extends Control
 ## changes it, three about the network above a Wi-Fi row that joins one.
 ##
 ## So the facts left, whole, for info_screen.gd, which merged them on the way
-## (see its header). What is left is one row per thing a person can DO, plus
-## Info at the top as the way back to what the machine knows about itself: five
-## rows on a shipped machine and six with the devmode Terminal, where there were
-## fourteen. Nothing scrolls on any panel this appliance has been run on, and
-## the A hint means one thing again.
+## (see its header). What is left is one row per thing a person can DO: four
+## rows on a shipped machine and five with the devmode Terminal, where there
+## were fourteen. Nothing scrolls on any panel this appliance has been run on,
+## and the A hint means one thing again.
+##
+## THE INFO ROW WENT TOO, in the menu rewrite of 2026-08-12, and this screen is
+## better for it rather than merely shorter. Info is a peer surface now with its
+## own door -- the bar's status corner, the wifi glyph and the clock (see
+## info.gd). This screen is the list of things you can DO; a row that does
+## nothing, sitting at the top of it, was the one remaining exception to the
+## sentence above, and it was also a second door onto a page that already had
+## one. Every row here now changes something.
 ##
 ## NAVIGATION IS THE RAIL'S ARGUMENT ROTATED 90 DEGREES. One axis -- up and
 ## down are the only moves, the ends are hard stops, left and right are pointed
@@ -34,7 +41,6 @@ const TvTheme = preload("res://src/tv_theme.gd")
 const ActionRow = preload("res://src/action_row.gd")
 const WifiScreen = preload("res://src/wifi_screen.gd")
 const UpdateScreen = preload("res://src/update_screen.gd")
-const InfoScreen = preload("res://src/info_screen.gd")
 const Catalogue = preload("res://src/catalogue.gd")
 
 var _rows: Array = []
@@ -42,8 +48,6 @@ var _scroll: ScrollContainer = null
 ## Typed as the SUBCLASS, not as SettingsRow: `activated` is declared on
 ## ActionRow, and GDScript resolves signal access against the static type --
 ## a SettingsRow-typed variable would fail to parse on `.activated.connect`.
-var _info_row: ActionRow = null
-var _info_screen: InfoScreen = null
 var _display_row: ActionRow = null
 var _window_row: ActionRow = null
 var _wifi_row: ActionRow = null
@@ -114,21 +118,15 @@ func _ready() -> void:
 	list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_scroll.add_child(list)
 
-	# FIRST, AND IT IS THE ONLY ROW HERE THAT CHANGES NOTHING. Everything this
-	# machine can say about itself -- the image, the renderer, the window, the
-	# pad, the network, the address -- is one press behind this row instead of
-	# nine rows in front of the controls. See info_screen.gd for what merged on
-	# the way there.
+	# FIRST, AND THE SCREEN OPENS ON IT. That used to be the Info row, chosen as
+	# the safe place for a first press from a cold start -- a row that reads the
+	# machine rather than changing anything. Info has its own door now, so the
+	# first row acts like every other one here, and the safety argument is spent
+	# rather than transferred: this is the display-profile ring, which is closed
+	# (press A enough times and you are back where you started) and changes
+	# nothing at all until gamescope restarts. An accidental A on it is a word on
+	# a row, not a television somebody was happy with going dark.
 	#
-	# Top rather than bottom because it is the safe row: the screen opens with
-	# focus on it, so a first press from a cold start reads the machine rather
-	# than cycling the display profile of a television somebody was happy with.
-	_info_row = ActionRow.new()
-	_info_row.setup("Info", "About this machine -- press A")
-	_info_row.activated.connect(_on_info_row_pressed)
-	list.add_child(_info_row)
-	_rows.append(_info_row)
-
 	# THE ROW THAT EXISTS BECAUSE OF A HEADACHE. On 2026-08-10 the owner said
 	# the screen was "so flickery it's giving me a headache", and the bench was
 	# unreachable over SSH -- so the one person who could see the problem was
@@ -284,9 +282,9 @@ func _build_hints() -> Control:
 	hints.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	hints.add_theme_constant_override("separation", TvTheme.HINT_GAP)
 	# "Select", still, and now it is true of every row rather than most of them:
-	# Info, Wi-Fi and Updates open a page, Display and Steam step to the next
-	# value in place, Terminal launches. Nothing here answers A with a log line
-	# saying it is read-only any more, because nothing here is.
+	# Wi-Fi and Updates open a page, Display and Steam step to the next value in
+	# place, Terminal launches. Nothing here answers A with a log line saying it
+	# is read-only any more, because nothing here is.
 	hints.add_child(TvTheme.hint("A", "Select"))
 	hints.add_child(TvTheme.hint("B", "Back"))
 	return hints
@@ -417,38 +415,6 @@ func _on_wifi_row_pressed() -> void:
 	ShellLog.info("wifi screen opened from settings")
 
 
-## Opens the Info page as a child of this one -- the Wi-Fi and Updates screens'
-## arrangement exactly, for their reason: it is a page WITHIN settings, it
-## returns here when it closes, and the home rail underneath must keep seeing
-## exactly one surface come and go.
-func _on_info_row_pressed() -> void:
-	if _info_screen != null:
-		return
-	_info_screen = InfoScreen.new()
-	_info_screen.closed.connect(_on_info_screen_closed)
-	add_child(_info_screen)
-	# Deaf while it is up, so one B press does not close both screens.
-	set_process_unhandled_input(false)
-	ShellLog.info("info screen opened from settings")
-
-
-func _on_info_screen_closed() -> void:
-	_close_info_screen.call_deferred()
-
-
-func _close_info_screen() -> void:
-	if _info_screen == null:
-		return
-	var screen := _info_screen
-	_info_screen = null
-	remove_child(screen)
-	screen.queue_free()
-	set_process_unhandled_input(true)
-	if _info_row != null:
-		_info_row.grab_focus()
-	ShellLog.info("info screen closed")
-
-
 func _updates_value() -> String:
 	match Updates.state:
 		"available":
@@ -512,7 +478,7 @@ func _on_launch_finished(_entry: Dictionary) -> void:
 	# screen's guard said the other way round. A launch cannot be started from
 	# under one today -- the row is unreachable while a child screen holds focus
 	# -- so this is a guard against a future arrangement rather than a live case.
-	if _wifi_screen == null and _update_screen == null and _info_screen == null:
+	if _wifi_screen == null and _update_screen == null:
 		set_process_unhandled_input(true)
 	# Nothing is focused after a hide, and a settings screen with no focus owner
 	# is a settings screen the pad cannot move -- the rail's _ensure_focus

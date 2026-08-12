@@ -31,9 +31,18 @@ extends Control
 ## and press nothing, which is exactly what "send me a picture of the info
 ## screen" needs to be worth asking for.
 ##
-## A CHILD OF SETTINGS, like the Wi-Fi and Updates screens: it is a page WITHIN
-## settings, B returns there, and the home rail underneath keeps seeing exactly
-## one surface come and go.
+## AND IT ABSORBED THE LAST DUPLICATE. The quick settings panel behind the bar's
+## wifi corner carried its own Network row -- the same two facts, worded a third
+## way, on a panel that also duplicated the settings screen and the process menu.
+## That panel is deleted; this page is where the network is described, and the
+## corner it used to drop from is now this page's door.
+##
+## A PEER SURFACE, NOT A CHILD OF SETTINGS. It used to be a page WITHIN settings,
+## opened by a row at the top of that screen and returning to it on B. The menu
+## rewrite of 2026-08-12 gave it its own seam (info.gd) and its own door, so it
+## now opens over the home rail exactly as settings, stores, power and files do,
+## and B returns to the rail. What did NOT change is this file: it builds rows
+## and emits `closed`, and it never knew what was underneath it.
 
 signal closed()
 

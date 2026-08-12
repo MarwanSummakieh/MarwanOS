@@ -422,19 +422,26 @@ COPY --from=mowser-build /payload/libmowser.so /build/shell/bin/libmowser.so
 RUN set -euxo pipefail; \
     grep -q '^name="Linux"$' /build/shell/export_presets.cfg; \
     grep -q '^binary_format/embed_pck=true$' /build/shell/export_presets.cfg; \
-    : "THE SERVICE VOCABULARY, asserted in both copies. A background service is"; \
-    : "shown through two doors -- the bell's service menu and the quick settings"; \
-    : "panel -- and each carries its own STATE_WORDS table by design, so neither"; \
-    : "screen depends on the other to draw. The cost is drift, and the drift"; \
-    : "happened the day `crashed` was added: it went into service_menu alone, so"; \
-    : "one crashed Steam read as \"Crashed\" through the bell and \"Not reported"; \
-    : "yet\" -- the unknown fallback -- through the panel. Neither the export nor"; \
-    : "the smoke run can see that: both tables parse, both screens build, and the"; \
-    : "only symptom is a wrong word on a television. This is the one place that"; \
-    : "can compare them, because the GDScript exists here and nowhere in the"; \
-    : "shipped image -- the binary is a single packed file."; \
-    grep -q '"crashed": "Crashed"' /build/shell/src/service_menu.gd; \
-    grep -q '"crashed": "Crashed"' /build/shell/src/quick_settings.gd; \
+    : "THE SERVICE VOCABULARY, asserted to exist ONCE. This used to compare two"; \
+    : "copies: a background service was shown through two doors -- the bell's"; \
+    : "service menu and the quick settings panel -- and each carried its own"; \
+    : "STATE_WORDS table so neither screen depended on the other to draw. The"; \
+    : "cost was drift, and the drift happened the day \`crashed\` was added: it"; \
+    : "went into service_menu alone, so one crashed Steam read as \"Crashed\""; \
+    : "through the bell and \"Not reported yet\" -- the unknown fallback --"; \
+    : "through the panel. The menu rewrite of 2026-08-12 deleted the second door"; \
+    : "and the second table with it, which is the fix this assertion could only"; \
+    : "ever detect. What is left is the pair of checks that keep it deleted: the"; \
+    : "one table still says the word, and no second file has grown a copy."; \
+    : ""; \
+    : "THE NEGATED CHECK IS SPELLED OUT RATHER THAN WRITTEN WITH \`!\`, because"; \
+    : "\`set -e\` does not fail a pipeline the shell negated -- a \`! grep\` here"; \
+    : "would be inert, which has happened in this file before."; \
+    grep -q '"crashed": "Crashed"' /build/shell/src/process_menu.gd; \
+    if [ "$(grep -rlF '"crashed": "Crashed"' /build/shell/src | wc -l)" -ne 1 ]; then \
+        echo "STATE_WORDS has more than one home again; see process_menu.gd" >&2; \
+        exit 1; \
+    fi; \
     rm -rf /build/shell/.godot
 
 # Import and export are two steps because only --export-debug and --export-pack

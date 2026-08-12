@@ -44,11 +44,9 @@ const AppOverlay = preload("res://src/app_overlay.gd")
 const ListMenu = preload("res://src/list_menu.gd")
 const DetailsPanel = preload("res://src/details_panel.gd")
 const ErrorScreen = preload("res://src/error_screen.gd")
-const MosMark = preload("res://src/mos_mark.gd")
-const ServiceTray = preload("res://src/service_tray.gd")
-const ServiceMenu = preload("res://src/service_menu.gd")
+const ProcessPill = preload("res://src/process_pill.gd")
+const ProcessMenu = preload("res://src/process_menu.gd")
 const StatusCorner = preload("res://src/status_corner.gd")
-const QuickSettings = preload("res://src/quick_settings.gd")
 
 ## Same prefix, same meaning as tile.gd's: an entry whose id starts with it is a
 ## Steam library game rather than an application, which is what makes it the one
@@ -115,17 +113,19 @@ var _selected_entry: Dictionary = {}
 ## well as four members because every wiring loop below wants "all of them" --
 ## and a fifth icon arriving should not be a fifth line in four places.
 var _bar_buttons: Array = []
-var _service_tray: ServiceTray = null
-var _service_menu: ServiceMenu = null
+## The bar's left-hand pill and the menu behind it: what is running in the
+## background. It replaced the M.OS wordmark and the notification bell that
+## used to share that corner -- see process_pill.gd.
+var _process_pill: ProcessPill = null
+var _process_menu: ProcessMenu = null
 var _store_button: IconButton = null
 var _files_button: IconButton = null
 var _gear_button: IconButton = null
 var _power_button: IconButton = null
-## The wifi glyph and the clock, made one focusable control: A on it drops the
-## quick settings panel. See status_corner.gd for why the indicators became
-## the button rather than gaining a sibling.
+## The wifi glyph and the clock, made one focusable control: A on it opens the
+## Info page. See status_corner.gd for why the indicators became the button
+## rather than gaining a sibling, and what used to drop from here instead.
 var _status_corner: StatusCorner = null
-var _quick_settings: QuickSettings = null
 
 var _tiles: Array = []
 var _last_focused: Control = null
@@ -180,6 +180,12 @@ func _ready() -> void:
 	Power.power_closed.connect(_on_surface_closed)
 	Files.files_opened.connect(_on_surface_opened)
 	Files.files_closed.connect(_on_surface_closed)
+	# Info is a peer surface now rather than a page inside settings, so the rail
+	# hides and returns for it through the same pair every other surface uses.
+	# That is also what puts focus back on the status corner it was opened from:
+	# _hand_screen_over remembers the focus owner, _take_screen_back restores it.
+	Info.info_opened.connect(_on_surface_opened)
+	Info.info_closed.connect(_on_surface_closed)
 	PlayerOne.player_one_present.connect(_on_player_one_present)
 	PlayerOne.player_one_absent.connect(_on_player_one_absent)
 	SystemStatus.network_changed.connect(_on_network_changed)
@@ -453,26 +459,19 @@ func _build_topbar() -> Control:
 	# with no gap, reading as one impossible sentence. Caught on the Xvfb run.
 	bar.add_theme_constant_override("separation", TvTheme.HINT_GAP)
 
-	# THE MARK, not the name. "MarwanOS" as a string took the width of eight
-	# characters and said the same thing forever; the drawn M.OS says it in a
-	# third of the room, and the room is what the service tray beside it needed.
-	# See mos_mark.gd for why graffiti is three draw calls rather than a font.
-	var mark := MosMark.new()
-	mark.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	bar.add_child(mark)
-
-	# THE NOTIFICATION BELL, immediately right of the mark, because what it
-	# shows is about the machine rather than about the screen: whether the
-	# background services need attention, said as a badge on one bell rather
-	# than as a row of app icons (the owner's #17 -- see service_tray.gd). A
-	# opens the menu that starts and stops them, which is also where
-	# notifications will land when the shell has any. It is added to
-	# _bar_buttons below with the rest of the focusables so the neighbour table
-	# picks it up without a special case.
-	_service_tray = ServiceTray.new()
-	_service_tray.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	_service_tray.activated.connect(_open_service_menu)
-	bar.add_child(_service_tray)
+	# THE PROCESSES PILL, and it is the only thing in the bar's left corner now.
+	# Two things used to share it: the drawn "M.OS" wordmark, and a notification
+	# bell beside it. Both are gone at the owner's request (2026-08-12) and
+	# neither is missed by anything -- the wordmark was furniture that said the
+	# same thing on every screen forever, and the bell named a surface this shell
+	# has never had. What the bell actually opened was the list of background
+	# processes, so the control that replaced it is named and shaped for that.
+	# See process_pill.gd. It is added to _bar_buttons below with the rest of the
+	# focusables so the neighbour table picks it up without a special case.
+	_process_pill = ProcessPill.new()
+	_process_pill.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	_process_pill.activated.connect(_open_process_menu)
+	bar.add_child(_process_pill)
 	bar.add_child(_bar_gap())
 
 	var spacer := Control.new()
@@ -532,12 +531,13 @@ func _build_topbar() -> Control:
 
 	# THE STATUS CORNER IS THE LAST FOCUSABLE, rightmost because it is the
 	# corner: the wifi glyph and the clock, which used to be loose indicators
-	# here, are now the face of one button whose A drops the quick settings
-	# panel (#13). Appended by hand rather than through _bar_button because it
-	# is not an IconButton -- but into the same array, so the neighbour table
-	# still cannot drift from what is on the bar.
+	# here, are now the face of one button (#13). A on it opens the Info page --
+	# it used to drop a quick settings panel, which was a copy of four other
+	# surfaces and is deleted; see status_corner.gd. Appended by hand rather than
+	# through _bar_button because it is not an IconButton -- but into the same
+	# array, so the neighbour table still cannot drift from what is on the bar.
 	_status_corner = StatusCorner.new()
-	_status_corner.activated.connect(_open_quick_settings)
+	_status_corner.activated.connect(Info.open)
 	_bar_buttons.append(_status_corner)
 
 	for index in _bar_buttons.size():
@@ -547,7 +547,7 @@ func _build_topbar() -> Control:
 		if index + 1 < _bar_buttons.size():
 			bar.add_child(_bar_gap())
 
-	# THE TRAY JOINS THE FOCUS CHAIN AFTER the loop above, not before it: it was
+	# THE PILL JOINS THE FOCUS CHAIN AFTER the loop above, not before it: it was
 	# already parented to the bar at the far left, and letting the loop see it
 	# would re-add it on the right. Index 0 because it IS leftmost, so left off
 	# the store lands on it and the neighbour table needs no special case.
@@ -555,16 +555,17 @@ func _build_topbar() -> Control:
 	# ONLY WHILE IT HAS SOMETHING TO SHOW. A hidden control in the chain is a
 	# focus trap on exactly one machine -- a fresh one, before the first-boot
 	# installer has finished putting Steam on it -- and that is the machine least
-	# able to recover from a pad that stops responding. _refresh_tray_wiring puts
-	# it back the moment the tray has an icon to draw.
-	if _service_tray != null and _service_tray.visible:
-		_bar_buttons.insert(0, _service_tray)
-	Installed.apps_changed.connect(_on_tray_membership_changed)
+	# able to recover from a pad that stops responding.
+	# _on_pill_membership_changed puts it back the moment there is a process to
+	# list.
+	if _process_pill != null and _process_pill.visible:
+		_bar_buttons.insert(0, _process_pill)
+	Installed.apps_changed.connect(_on_pill_membership_changed)
 
 	# The wifi glyph and the clock used to end the bar here as loose indicator
 	# Labels. They still end it -- inside the status corner appended above,
-	# where they double as the quick settings panel's button. The rules about
-	# what the wifi fan may claim went with them; see status_corner.set_network.
+	# where they double as the Info page's button. The rules about what the wifi
+	# fan may claim went with them; see status_corner.set_network.
 	return bar
 
 
@@ -740,27 +741,27 @@ func _populate() -> void:
 ## Everything is still an explicit table someone can read. Down from a card and
 ## up from the bar stay pointed at self, so Control's geometric search can
 ## never wander into the hint row.
-## The tray appears and disappears with what is installed, so its membership of
-## the bar's focus chain has to move with it. Called on every installed-apps
-## change: the tray has already refreshed itself off the same signal by the time
-## this runs, so `visible` is current.
+## The processes pill appears and disappears with what is installed, so its
+## membership of the bar's focus chain has to move with it. Called on every
+## installed-apps change: the pill has already refreshed itself off the same
+## signal by the time this runs, so `visible` is current.
 ##
 ## Re-wiring rather than reordering by hand, because the neighbour table is
 ## derived from _bar_buttons and two ways of deciding the order is how the two
 ## end up disagreeing.
-func _on_tray_membership_changed(_apps: Array) -> void:
-	if _service_tray == null:
+func _on_pill_membership_changed(_apps: Array) -> void:
+	if _process_pill == null:
 		return
-	var present := _bar_buttons.has(_service_tray)
-	if _service_tray.visible == present:
+	var present := _bar_buttons.has(_process_pill)
+	if _process_pill.visible == present:
 		return
-	if _service_tray.visible:
-		_bar_buttons.insert(0, _service_tray)
+	if _process_pill.visible:
+		_bar_buttons.insert(0, _process_pill)
 	else:
-		_bar_buttons.erase(_service_tray)
+		_bar_buttons.erase(_process_pill)
 	_wire_focus_neighbours()
-	ShellLog.info("service tray %s the bar's focus chain"
-		% ("joined" if _service_tray.visible else "left"))
+	ShellLog.info("processes pill %s the bar's focus chain"
+		% ("joined" if _process_pill.visible else "left"))
 
 
 func _wire_focus_neighbours() -> void:
@@ -1611,12 +1612,13 @@ func _handle_bar_return(event: InputEvent) -> void:
 ## The states in which the bar's own two moves mean anything: this surface is
 ## on screen, and nothing is layered over it. `visible` covers the fullscreen
 ## surfaces, the card menu and a running application, all of which hide this
-## node; the details panel and the two drop menus do not hide it, so they are
-## named.
+## node; the details panel and the processes menu do not hide it, so they are
+## named. There used to be a second drop menu here (quick settings); it is
+## deleted, which is why this reads two names rather than three.
 func _bar_input_live() -> bool:
 	if not visible or _bar_row == null:
 		return false
-	return _details == null and _service_menu == null and _quick_settings == null
+	return _details == null and _process_menu == null
 
 
 ## Show the bar. With `take_focus`, also land on the store icon -- the same
@@ -1744,7 +1746,7 @@ func _on_details_requested(tile: Control) -> void:
 		ShellLog.info("details ignored: still the Down that came back from the top bar")
 		return
 	if Settings.is_open() or Stores.is_open() or Power.is_open() or Files.is_open() \
-			or Launcher.is_busy():
+			or Info.is_open() or Launcher.is_busy():
 		return
 	if not is_instance_valid(tile) or not _tiles.has(tile):
 		return
@@ -1838,82 +1840,53 @@ func _set_lower_deck_visible(shown: bool) -> void:
 			node.visible = shown
 
 
-## The options menu for the selected card. Guarded rather than always available,
-## and every guard is a state in which the menu would be about the wrong thing.
-## The service menu, from the tray in the bar. Same guards as the card menu: not
-## while another surface owns the screen, and not twice.
-func _open_service_menu() -> void:
-	if _service_menu != null or _details != null or _quick_settings != null:
+## The processes menu, from the pill in the bar's left corner. Same guards as
+## the card menu: not while another surface owns the screen, and not twice.
+##
+## THIS IS THE ONLY DROP MENU LEFT ON THE BAR. There were two -- this one and a
+## quick settings panel behind the status corner -- and the second was a copy of
+## four other surfaces (see status_corner.gd for the inventory). It is deleted,
+## along with the second set of open/close handlers that lived here, the second
+## STATE_WORDS table, and the Containerfile assertion that existed only to keep
+## the two tables agreeing.
+func _open_process_menu() -> void:
+	if _process_menu != null or _details != null:
 		return
 	if Settings.is_open() or Stores.is_open() or Power.is_open() or Files.is_open() \
-			or Launcher.is_busy():
+			or Info.is_open() or Launcher.is_busy():
 		return
 
-	_service_menu = ServiceMenu.new()
-	_service_menu.closed.connect(_on_service_menu_closed, CONNECT_ONE_SHOT)
+	_process_menu = ProcessMenu.new()
+	_process_menu.closed.connect(_on_process_menu_closed, CONNECT_ONE_SHOT)
 	# A child of the ROOT rather than of this node, for the overlay's reason: the
 	# rail hides itself while other surfaces are up, and a child of a hidden
 	# Control does not draw.
-	get_tree().root.add_child(_service_menu)
+	get_tree().root.add_child(_process_menu)
 	# Deaf while it is up: the menu's own _unhandled_input owns B, and both
 	# reacting would close the menu and act on the rail behind it on one press.
 	set_process_unhandled_input(false)
 
 
-func _on_service_menu_closed() -> void:
-	_close_service_menu.call_deferred()
+func _on_process_menu_closed() -> void:
+	_close_process_menu.call_deferred()
 
 
-func _close_service_menu() -> void:
-	if _service_menu == null:
+func _close_process_menu() -> void:
+	if _process_menu == null:
 		return
-	var menu := _service_menu
-	_service_menu = null
+	var menu := _process_menu
+	_process_menu = null
 	menu.get_parent().remove_child(menu)
 	menu.queue_free()
 	set_process_unhandled_input(true)
-	# The menu took focus; hand it back to the tray it came from, so the bar does
+	# The menu took focus; hand it back to the pill it came from, so the bar does
 	# not come back ringless and looking like the pad has stopped working.
-	if _service_tray != null and _service_tray.visible:
-		_service_tray.grab_focus()
+	if _process_pill != null and _process_pill.visible:
+		_process_pill.grab_focus()
 
 
-## The quick settings panel, from the bar's status corner. Same guards as the
-## service menu, and the same shape all the way down: a child of the root so a
-## hidden rail cannot swallow it, deaf while it is up, focus handed back to
-## the control it came from.
-func _open_quick_settings() -> void:
-	if _quick_settings != null or _service_menu != null or _details != null:
-		return
-	if Settings.is_open() or Stores.is_open() or Power.is_open() or Files.is_open() \
-			or Launcher.is_busy():
-		return
-
-	_quick_settings = QuickSettings.new()
-	_quick_settings.closed.connect(_on_quick_settings_closed, CONNECT_ONE_SHOT)
-	get_tree().root.add_child(_quick_settings)
-	set_process_unhandled_input(false)
-
-
-func _on_quick_settings_closed() -> void:
-	_close_quick_settings.call_deferred()
-
-
-func _close_quick_settings() -> void:
-	if _quick_settings == null:
-		return
-	var panel := _quick_settings
-	_quick_settings = null
-	panel.get_parent().remove_child(panel)
-	panel.queue_free()
-	set_process_unhandled_input(true)
-	# Back to the corner it dropped from. The corner is always on the bar --
-	# unlike the tray it has no installed-apps condition -- so this needs no
-	# visibility check beyond existing.
-	if _status_corner != null:
-		_status_corner.grab_focus()
-
-
+## The options menu for the selected card. Guarded rather than always available,
+## and every guard is a state in which the menu would be about the wrong thing.
 func _open_card_menu() -> void:
 	if _details != null:
 		# The panel owns the screen and the pad while it is up. OPTIONS is about
@@ -1924,7 +1897,7 @@ func _open_card_menu() -> void:
 		# two -- the same rule the other surfaces enforce.
 		return
 	if Settings.is_open() or Stores.is_open() or Power.is_open() or Files.is_open() \
-			or Launcher.is_busy():
+			or Info.is_open() or Launcher.is_busy():
 		# The rail is not what is on screen, so the selected card is not what the
 		# person is looking at.
 		return

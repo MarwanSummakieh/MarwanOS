@@ -59,6 +59,7 @@ Settings="*res://src/settings.gd"
 Stores="*res://src/stores.gd"
 Power="*res://src/power.gd"
 Files="*res://src/files.gd"
+Info="*res://src/info.gd"
 
 [display]
 

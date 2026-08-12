@@ -57,10 +57,19 @@ const CODEPOINTS := {
 	# The shell's existing marks
 	"store": 0xe470,        # storefront
 	"gear": 0xe270,
-	# The notification bell in the top bar (service_tray.gd). Verified against
-	# the vendored TTF's cmap as well as style.css, because the post table in
-	# this build is format 3 and carries no glyph names to cross-check by.
-	"bell": 0xe0ce,
+	# The processes pill at the bar's left corner (process_pill.gd): layers,
+	# i.e. things running underneath what is on screen. It replaced the
+	# notification bell that used to sit there (0xe0ce, dropped with the menu
+	# rewrite of 2026-08-12 -- the shell has no notifications and the surface
+	# behind it was always the process list).
+	#
+	# VERIFIED BY RENDERING, not by reading a table. The post table in this
+	# build is format 3 and carries no glyph names, so the cross-check that
+	# caught nothing here was the one that could not fail: the codepoint was
+	# rasterised out of the vendored TTF and looked at. 0xe2a0 -- hard-drives,
+	# already declared below -- was rendered in the same pass as a control, so
+	# the sweep's numbering is known to line up with this table.
+	"stack": 0xe466,
 	"wifi": 0xe4ea,         # wifi-high
 	"wifi-off": 0xe4f2,     # wifi-slash
 	"close": 0xe4f6,        # x

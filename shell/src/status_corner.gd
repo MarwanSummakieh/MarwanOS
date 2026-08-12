@@ -1,15 +1,34 @@
 extends Button
 
 ## The bar's right-hand corner -- the wifi glyph and the clock -- made
-## focusable, GNOME-fashion: press A on the corner that shows the system's
-## state and a small panel of quick settings drops from it (quick_settings.gd).
+## focusable: press A on the corner that shows the system's state and the Info
+## page opens, which is everything else the machine can say about itself.
+##
+## WHAT IT USED TO OPEN, AND WHY THAT WENT. A "quick settings" panel dropped
+## from here: network, display, one row per background process, and off /
+## restart / sleep. Every one of those was a copy. The network row restated the
+## Info page's, the display row restated the settings screen's, the process rows
+## restated the menu behind the bell, and the three power verbs restated the
+## power screen -- four surfaces' worth of duplicate, on the panel a person was
+## most likely to reach first. The menu rewrite of 2026-08-12 deleted it and
+## pointed this corner at the one page nothing else owns.
+##
+## INFO IS THE RIGHT DESTINATION rather than an arbitrary one left over from the
+## deletion: this control's whole face is system state -- is there a network, and
+## what time is it -- so A on it asking "what else does the machine know" is the
+## same question at more length. It is also the reading that keeps the corner a
+## control at all; the alternative was demoting it back to furniture.
 ##
 ## THE INDICATORS MOVED IN HERE RATHER THAN GAINING A SIBLING BUTTON. The wifi
 ## fan and the clock used to be loose Labels at the bar's end, explicitly "not
-## controls"; a separate quick-settings icon next to them would have been a
-## second thing in the same corner answering the same question. GNOME's shape
-## is the defensible one: the status cluster IS the button, so the thing you
-## look at for the system's state is the thing you press to act on it.
+## controls"; a separate icon next to them would have been a second thing in the
+## same corner answering the same question. GNOME's shape is the defensible one:
+## the status cluster IS the button, so the thing you look at for the system's
+## state is the thing you press.
+##
+## A PILL, and its twin is at the other end of the bar: the processes pill
+## (process_pill.gd) wears the same box for the same reason, so the bar reads as
+## a state pill at each edge with the round icon cluster between them.
 ##
 ## A Button for icon_button.gd's reason: FOCUS_ALL and ui_accept-to-pressed
 ## come free. Last in the bar's focus chain, because it is rightmost.

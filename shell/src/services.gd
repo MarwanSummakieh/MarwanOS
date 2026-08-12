@@ -3,9 +3,16 @@ extends Node
 ## ============================================================================
 ## THE SERVICE SEAM: what is running in the background, and asking it to stop.
 ##
-## The top bar shows one icon per background service -- lit when it is running,
-## grey when it is not -- and the menu behind it can start and stop them. Steam
-## is the only one today; Discord and whatever follows are a row in SERVICES.
+## The top bar's left corner is a pill that carries a dot when something needs
+## attention, and the menu behind it lists one row per background process and
+## can start and stop them. Steam is the only one today; Discord and whatever
+## follows are a row in SERVICES.
+##
+## THE SEAM SAYS "SERVICE", THE UI SAYS "PROCESS", and the split is deliberate
+## rather than sloppy. This file is about supervised units and wish files, which
+## is what the session's supervisor calls them; what a person sees on the
+## television is Steam quietly running while they are on the home screen. See
+## process_menu.gd's heading.
 ##
 ## THIS SEAM HAS NO PRIVILEGED HALF, and it is the only one here that does not.
 ## wifi, update, appctl, steamfront, display and window all cross a uid boundary:
@@ -39,20 +46,19 @@ extends Node
 ## appears only once somebody has chosen otherwise.
 ## ============================================================================
 
-## Emitted when any service's state changes. The screen redraws the whole row --
-## there are two of them, and a per-service signal would be plumbing for nothing.
+## Emitted when any service's state changes. Both consumers -- the pill's badge
+## and the menu's rows -- redraw everything they own from it, and a per-service
+## signal would be plumbing for nothing on a list this short.
 signal services_changed()
 
 const POLL_SECONDS := 2.0
 
 ## The services this shell knows how to show, in the order they appear in the
-## bar. `app_id` is the desktop-entry id the installed seam reports, and it is
-## what decides whether the icon is drawn at all: a machine without Discord
-## should show no Discord icon rather than a permanently grey one for something
-## nobody installed.
-##
-## `icon` is the glyph name, falling back to the application's real icon from
-## appscan when there is one -- same resolution the rail's cards use.
+## menu. `app_id` is the desktop-entry id the installed seam reports, and it is
+## what decides whether the row exists at all: a machine without Discord should
+## show no Discord row rather than a permanently stopped one for something
+## nobody installed. It is also what hides the whole pill on a machine that has
+## none of them -- see process_pill.refresh.
 const SERVICES := [
 	{
 		"id": "steam",
@@ -132,7 +138,7 @@ func _installed(app_id: String) -> bool:
 
 ## "running", "stopped", "crashed", or "unknown" when nothing has been written
 ## yet -- a desk run, or a boot too early for the supervisor to have said
-## anything. Unknown is drawn as grey but worded differently; see service_menu.
+## anything. Unknown is drawn as grey but worded differently; see process_menu.
 func state_of(id: String) -> String:
 	return str(_states.get(id, "unknown"))
 

@@ -58,8 +58,10 @@
 #   SERVICES_DIR the background-service seam: <id>.state files ("running",
 #                "stopped", "crashed") and optionally <id>.wanted, as the
 #                session's supervisor would have written them. What it drives is
-#                the bell's badge, the service menu's rows and the quick
-#                settings panel's copy of the same words.
+#                the processes pill's badge dot in the bar's left corner and the
+#                rows of the menu behind it. It used to drive a third thing --
+#                the quick settings panel's own copy of the same words -- which
+#                was deleted in the menu rewrite of 2026-08-12.
 #
 #                COPIED IN, NOT MOUNTED, and it is the only fixture that is --
 #                every other one is a read-only bind because the shell only

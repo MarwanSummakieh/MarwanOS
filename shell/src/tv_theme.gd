@@ -753,9 +753,12 @@ const HINT_SHAPES := {
 ## into the hint row, into the top bar behind a menu panel, into whatever else
 ## happens to be findable. Nine files had spelled that out identically (settings,
 ## info, the two menus that are now one, services, power, wifi, updates, places,
-## the app overlay), each with its own paraphrase of the same comment, and
-## service_menu's copy had got as far as calling itself "the settings list's
-## table, a fourth time".
+## the app overlay), each with its own paraphrase of the same comment, and the
+## processes menu's copy -- service_menu.gd, as it was called then -- had got as
+## far as calling itself "the settings list's table, a fourth time". One of the
+## nine has since gone entirely: the quick settings panel hand-wrote the table
+## rather than calling this, and the menu rewrite of 2026-08-12 deleted the
+## panel.
 ##
 ## Rows that need a DIFFERENT table still write their own: places_panel has an
 ## argument about its right edge, keyboard is a grid, details_panel is one

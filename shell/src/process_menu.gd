@@ -1,14 +1,25 @@
 extends Control
 
-## The service menu: what is running in the background, and a button per row that
-## turns it off or on.
+## The processes menu: what is running in the background, and a row per process
+## that turns it off or on.
 ##
-## Opened from the tray in the top bar (service_tray.gd). Same shape as the
-## card menu -- a panel over a dimmed screen, one axis, B closes -- because a
-## person who has learned what a menu is on a rail card has learned this one.
+## Opened from the pill at the bar's left corner (process_pill.gd). A panel over
+## a dimmed screen, one axis, B closes -- the card menu's shape, because a person
+## who has learned what a menu is on a rail card has learned this one. It hangs
+## under the pill it came from, top-left: a panel that appears somewhere
+## unrelated to the control that opened it makes a person hunt for the
+## connection.
 ##
-## ONE ROW PER SERVICE, and the row IS the switch. There is no separate Start and
-## Stop pair: a service is running or it is not, so the row says which and A does
+## THIS IS THE ONLY HOME FOR PROCESS CONTROL. It used to be one of two -- the
+## quick settings panel behind the wifi corner carried its own copy of these
+## rows, its own STATE_WORDS table and its own toggle, so the same Steam had two
+## doors, two vocabularies and two chances to drift. That panel is deleted (see
+## the menu rewrite of 2026-08-12) and this is what is left. ADR 0006's one
+## thing, one home, applied to the one surface that had quietly stopped
+## obeying it.
+##
+## ONE ROW PER PROCESS, and the row IS the switch. There is no separate Start and
+## Stop pair: a process is running or it is not, so the row says which and A does
 ## the other thing. Two buttons where one state exists is how a menu grows a
 ## wrong answer somebody can press.
 ##
@@ -18,18 +29,25 @@ extends Control
 ## state file agrees, rather than flipping to "Stopped" and being wrong for the
 ## most visible seconds of the whole interaction. See Services.pending_of.
 ##
-## NOTHING HERE CAN REMOVE ANYTHING. Stopping a service is a runtime state that
+## NOTHING HERE CAN REMOVE ANYTHING. Stopping a process is a runtime state that
 ## the next boot forgets unless the wish file survives -- it lives on a tmpfs, so
 ## it does not. Uninstalling Steam is the store card's Options menu and stays
-## there: one thing, one home.
+## there.
 
 signal closed()
 
 const TvTheme = preload("res://src/tv_theme.gd")
 const ActionRow = preload("res://src/action_row.gd")
 
-## What a row says on the right, by what the service is doing. The pending words
+## What a row says on the right, by what the process is doing. The pending words
 ## are verbs because something is happening; the settled ones are states.
+##
+## THERE IS ONE COPY OF THIS TABLE NOW. There were two, and the drift they were
+## warned about happened: `crashed` was added to this file alone, so the same
+## crashed Steam read "Crashed" through the bell and "Not reported yet" -- the
+## unknown fallback -- through the quick settings panel. The build asserted the
+## two copies agreed because nothing at runtime could. Deleting the second copy
+## deleted the class of bug; the Containerfile now asserts there is exactly one.
 ##
 ## "Crashed" is deliberately not softened: the supervisor is still retrying on
 ## a slow backoff, and A on the row retries immediately (crashed is not
@@ -37,7 +55,7 @@ const ActionRow = preload("res://src/action_row.gd")
 ## what sends a person to the journal instead of to the power button.
 ##
 ## THE ACCEPTED GAP: because crashed reads as not-running, A on a crashed row
-## always means start, so a crashed service cannot be STOPPED from here. That is
+## always means start, so a crashed process cannot be STOPPED from here. That is
 ## the cheaper half of the trade -- the supervisor's backoff reaches half an
 ## hour between attempts, so there is little left to stop -- and the expensive
 ## half would be a second action on a row that has one button.
@@ -65,9 +83,6 @@ func _ready() -> void:
 	dim.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(dim)
 
-	# TOP-LEFT, UNDER THE TRAY IT CAME FROM, rather than centred like the card
-	# menu. It is a drop menu: a panel that appears somewhere unrelated to the
-	# control that opened it makes a person hunt for the connection.
 	var place := MarginContainer.new()
 	place.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	place.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -99,8 +114,12 @@ func _ready() -> void:
 	_list.add_theme_constant_override("separation", TvTheme.SETTINGS_ROW_GAP)
 	pad.add_child(_list)
 
+	# "Running in the background", not "Background services". A service is what
+	# the seam calls them because that is what systemd would; what a person sees
+	# is Steam, and possibly Discord, quietly running while they are on the home
+	# screen. The heading names the situation rather than the mechanism.
 	var heading := Label.new()
-	heading.text = "Background services"
+	heading.text = "Running in the background"
 	heading.add_theme_font_size_override("font_size", TvTheme.SIZE_BODY)
 	heading.add_theme_color_override("font_color", TvTheme.TEXT_SECONDARY)
 	heading.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -123,12 +142,18 @@ func _ready() -> void:
 		var first: Control = _rows[0]
 		first.grab_focus()
 
+	ShellLog.info("processes menu up with %d rows" % _rows.size())
+
 
 func _build_rows() -> void:
 	var services: Array = Services.visible_services()
 	if services.is_empty():
 		# A real state on a machine with nothing installed, and it says so
 		# rather than presenting an empty panel that looks like a failure.
+		# Reachable only in theory today -- the pill hides itself when this list
+		# is empty, so there is no door -- and kept because the pill's
+		# visibility and this list are answered from the same seam a moment
+		# apart, and the panel must not be the thing that assumes they agreed.
 		var empty := Label.new()
 		empty.text = "Nothing runs in the background on this machine yet"
 		empty.add_theme_font_size_override("font_size", TvTheme.SIZE_BODY)
@@ -147,16 +172,14 @@ func _build_rows() -> void:
 		_rows.append(row)
 		_ids.append(id)
 
-	# The shared one-axis table. This file's own copy is the one that had got as
-	# far as calling itself "the settings list's table, a fourth time"; it was
-	# the ninth. What it wanted is what TvTheme.wire_column does -- hard stops at
-	# both ends, left and right pointed at self so Control's geometric search
-	# cannot wander out of the panel and into the bar behind it.
+	# The shared one-axis table -- hard stops at both ends, left and right
+	# pointed at self so Control's geometric search cannot wander out of the
+	# panel and into the bar behind it. See TvTheme.wire_column.
 	TvTheme.wire_column(_rows)
 
 
 ## What the row says on the right. The pending words win, because they are the
-## most recent true thing about the service -- see the header.
+## most recent true thing about the process -- see the header.
 func _value_for(id: String) -> String:
 	var pending := Services.pending_of(id)
 	if pending == "stop":
@@ -175,10 +198,10 @@ func _refresh_values() -> void:
 
 ## A on a row: the other thing from whatever it is doing now.
 ##
-## A service in an UNKNOWN state is treated as stopped, so A starts it. That is
+## A process in an UNKNOWN state is treated as stopped, so A starts it. That is
 ## the useful direction: unknown means the supervisor has not reported, and on a
 ## machine where something has gone wrong the thing a person wants from this menu
-## is to get the service up.
+## is to get it up.
 func _on_row(id: String) -> void:
 	if not Services.pending_of(id).is_empty():
 		# Already asked. Pressing again cannot make it happen faster and a second

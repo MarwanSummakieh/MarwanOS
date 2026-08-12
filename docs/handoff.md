@@ -123,11 +123,13 @@ crashes all happened with its compositor up (pid 76908, still alive at 22:39).
   20 lines at warning level (first failure and guard-trip only). The quiet
   path stays quiet.
 - **"Giving up until the next boot" is gone.** Five consecutive fast failures
-  now mean a `crashed` state the shell draws (amber bell badge, "Crashed" on
-  the service row), retries that back off 60s→30min, and a couch retry: the
-  service menu's A press rewrites the wish file and the supervisor treats the
-  fresh mtime as permission to retry immediately with a clean slate. A run
-  that survives 5 minutes clears the counter.
+  now mean a `crashed` state the shell draws (amber dot on the processes pill,
+  "Crashed" on the row), retries that back off 60s→30min, and a couch retry:
+  the processes menu's A press rewrites the wish file and the supervisor treats
+  the fresh mtime as permission to retry immediately with a clean slate. A run
+  that survives 5 minutes clears the counter. (The pill and its menu were the
+  notification bell and the service menu until the 2026-08-12 menu rewrite —
+  same seam, same words, renamed for what is actually behind them.)
 
 ---
 
@@ -216,7 +218,9 @@ real `tsv_field`, synthetic approval body, both parses side by side); the
 services seam — screenshot shows the amber bell badge and *Steam — Crashed*,
 and A on the row writes the start wish); a full image build with the verify
 block, which now also greps the two `STATE_WORDS` copies and both ends of the
-tab-split contract.
+tab-split contract. (That screenshot predates the 2026-08-12 menu rewrite: the
+bell is now the processes pill, and the second `STATE_WORDS` copy the build
+compared against no longer exists — the build asserts there is exactly one.)
 
 **Not verified, and needs one live scan on an image carrying this:** that the
 library *fills* after a good sign-in, and Install-from-the-shelf. The path
