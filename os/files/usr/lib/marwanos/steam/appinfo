@@ -1,0 +1,713 @@
+#!/usr/bin/python3
+"""The producer of /var/marwanos/steam/appinfo/<appid>.tsv, read out of the
+appinfo cache Valve's own client already keeps on this disk.
+
+WHAT BREAKS WITHOUT THIS FILE, precisely. steamdl writes an appmanifest for
+every game it downloads, and `StateFlags 4` in that manifest does NOT convince
+Valve's client the game is installed. The client compares the manifest's
+`buildid` against the branch's current buildid and ORs in UpdateRequired on a
+mismatch -- so a manifest written with `buildid 0`, which is what steamdl writes
+when it has no sidecar to read, makes the client decide the game is out of date
+and DOWNLOAD IT AGAIN, into the directory we were trying to own. That is ADR
+0010's trap 3 and SteamRE issue #274. The second cost is quieter and just as
+real: `config.installdir` is the directory name the client resolves a game's
+files under, and without it steamdl guesses one from the title -- when the guess
+is wrong the client finds no files where its own metadata says they are, decides
+the game is not installed, and re-downloads it BESIDE ours, leaving several
+gigabytes on the disk that nothing will ever read.
+
+So: no sidecar, and every install on this machine downloads twice.
+
+WHY THIS SOURCE AND NOT A WEB API. Measured 2026-08-12, so nobody has to
+rediscover it:
+
+  * DepotDownloader prints depot ids, manifest ids and `Total bytes on disk`,
+    and never a buildid. It resolves one internally and keeps it.
+  * ISteamApps/UpToDateCheck answers only for dedicated-server apps -- 480
+    answers, 620 and 271590 return "Couldn't get app info for the app
+    specified". It is not a buildid source.
+  * ISteamApps/GetAppList is gone (404). IStoreService/GetAppList needs a Web
+    API key this appliance does not have and should not carry.
+  * store.steampowered.com/api/appdetails works without a key and gives `name`
+    and `type` -- not buildid, and not installdir.
+
+What is left is PICS appinfo over Steam's CM protocol, which is a protocol
+implementation and a second network identity, or the cache the hidden client
+maintains as a side effect of running. This appliance ships that client
+precisely so a Steam-DRM'd game can start (ADR 0010), which means the cache is
+always there. It is local, needs no network, no API key and no protobuf.
+
+WHY PYTHON. appinfo.vdf is binary KeyValues with a length-prefixed app index
+and, since June 2024, a deduplicated string table addressed by 32-bit indices.
+Binary parsing in bash would be a mistake and a slow one; python3 arrives from
+the ublue base and protocodec already established it as this feature's helper
+language. No third-party imports, for the same reason protocodec has none.
+
+WHAT THIS DELIBERATELY DOES NOT DO.
+
+  * It does not GUESS. A wrong buildid is worse than an absent one, because
+    absent is visible -- steamdl warns by name at every install commit and once
+    at startup -- while wrong is silent and produces exactly the re-download
+    this file exists to prevent. Every row it cannot read from the cache is
+    OMITTED, and a file it cannot parse produces NO sidecar rather than a
+    partial one.
+  * It does not write a sidecar with zero rows. An empty file would silence
+    steamdl's "no appinfo cache" warning while telling it nothing.
+  * It does not touch the client's cache, ever. Read-only, one shot, no lock.
+  * It does not speak to the network, and it has no code that could.
+  * It does not know about branches other than `public`. A beta branch is a
+    thing this appliance has no UI for choosing, and inventing a default other
+    than the one Valve uses would be a buildid for a build we did not download.
+  * It does not walk every app in the cache. It answers about the appids it is
+    asked about; the cache holds tens of thousands of them and writing a sidecar
+    for each would be minutes of work for one number.
+
+THE PARSE IS SELF-CHECKING, AND THAT IS THE WHOLE SAFETY ARGUMENT. Every app
+entry declares its own byte length, so a KeyValues walk that does not land
+EXACTLY on that boundary means this file's idea of the format is wrong for this
+Steam version -- and the answer to that is no sidecar and a loud line, never a
+number pulled out of a mis-parse. The app index is walked to its terminator for
+the same reason before anything is extracted. Both checks run against the real
+file on the real machine, which is the only place the format can actually be
+confirmed.
+
+The boundary check is STRUCTURAL, NOT A CHECKSUM, and the difference is worth
+stating: it catches a wrong header layout or a wrong idea of what `size` counts
+-- the systematic mistakes, which would miss the boundary on essentially every
+entry -- while a single corrupted byte inside one blob can, and in testing did,
+resync and still land on it. So each entry's own SHA-1 is checked as well and
+REPORTED rather than enforced. Reported because this code has never seen a real
+appinfo.vdf: it is not certain which of the two hash fields covers the binary
+blob or over exactly what range, and a hard gate built on that guess would
+refuse every app on every machine while looking like a Steam-side change. A
+match therefore PROVES the parse for that entry and says so in the journal; a
+non-match proves nothing and is left at info. The first bench run is what turns
+this from a diagnostic into something that could be enforced -- grep the
+journal for `blob sha1` to find out.
+
+THE CLIENT MAY BE WRITING THIS FILE WHILE WE READ IT. It is read in ONE shot
+into memory, from one file descriptor, and a torn read shows up as a parse
+failure -- which is already the "we do not know" path. No sidecar is written
+from a half-read cache.
+
+  appinfo <appid> [<appid> ...]   write /var/marwanos/steam/appinfo/<id>.tsv
+  appinfo --print <appid>         write nothing, print the rows on stdout
+  appinfo --vdf PATH <appid>      read a cache from somewhere else (testing)
+  appinfo --branch NAME <appid>   a branch other than `public`
+
+Exit status is 0 when every appid asked about produced rows, 1 otherwise --
+"1" meaning "we do not know", which every caller already degrades through.
+
+DIAGNOSTICS GO TO STDERR WITH systemd PRIORITY PREFIXES, matching steamd and
+steamdl: this runs as a child of a unit whose stderr is the journal, and a
+message on stdout would be mistaken for data by `--print`'s caller.
+"""
+
+import hashlib
+import os
+import stat
+import struct
+import sys
+
+TAG = "marwanos-steam-appinfo"
+
+# The cache the hidden client keeps. The same path steamdl calls CLIENT_STEAM,
+# and /var/home rather than /home because /home is an ostree symlink.
+CLIENT_APPINFO = ("/var/home/player/.var/app/com.valvesoftware.Steam"
+                  "/.local/share/Steam/appcache/appinfo.vdf")
+
+# From docs/steam-client-contract.md. steamdl reads exactly this directory.
+OUT_DIR = "/var/marwanos/steam/appinfo"
+
+DEFAULT_BRANCH = "public"
+
+# A real appinfo.vdf is tens of megabytes. The cap is not a tuning knob, it is
+# a refusal to read an arbitrary-sized file into the memory of an appliance
+# that is also downloading a game -- a cache this large is a broken cache.
+MAX_VDF_BYTES = 512 * 1024 * 1024
+
+# KeyValues nests four or five deep in practice. The limit exists so a torn or
+# hostile blob cannot recurse this process to death.
+MAX_DEPTH = 32
+
+# The three magics this file will parse. Refusing an unknown one LOUDLY is the
+# point: the format has changed three times and each change moved the header,
+# so a parser that pressed on regardless would read a plausible-looking integer
+# out of the wrong offset and call it a buildid. That is the one outcome worse
+# than having no sidecar.
+#
+#   0x07564427  v39, ~2017
+#   0x07564428  v40, Dec 2022 -- adds a second (binary) SHA-1 per app entry
+#   0x07564429  v41, Jun 2024 -- adds a file-level string table, and KEYS in
+#                                the KeyValues blobs become uint32 indices into
+#                                it rather than inline NUL-terminated strings
+MAGIC_V39 = 0x07564427
+MAGIC_V40 = 0x07564428
+MAGIC_V41 = 0x07564429
+
+# Bytes between an app entry's `size` field and the start of its KeyValues
+# blob: info_state(4) last_updated(4) pics_token(8) sha1(20) change_number(4),
+# plus the binary sha1(20) from v40 on.
+FIXED_AFTER_SIZE = {MAGIC_V39: 40, MAGIC_V40: 60, MAGIC_V41: 60}
+
+# Binary KeyValues type bytes.
+KV_OBJECT = 0x00
+KV_STRING = 0x01
+KV_INT32 = 0x02
+KV_FLOAT32 = 0x03
+KV_POINTER = 0x04
+KV_WIDESTRING = 0x05
+KV_COLOR = 0x06
+KV_UINT64 = 0x07
+KV_END = 0x08
+KV_INT64 = 0x0A
+KV_END_ALT = 0x0B
+
+
+def info(message):
+    print("<6>%s: %s" % (TAG, message), file=sys.stderr)
+
+
+def warn(message):
+    print("<4>%s: %s" % (TAG, message), file=sys.stderr)
+
+
+def err(message):
+    print("<3>%s: %s" % (TAG, message), file=sys.stderr)
+
+
+class ParseError(Exception):
+    """The bytes are not the file we think they are.
+
+    Every raise site here means "stop and write nothing". It is never a reason
+    to fall back to a default value, because the only values in question are
+    the ones whose wrongness is invisible.
+    """
+
+
+# ---------------------------------------------------------------------------
+# Binary KeyValues
+# ---------------------------------------------------------------------------
+
+def _cstring(data, pos, end):
+    nul = data.find(b"\x00", pos, end)
+    if nul < 0:
+        raise ParseError("a string runs past the end of its entry")
+    # `replace` rather than `strict`: a game name in a decade-old cache may be
+    # cp1252 rather than UTF-8, and a mangled character in a label is not a
+    # reason to refuse a buildid. Structural faults still raise.
+    return data[pos:nul].decode("utf-8", "replace"), nul + 1
+
+
+def _wstring(data, pos, end):
+    i = pos
+    while True:
+        if i + 2 > end:
+            raise ParseError("a wide string runs past the end of its entry")
+        if data[i] == 0 and data[i + 1] == 0:
+            break
+        i += 2
+    return data[pos:i].decode("utf-16-le", "replace"), i + 2
+
+
+def _read_object(data, pos, end, strings, depth, top=False):
+    """One KeyValues object, returned as a dict, plus the position after it.
+
+    KEYS ARE LOWERCASED. Valve writes them lowercase already; normalising means
+    a future capitalisation cannot turn a found buildid into a missing one.
+    Values are untouched.
+
+    `top` marks the outermost call, where running out of bytes is a clean end
+    rather than a fault. That is not laxity: the blob's own terminator layout
+    (one END closing `appinfo`, one closing the document) has varied, and the
+    caller's exact-boundary check below is what actually validates the parse.
+    """
+    if depth > MAX_DEPTH:
+        raise ParseError("keyvalues nested more than %d deep" % MAX_DEPTH)
+
+    out = {}
+    while True:
+        if pos >= end:
+            if top:
+                return out, pos
+            raise ParseError("keyvalues ran off the end of the entry")
+
+        vtype = data[pos]
+        pos += 1
+        if vtype in (KV_END, KV_END_ALT):
+            return out, pos
+
+        if strings is not None:
+            if pos + 4 > end:
+                raise ParseError("truncated key index")
+            (index,) = struct.unpack_from("<I", data, pos)
+            pos += 4
+            if index >= len(strings):
+                raise ParseError("key index %d is outside the string table" % index)
+            key = strings[index]
+        else:
+            key, pos = _cstring(data, pos, end)
+
+        if vtype == KV_OBJECT:
+            value, pos = _read_object(data, pos, end, strings, depth + 1)
+        elif vtype == KV_STRING:
+            value, pos = _cstring(data, pos, end)
+        elif vtype == KV_WIDESTRING:
+            value, pos = _wstring(data, pos, end)
+        elif vtype in (KV_INT32, KV_POINTER, KV_COLOR):
+            if pos + 4 > end:
+                raise ParseError("truncated 32-bit value")
+            (value,) = struct.unpack_from("<i", data, pos)
+            pos += 4
+        elif vtype == KV_FLOAT32:
+            if pos + 4 > end:
+                raise ParseError("truncated float")
+            (value,) = struct.unpack_from("<f", data, pos)
+            pos += 4
+        elif vtype == KV_UINT64:
+            if pos + 8 > end:
+                raise ParseError("truncated 64-bit value")
+            (value,) = struct.unpack_from("<Q", data, pos)
+            pos += 8
+        elif vtype == KV_INT64:
+            if pos + 8 > end:
+                raise ParseError("truncated 64-bit value")
+            (value,) = struct.unpack_from("<q", data, pos)
+            pos += 8
+        else:
+            # Not a wire type this format has ever had. Everything after it
+            # would be read at the wrong offset, which is how a parser starts
+            # inventing numbers.
+            raise ParseError("unknown keyvalues type 0x%02x" % vtype)
+
+        out[key.lower()] = value
+
+
+# ---------------------------------------------------------------------------
+# The file
+# ---------------------------------------------------------------------------
+
+def _string_table(data, offset):
+    if offset < 0 or offset + 4 > len(data):
+        raise ParseError("the string table offset points outside the file")
+    (count,) = struct.unpack_from("<I", data, offset)
+    if count > 20000000:
+        raise ParseError("the string table claims %d strings" % count)
+    pos = offset + 4
+    end = len(data)
+    strings = []
+    for _ in range(count):
+        text, pos = _cstring(data, pos, end)
+        strings.append(text)
+    return strings
+
+
+def _index(data):
+    """Walk the app index, WITHOUT parsing any KeyValues.
+
+    Returns (magic, strings, {appid: (blob_start, entry_end, hashes)}), where
+    `hashes` is the entry's own SHA-1 fields -- the text one, and from v40 the
+    binary one. They are carried rather than skipped so the extraction below
+    can say whether the blob it walked hashes to something the file already
+    claims about it. See the module docstring for why that is reported and not
+    enforced.
+
+    THE WALK IS THE FORMAT CHECK. Each entry is skipped by its own declared
+    size, so if this file's idea of the header layout or of what `size` counts
+    were wrong, the very next appid would be read out of the middle of a blob
+    and the walk would either run off the end or hit an implausible size. It
+    has to reach the terminating zero appid exactly. Only then is anything
+    extracted -- which means a Steam-side format change is a refusal with a
+    message, not a sidecar full of garbage.
+    """
+    if len(data) < 8:
+        raise ParseError("shorter than a header")
+
+    magic, _universe = struct.unpack_from("<II", data, 0)
+    if magic not in FIXED_AFTER_SIZE:
+        raise ParseError("unsupported appinfo.vdf magic 0x%08x" % magic)
+
+    pos = 8
+    strings = None
+    limit = len(data)
+    if magic == MAGIC_V41:
+        if len(data) < 16:
+            raise ParseError("shorter than a v41 header")
+        (table_offset,) = struct.unpack_from("<q", data, 8)
+        pos = 16
+        strings = _string_table(data, table_offset)
+        # The app index ends where the string table begins; nothing in the
+        # index may reach into it.
+        limit = table_offset
+
+    fixed = FIXED_AFTER_SIZE[magic]
+    apps = {}
+    while True:
+        if pos + 4 > limit:
+            raise ParseError("the app index ends without a terminator")
+        (appid,) = struct.unpack_from("<I", data, pos)
+        if appid == 0:
+            return magic, strings, apps
+        if pos + 8 > limit:
+            raise ParseError("an app entry is truncated")
+        (size,) = struct.unpack_from("<I", data, pos + 4)
+        entry_end = pos + 8 + size
+        if size < fixed or entry_end > limit:
+            raise ParseError("app %d declares an impossible size" % appid)
+        body = pos + 8
+        hashes = [bytes(data[body + 16:body + 36])]
+        if magic != MAGIC_V39:
+            hashes.append(bytes(data[body + 40:body + 60]))
+        apps[appid] = (body + fixed, entry_end, tuple(hashes))
+        pos = entry_end
+
+
+def _blob_sha1(data, blob_start, entry_end, hashes):
+    """Which of the entry's own SHA-1 fields, if either, covers this blob.
+
+    Returns a short word for the journal. `text` and `binary` name the field
+    that matched -- either is proof that the blob's start and end are exactly
+    where this parser thinks they are, which is the one fact about this format
+    that cannot be established anywhere but on a machine with a real cache.
+    `none` means only that we do not know which range Valve hashes.
+    """
+    digest = hashlib.sha1(data[blob_start:entry_end]).digest()
+    names = ("text", "binary")
+    for name, known in zip(names, hashes):
+        if known and digest == known:
+            return name
+    return "none"
+
+
+def _app_keyvalues(data, strings, blob_start, entry_end):
+    root, pos = _read_object(data, blob_start, entry_end, strings, 0, top=True)
+    # Trailing document terminators, whose count has varied between versions.
+    while pos < entry_end and data[pos] in (KV_END, KV_END_ALT, 0x00):
+        pos += 1
+    if pos != entry_end:
+        raise ParseError(
+            "an app entry ended %d bytes from where its own size said it would"
+            % (entry_end - pos))
+    return root
+
+
+def load(path):
+    """The whole cache, in one read, or a raise.
+
+    ONE SHOT, ONE DESCRIPTOR. Valve's client rewrites this file whenever PICS
+    tells it something changed, and a reader that returned to the disk between
+    sections would splice two versions together. Reading it all at once means
+    the worst case is a torn buffer, which the boundary checks above turn into
+    a refusal rather than into a plausible wrong number.
+
+    O_NONBLOCK, AND THE SIZE CHECKED THROUGH THE DESCRIPTOR WE OPENED. This
+    path is inside the session user's home directory, so every component of it
+    is something the unprivileged half of this machine can replace -- and this
+    process is root. A plain open() of a name that had become a FIFO blocks
+    until somebody writes to it, which on a single-threaded download loop is
+    the unit sitting at `active (running)` forever with no download and nothing
+    anywhere saying why; the contract names that trap for the request file and
+    it is the same trap here. O_NONBLOCK returns from a FIFO immediately, and
+    fstat on the descriptor (rather than stat on the name, which could be a
+    different object by then) is what rejects it. A symlink pointing at
+    somebody else's file is refused by the same check when it is not a regular
+    file, and when it IS one the magic check refuses it a moment later --
+    nothing read here is ever echoed anywhere.
+    """
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK)
+    except OSError as exc:
+        raise ParseError("cannot open %s (%s)" % (path, exc.strerror))
+    try:
+        info_ = os.fstat(fd)
+        if not stat.S_ISREG(info_.st_mode):
+            raise ParseError("%s is not a regular file" % path)
+        if info_.st_size > MAX_VDF_BYTES:
+            raise ParseError(
+                "%s is %d bytes, which is not a cache" % (path, info_.st_size))
+        try:
+            with os.fdopen(fd, "rb") as handle:
+                fd = -1        # fdopen owns it now
+                data = handle.read()
+        except OSError as exc:
+            raise ParseError("cannot read %s (%s)" % (path, exc.strerror))
+    finally:
+        if fd >= 0:
+            os.close(fd)
+    if not data:
+        raise ParseError("%s is empty" % path)
+    return data
+
+
+# ---------------------------------------------------------------------------
+# What the sidecar says
+# ---------------------------------------------------------------------------
+
+def _sub(node, *names):
+    """Walk a path of keys, returning None rather than raising at any miss."""
+    for name in names:
+        if not isinstance(node, dict):
+            return None
+        node = node.get(name)
+    return node
+
+
+def _text(value):
+    """A KeyValues scalar as a string, or None when it is not a scalar.
+
+    A dict is not a value: `installdir` arriving as an object would mean the
+    path walked to something other than what it is named for, and turning that
+    into `{...}` in a file steamdl makes a DIRECTORY NAME out of is how a
+    download lands somewhere nobody meant.
+    """
+    if value is None or isinstance(value, dict):
+        return None
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return str(value)
+    if isinstance(value, float):
+        return None
+    return str(value)
+
+
+def _clean(value):
+    """Safe to be a TSV field. See protocodec's module docstring for the bill.
+
+    Tab is IFS whitespace to the shell, so a tab inside a game name would forge
+    a column and shift every value after it one place left -- silently, into
+    fields that all still look like plausible strings. That has broken two
+    features in this tree already. Other C0 controls are dropped rather than
+    escaped: a control character in a game name is not a thing worth preserving
+    into a file another program parses.
+    """
+    out = []
+    for char in value:
+        code = ord(char)
+        if char in ("\t", "\n"):
+            out.append(" ")
+        elif code < 0x20 or code == 0x7F:
+            continue
+        else:
+            out.append(char)
+    return "".join(out).strip()
+
+
+def _app_section(root):
+    """The section under which `common`, `config` and `depots` live.
+
+    Each app's blob is one object named `appinfo` wrapping those sections, so
+    the useful root is one level down -- but the wrapper's name is not
+    something to depend on, so this looks for the sections themselves.
+    """
+    markers = ("common", "config", "depots")
+    if isinstance(root, dict) and any(name in root for name in markers):
+        return root
+    if isinstance(root, dict):
+        for value in root.values():
+            if isinstance(value, dict) and any(name in value for name in markers):
+                return value
+    return root if isinstance(root, dict) else {}
+
+
+def _native_linux(app):
+    """1 only if some config.launch.<n>.config.oslist names linux.
+
+    THE STORE-LEVEL common.oslist IS NOT USED, and that is the contract's
+    instruction rather than a preference: it is a claim about what the title
+    supports somewhere, while this is a question about whether THIS install has
+    a runnable Linux entry point. Getting it wrong the permissive way means
+    steamdl downloads a Linux depot for a game that has no Linux launcher and
+    the person is left with a directory of files that cannot start.
+
+    Returns "1", "0", or None for "there is no launch section, so we do not
+    know" -- which is written as no row at all, and which steamdl reads as
+    Windows-under-Proton. That is the right direction to be wrong in: a Windows
+    build of a game that also ships a Linux build still runs here.
+    """
+    launch = _sub(app, "config", "launch")
+    if not isinstance(launch, dict) or not launch:
+        return None
+    for entry in launch.values():
+        if not isinstance(entry, dict):
+            continue
+        oslist = _text(_sub(entry, "config", "oslist"))
+        if not oslist:
+            continue
+        for name in oslist.replace(";", ",").split(","):
+            if name.strip().lower() == "linux":
+                return "1"
+    return "0"
+
+
+def rows_for(app, branch):
+    """The sidecar's rows, in the order steamdl documents them.
+
+    Every row is omitted when its value is not in the cache. A missing row is
+    an answer steamdl already handles and says out loud; a row holding a
+    fallback would be the same shape as a real one and nothing downstream could
+    tell them apart.
+    """
+    rows = []
+
+    name = _text(_sub(app, "common", "name"))
+    if name:
+        rows.append(("name", name))
+
+    installdir = _text(_sub(app, "config", "installdir"))
+    if installdir:
+        rows.append(("installdir", installdir))
+
+    # THE BUILDID AND ITS BRANCH TRAVEL TOGETHER. The number means nothing
+    # without the branch it came from, so the branch row is written only when
+    # there is a buildid for it to label -- a `branch public` row beside no
+    # buildid would be a claim about nothing.
+    buildid = _text(_sub(app, "depots", "branches", branch, "buildid"))
+    if buildid and buildid.isdigit():
+        rows.append(("branch", branch))
+        rows.append(("buildid", buildid))
+
+    native = _native_linux(app)
+    if native is not None:
+        rows.append(("native_linux", native))
+
+    # Informational, per the shape steamdl's own header documents. Nothing
+    # reads them today; they are what makes a sidecar answerable by eye when
+    # somebody is working out why an install did not match.
+    depots = _sub(app, "depots")
+    if isinstance(depots, dict):
+        for key in sorted(depots, key=lambda k: (len(k), k)):
+            if key.isdigit():
+                rows.append(("depot", key))
+
+    return [(key, _clean(value)) for key, value in rows if _clean(value)]
+
+
+# ---------------------------------------------------------------------------
+# Writing it
+# ---------------------------------------------------------------------------
+
+def write_sidecar(appid, rows):
+    """TEMP-THEN-RENAME, 0644, explicitly chmodded.
+
+    The rename is for the reason every other seam in this feature has one:
+    steamdl reads these files at the top of an install and would otherwise be
+    able to read one inside a truncating open() -- a game installed with the
+    buildid of nothing. The chmod is because the umask of whatever unit invoked
+    this is not something to trust for a file another uid may later need.
+    """
+    try:
+        os.makedirs(OUT_DIR, 0o755)
+    except FileExistsError:
+        pass
+    except OSError as exc:
+        err("cannot create %s (%s)" % (OUT_DIR, exc.strerror))
+        return False
+
+    final = os.path.join(OUT_DIR, "%d.tsv" % appid)
+    temp = os.path.join(OUT_DIR, ".%d.%d.tmp" % (appid, os.getpid()))
+    body = "".join("%s\t%s\n" % (key, value) for key, value in rows)
+    try:
+        with open(temp, "w", encoding="utf-8") as handle:
+            handle.write(body)
+        os.chmod(temp, 0o644)
+        os.replace(temp, final)
+    except OSError as exc:
+        err("cannot write %s (%s)" % (final, exc.strerror))
+        try:
+            os.unlink(temp)
+        except OSError:
+            pass
+        return False
+    return True
+
+
+def main():
+    argv = sys.argv[1:]
+    path = CLIENT_APPINFO
+    branch = DEFAULT_BRANCH
+    to_stdout = False
+    appids = []
+
+    while argv:
+        arg = argv.pop(0)
+        if arg == "--print":
+            to_stdout = True
+        elif arg == "--vdf" and argv:
+            path = argv.pop(0)
+        elif arg == "--branch" and argv:
+            branch = argv.pop(0)
+        elif arg.isdigit() and len(arg) <= 10:
+            appids.append(int(arg))
+        else:
+            err("usage: appinfo [--print] [--vdf PATH] [--branch NAME] <appid>...")
+            return 2
+    if not appids:
+        err("no appid given")
+        return 2
+
+    if not os.path.exists(path):
+        # THE NORMAL CASE ON A NEW MACHINE, and not an error. The client writes
+        # this cache the first time it runs; until then there is nothing to
+        # read and steamdl already says what that costs.
+        warn("no %s yet -- the client has not run on this machine" % path)
+        warn("installs will proceed with no buildid and a guessed installdir")
+        return 1
+
+    try:
+        data = load(path)
+        magic, strings, apps = _index(data)
+    except ParseError as exc:
+        # Everything reaches here: a torn read while the client rewrites the
+        # file, a Steam-side format change, a truncated cache. All of them mean
+        # the same thing and get the same answer -- no sidecar.
+        err("cannot read %s: %s" % (path, exc))
+        err("no sidecar written; steamdl will install with buildid 0 and say so")
+        return 1
+
+    info("%s: magic 0x%08x, %d apps%s" % (
+        path, magic, len(apps),
+        ", %d strings" % len(strings) if strings is not None else ""))
+
+    failed = 0
+    for appid in appids:
+        if appid not in apps:
+            warn("app %d is not in the client's cache" % appid)
+            failed += 1
+            continue
+        blob_start, entry_end, hashes = apps[appid]
+        try:
+            root = _app_keyvalues(data, strings, blob_start, entry_end)
+        except ParseError as exc:
+            err("cannot parse app %d: %s" % (appid, exc))
+            failed += 1
+            continue
+        info("app %d: blob sha1 %s" % (
+            appid, _blob_sha1(data, blob_start, entry_end, hashes)))
+
+        rows = rows_for(_app_section(root), branch)
+        if not rows:
+            warn("app %d is in the cache but says nothing we can use" % appid)
+            failed += 1
+            continue
+
+        if to_stdout:
+            for key, value in rows:
+                sys.stdout.write("%s\t%s\n" % (key, value))
+            continue
+
+        if not write_sidecar(appid, rows):
+            failed += 1
+            continue
+        keys = [key for key, _ in rows]
+        if "buildid" not in keys:
+            # Named at warning level because this is the one absence whose
+            # consequence is a second download of a game that is already here.
+            warn("app %d has no %s buildid in the cache" % (appid, branch))
+        info("app %d: %s" % (appid, " ".join(keys)))
+
+    return 1 if failed else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -1,0 +1,52 @@
+[Unit]
+# The downloader. A SECOND unit rather than a thread inside marwanos-steam, and
+# the split is the point: a download runs for an hour and a sign-in answers in
+# seconds, so putting them in one process means every `Restart=always` after a
+# transient auth failure would also kill a download somebody has been watching
+# fill for forty minutes.
+#
+# The two halves meet at a queue file, not at a socket: marwanos-steam appends
+# a line to /run/marwanos/steam.queue and this drains it. That also means a
+# restart of either half is survivable -- the queue is the state, and it is on
+# a tmpfs because a download interrupted by a reboot is one nobody asked to
+# resume.
+#
+# NOTE THE PATH: steam.queue, a SIBLING of the request directory rather than a
+# file inside it. /run/marwanos/steam is player-owned 0700 so the shell can
+# drop a request there, which means the session user can unlink any name in it
+# and leave a symlink behind -- and a root process appending to a name it does
+# not control is a write-anywhere primitive. This comment said steam/queue for
+# half a day, which is the more dangerous kind of documentation error: it
+# described the vulnerability as the design, in the first file anybody reads.
+Description=Steam downloads for the shell (/run/marwanos/steam.downloads.json)
+Documentation=file:///usr/lib/marwanos/steam/steamdl
+After=network-online.target marwanos-steam.service
+Wants=network-online.target
+
+[Service]
+Type=exec
+ExecStart=/usr/lib/marwanos/steam/steamdl
+
+Restart=always
+RestartSec=5
+
+# LONGER THAN THE DEFAULT STOP TIMEOUT, because the thing being stopped is a
+# child holding a partially written game, and because a stop can arrive while
+# the client is paused -- the worker's TERM handler is what puts the client's
+# wish file back, and being SIGKILLed instead would leave Steam switched off
+# with nothing on screen to say why.
+#
+# It is NOT 300 seconds of orderly shutdown: outside a client pause there is no
+# handler and the worker dies immediately, leaving the partial download and its
+# .DepotDownloader sidecar on disk. That is the intended outcome -- `-validate`
+# resumes from exactly there -- but the manifest is then a boot old, which is
+# why a download interrupted this way is not resumed automatically.
+TimeoutStopSec=300
+
+StandardOutput=journal
+StandardError=journal
+SyslogLevelPrefix=true
+SyslogIdentifier=marwanos-steam-dl
+
+[Install]
+WantedBy=multi-user.target

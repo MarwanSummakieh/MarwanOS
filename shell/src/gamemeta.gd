@@ -20,8 +20,8 @@ extends RefCounted
 ##
 ## WHY THIS IS A RESOLVER AND NOT A DOWNLOADER. Playnite's version runs on a
 ## timer, hits the network and writes a library database. Half of that already
-## exists here and belongs to somebody else: marwanos-storeart does the
-## fetching, and the shell opens no sockets (see gameart.gd and steamfront.gd
+## exists here and belongs to somebody else: marwanos-steam does the
+## fetching, and the shell opens no sockets (see gameart.gd and steam.gd
 ## for the same rule stated twice more). What was missing was never the fetch,
 ## it was the ASSEMBLY -- one place that knows a game has a developer and a
 ## release date and where each of those comes from. So this is the second half
@@ -33,7 +33,7 @@ extends RefCounted
 ## in the same breath: there is exactly one consumer and it is a button press.
 ## The details panel opens for one game and asks about one game. A resolver that
 ## kept a warm table of every installed game's metadata would be maintaining an
-## answer nobody is looking at, and would have to be invalidated when storeart
+## answer nobody is looking at, and would have to be invalidated when the Steam client
 ## lands a file -- which is a cache with an invalidation story, the thing this
 ## project keeps declining to build.
 ##
@@ -60,7 +60,7 @@ const STEAM_PREFIX := "steam."
 ## FIELDS as a priority and in _ask as a branch -- and a typo between two string
 ## literals is a field that silently never resolves.
 ##
-## Steam's cached appdetails document, written by marwanos-storeart. The only
+## Steam's cached appdetails document, written by marwanos-steam. The only
 ## source here that knows anything a human did not type into this repo, and the
 ## only one that can answer a question about a game nobody anticipated.
 const SOURCE_STEAM := "steam-store"
@@ -116,7 +116,7 @@ const FIELDS := [
 ## rather than a silence.
 ##
 ## THE SOURCES MAP IS NOT DECORATION. On this machine the difference between
-## "storeart has not fetched this game yet" and "the panel is not reading what
+## "the Steam client has not fetched this game yet" and "the panel is not reading what
 ## it fetched" is otherwise a thing you can only photograph, and both look
 ## identical on the TV -- the same argument details_panel's description logging
 ## was built on, now available for every field at once.
@@ -189,14 +189,14 @@ static func _from_catalogue(key: String, entry: Dictionary) -> Variant:
 	return Catalogue.tagline_for(str(entry.get("id", "")))
 
 
-## Steam's own appdetails document, as marwanos-storeart cached it.
+## Steam's own appdetails document, as marwanos-steam cached it.
 ##
 ## EVERY FIELD BELOW EXCEPT name AND short_description NEEDS THE UNFILTERED
 ## PAYLOAD. The fetch used to pass `filters=basic`, which returns the
 ## description block and drops developers, publishers, genres, categories,
 ## release_date and metacritic wholesale -- so on a machine whose cache predates
 ## that change these all resolve to nothing and the panel draws what it drew
-## before. storeart's META_REV is what replaces such a document; this function
+## before. the Steam client's META_REV is what replaces such a document; this function
 ## needs no version check of its own, because "the key is not there" and "the
 ## key is there and empty" already have the same answer here.
 static func _from_steam(key: String, steam: Dictionary) -> Variant:
@@ -239,7 +239,7 @@ static func _from_steam(key: String, steam: Dictionary) -> Variant:
 ##
 ## Defensive about the element type rather than trusting the document: this
 ## parses a file fetched from somebody else's public endpoint with no contract
-## (steamfront.gd says the same about the same host), and a malformed element
+## (steam.gd says the same about the same host), and a malformed element
 ## should cost its own line rather than the whole panel.
 static func _descriptions(raw: Variant) -> Array:
 	var out: Array = []

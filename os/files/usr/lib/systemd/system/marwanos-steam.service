@@ -1,0 +1,39 @@
+[Unit]
+# The in-shell Steam client's privileged half: the QR sign-in, the tokens, the
+# owned-games list and the artwork. See the script header for the request
+# protocol, and docs/adr/0010-our-own-steam-client.md for why this repo has its
+# own Steam client at all.
+#
+# REQUEST-DRIVEN RATHER THAN TIMED, and that is deliberate. Nothing here should
+# touch Valve's servers on a machine whose owner has not opened the screen: the
+# shell asking is the only thing that makes this work, and a machine sitting on
+# the home screen all evening makes no requests at all.
+#
+# After network-online because the first thing anyone does here is sign in, and
+# a begin-session against a nameserver that is not up yet is a QR that never
+# draws. It does not REQUIRE it: a boot with no network still answers `account`
+# from local files, which is how the screen knows whose machine it is offline.
+Description=Steam sign-in and library for the shell (/run/marwanos/steam.*)
+Documentation=file:///usr/lib/marwanos/steam/steamd
+Documentation=file:///usr/lib/marwanos/docs/adr/0010-our-own-steam-client.md
+After=network-online.target marwanos-netcheck.service
+Wants=network-online.target
+
+[Service]
+Type=exec
+ExecStart=/usr/lib/marwanos/steam/steamd
+
+# A dead service here is a screen whose every press is accepted and answered by
+# nothing -- the silent failure this whole seam is shaped to avoid.
+Restart=always
+RestartSec=5
+
+# Journal-shaped like every other seam. The script logs WHETHER, never WHO, and
+# never a byte of credential material; see its header.
+StandardOutput=journal
+StandardError=journal
+SyslogLevelPrefix=true
+SyslogIdentifier=marwanos-steam
+
+[Install]
+WantedBy=multi-user.target

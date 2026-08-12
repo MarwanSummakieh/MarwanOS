@@ -410,6 +410,56 @@ const STORE_DETAIL_ART_HEIGHT := 300
 ## the eye does.
 const STORE_QR_SIZE := 300
 
+# ---------------------------------------------------------------------------
+# The Steam library shelf
+#
+# The storefront's grid above is DELETED CODE'S NEIGHBOUR: its numbers survive
+# because the constants are still referenced, but the shelf this block sizes is
+# a different object drawn from a different picture. ADR 0010 replaced a shop
+# with a library, and a library's tile is a game somebody already owns.
+#
+# THE ASPECT IS THE WHOLE REASON THIS IS NOT STORE_ITEM_*. A storefront tile
+# drew Valve's 616x353 capsule and was 1.745 times wider than tall; the client
+# contract says a library picture is library_600x900, which is PORTRAIT at 2:3
+# -- so reusing the capsule's box would letterbox every game on the screen
+# inside two black pillars. The art height is the width times 1.5, exactly.
+
+## One game. Narrower than a storefront tile because there are hundreds of them
+## rather than a curated eight, and because portrait art at this width still
+## shows a title a person recognises from three metres -- which is the only job
+## the picture has.
+##
+## 260 RATHER THAN 220, AND A SCREENSHOT IS WHY. At 220 the state line under a
+## downloading game rendered as "Downloading 4..." -- the ellipsis ate the
+## percentage, which is the single number somebody watching a download is
+## looking at. Measured against a fixture shelf on 2026-08-12, not reasoned
+## about: the label is set to trim with an ellipsis rather than wrap, so a
+## string one glyph too long loses its most important glyphs silently and the
+## layout looks perfectly healthy while doing it.
+##
+## The fix is the box rather than the sentence because shortening the sentence
+## only moves the cliff: "Downloading 100%" is wider than "Downloading 42%", so
+## a tile cut to fit the common case truncates exactly as the download finishes.
+const STEAM_TILE_WIDTH := 260
+const STEAM_TILE_ART_HEIGHT := 390
+
+## THE HEIGHT IS A SUM, NOT A GUESS, for STORE_ITEM_HEIGHT's reason and the same
+## Godot rule behind it: a tile's contents are anchored children of a Button, a
+## Button's minimum size ignores its children entirely, and a tile too short does
+## not grow -- it spills into the row underneath. The sum is the picture (330),
+## the name and the state line at their line heights (~35 + ~33), the two
+## separations between the three (2 x 6) and STORE_ITEM_PAD top and bottom: 494,
+## rounded up. Anything added to a tile has to be added here too.
+const STEAM_TILE_HEIGHT := 500
+
+## Five columns, following the tile from 220 to 260. At 1080p the safe area is
+## 1728 wide and the pane's padding takes 48 from each side, leaving ~1632: five
+## tiles and four STORE_GRID_GAPs is 1396, which leaves the focus ring clear of
+## the pane's rounded corner. Six would be 1680 and would not fit. The count
+## stays five on the ultrawide rather than growing, for the storefront's
+## argument: a shelf is browsed by moving, not by seeing all of it at once.
+const STEAM_GRID_COLUMNS := 5
+
 ## A discount, and the one place in this file where a hue carries meaning. It
 ## is deliberately NOT the only channel: the tile says "was $59.99 (-70%)" in
 ## words underneath, so the colour is emphasis on a fact already stated rather

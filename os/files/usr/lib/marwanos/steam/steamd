@@ -1,0 +1,1729 @@
+#!/usr/bin/env bash
+#
+# The Steam client's privileged half: sign-in, identity, library, artwork.
+#
+# WHAT THIS IS. ADR 0010 says this appliance ships its own Steam client rather
+# than drawing a picture of Valve's, and this file is the half of it that is
+# allowed to hold a credential and open a socket. The shell draws; this fetches.
+# Nothing here renders anything and nothing there knows a URL.
+#
+# THE SEAM IS THE WIFI SEAM, a sixth time (wifi, update, appctl, usbmount,
+# display, this). The shell, running as `player`, writes a one-line request into
+# a player-owned 0700 directory; this, running as root, consumes it by
+# rename(2), does the work, and writes back files the shell reads:
+#
+#   the shell writes  /run/marwanos/steam/request        (0700 player dir)
+#   this writes       /run/marwanos/steam.state          <word>TAB<detail>
+#                     /var/marwanos/steam/account.json   who is signed in
+#                     /var/marwanos/steam/library.json   what they own
+#                     /var/marwanos/steam/signin.json    the QR panel's story
+#                     /var/marwanos/steam/qr.png         the challenge, drawn
+#                     /var/marwanos/steam/art/           the capsules
+#                     /var/marwanos/secrets/             tokens, 0600, root-only
+#                     /var/marwanos/store/meta/          store pages, cached
+#
+# THAT LAST PATH IS IN SOMEBODY ELSE'S TREE and is not a typo. It is the older
+# store cache the rail's details panel reads through its own lever, it belonged
+# to marwanos-storeart until the teardown deleted that script, and this service
+# inherited it because it is now the only thing on the machine that knows which
+# games are worth describing. See META_DIR.
+#
+# The verbs are `signin`, `account`, `library`, and `install`, `cancel` and
+# `uninstall` with a digits-only appid. See docs/steam-client-contract.md, which
+# is the authority; if this file and that file disagree, that file is what gets
+# fixed first.
+#
+# WHY /var AND NOT /run for the answers. A machine that has been online once
+# should still draw its library after an offline boot. The JSON and the art
+# survive reboots on purpose, and the state file says separately whether the
+# network could be reached this time. /run holds only what is true about this
+# boot, which is why the state file and the download queue live there.
+#
+# ---------------------------------------------------------------------------
+# THE QR SIGN-IN, AND THE ONE THING THAT CANNOT BE GOT WRONG
+# ---------------------------------------------------------------------------
+#
+# Steam's owned-games endpoints want authentication and this machine has no
+# keyboard, so the credential arrives the way Valve's own clients get one:
+# BeginAuthSessionViaQR returns a challenge URL, qrencode draws it on the
+# television, somebody scans it with the Steam app on their phone and approves
+# there, and PollAuthSessionStatus hands back a refresh token. The password
+# never exists anywhere near this machine -- the phone that already holds the
+# session is the thing that vouches.
+#
+# THE SESSION IS BEGUN AS THE STEAM CLIENT, NOT AS A WEB BROWSER. This is the
+# single decision the whole feature turns on and the deleted implementation had
+# it the other way round. A `WebBrowser`/`Store` session mints a token whose
+# audience is ["web"], which is fine for every API call in this file and is
+# REJECTED by SteamKit at client logon -- so DepotDownloader silently falls back
+# to asking for a password on a machine that cannot answer, and the symptom is
+# "sign-in worked, downloads do nothing". A `SteamClient`/`Client` session mints
+# ["web","client"], which serves both. See protocodec's begin_req for the whole
+# argument; one scan is meant to be enough for the entire feature.
+#
+# THE REFRESH TOKEN IS THE ONE REAL CREDENTIAL THIS APPLIANCE HOLDS. It lands at
+#
+#   /var/marwanos/secrets/steam-refresh.<steamid64>.token   (0600, dir 0700)
+#
+# written under `umask 077` rather than chmod-after-write, so there is never a
+# moment where the file exists more readable than it ends up. It never appears
+# in the journal, in a state file, in an argv, or anywhere the player uid can
+# read -- every crossing into curl and into protocodec is on stdin, because
+# /proc/<pid>/cmdline is world-readable and the session user runs the shell, the
+# browser and Valve's client.
+#
+# MULTI-USER IS "NEWEST TOKEN WINS". Each person scans with their own phone and
+# each approval writes its own file; the most recently written one is the active
+# account. Signing in again is how you switch, and nothing here ever deletes
+# somebody else's token. The shell never names an account: a SteamID arriving in
+# a request would be the unprivileged half telling root whose data to fetch.
+#
+# ---------------------------------------------------------------------------
+# THE TRAPS THIS FILE IS SHAPED BY
+# ---------------------------------------------------------------------------
+#
+# TAB IS IFS WHITESPACE. `IFS=$'\t' read -r a b c` DISCARDS a leading empty
+# field and shifts every value one place left. On 2026-08-11 22:31:38 that took
+# the one response that mattered -- an approval, whose first column is the
+# absent challenge rotation -- and handed the account name to the token store as
+# though it were the credential, with the real token sitting in the wrong
+# variable. Sign-in could never have worked, on any machine, at any time; the QR
+# appeared and rotated only because those two responses happen to start with a
+# non-empty column. Every TSV parse in this file therefore goes through
+# tsv_field(), including the sites that would work either way today, and every
+# producer strips tabs and newlines from every field.
+#
+# THE REQUEST IS CONSUMED BY rename(2), NEVER BY test-then-read. The request
+# directory is player-owned, so between any test and any read the file could
+# become a symlink (a root read of anything on the system) or a FIFO (an open()
+# that blocks this single-threaded loop forever, with the unit still reporting
+# `active (running)` so Restart=always never fires). rename(2) follows neither
+# and opens nothing, so the file is moved into root-owned /run/marwanos first
+# and its nature is settled before a byte of it is read.
+#
+# THE DOWNLOAD QUEUE IS NOT INSIDE THE REQUEST DIRECTORY, and that is a
+# deliberate departure from the first sketch of this seam. /run/marwanos/steam
+# is player-owned 0700 because the shell must be able to create `request` in it
+# -- which also means `player` may unlink any name in it and put a symlink
+# there. A root process appending to a file at a name the session user controls
+# is a write-anywhere primitive: swap `queue` for a symlink to /etc/shadow and
+# `>>` follows it. So the queue is /run/marwanos/steam.queue, root-owned 0600 in
+# root-owned /run/marwanos, alongside steam.state and steam.downloads.json which
+# are already there for the same reason. The download worker reads it there.
+#
+# ONE WRITER FOR steam.state. The sign-in runs as a background job because an
+# approval takes as long as a person takes to find their phone -- minutes,
+# against a loop that answers everything else in seconds -- and blocking here
+# would freeze the whole client for the length of a scan. What keeps two writers
+# honest is that the job narrates ONLY through signin.json, qr.png and the
+# secrets directory. It never touches the state file.
+#
+# LOG LINES SAY WHETHER, NEVER WHO. A persona is somebody's display name and the
+# journal is a log a person reads to triage a machine, not a place to copy it
+# into; a token is never printed at all, in any form, ever. When a token is
+# refused, protocodec's jwt-shape prints lengths and claim NAMES so the next
+# failure diagnoses itself without a second bench session.
+#
+# ALL THREE LOGGING FUNCTIONS WRITE TO STDERR, and that is correctness rather
+# than convention: several functions here return data through command
+# substitution, so a log line on stdout would become part of that data.
+#
+set -euo pipefail
+
+TAG=marwanos-steam
+
+RUN_DIR=/run/marwanos
+REQ_DIR="$RUN_DIR/steam"
+REQ="$REQ_DIR/request"
+## Where a consumed request is moved before being read, in root-owned RUN_DIR.
+## See the loop, and the header, for why the move rather than a test-then-read.
+CONSUMED="$RUN_DIR/steam-request.consumed"
+STATE="$RUN_DIR/steam.state"
+## The download worker's inbox: one `<verb>TAB<appid>` line per queued job.
+## Root-owned 0600 in root-owned RUN_DIR -- see THE DOWNLOAD QUEUE in the header
+## for why it is emphatically not inside the player-owned request directory.
+QUEUE="$RUN_DIR/steam.queue"
+## netcheck's answer, which is the only opinion about the network held here.
+## Probing again would be a second opinion about the same wire.
+NET_STATE="$RUN_DIR/network.state"
+
+VAR_DIR=/var/marwanos/steam
+ART_DIR="$VAR_DIR/art"
+QR="$VAR_DIR/qr.png"
+SECRETS_DIR=/var/marwanos/secrets
+
+## WHERE THE RAIL'S DESCRIPTIONS LIVE, AND WHY IT IS NOT UNDER $VAR_DIR. This is
+## the older store tree, read by the shell through a different lever entirely
+## (Catalogue.STORE_DIR, overridable with MARWANOS_SHELL_STORE_DIR) and named
+## from the entry id, so the file for `steam.620` is literally
+## meta/steam.620.json. Moving it under /var/marwanos/steam would mean changing
+## the shell, the harness override and the tmpfiles tree to relocate a cache
+## that already works -- churn on a seam nobody asked to move. So this service
+## writes into somebody else's directory, deliberately, and this comment is the
+## only warning a reader gets that $VAR_DIR is not where descriptions go.
+##
+## THE ONLY WRITER THIS FILE HAS EVER HAD WAS marwanos-storeart, and the
+## teardown deleted it. Between that deletion and this function every game card
+## on the rail had a title and no sentence under it -- six of the eight fields
+## GameMeta resolves (description, genres, developers, publishers, release_date,
+## critic_score, features) have Steam's store page as their ONLY source. That
+## regression is what this half exists to close.
+META_DIR=/var/marwanos/store/meta
+
+PROTO=/usr/lib/marwanos/steam/protocodec
+
+## Valve's endpoints. The three auth calls speak protobuf over an
+## application/x-www-form-urlencoded POST whose single parameter is standard
+## base64, and answer RAW BINARY protobuf. GetOwnedGames answers plain JSON once
+## it has been handed an access token, and needs no Web API key -- the QR
+## approval on the phone is the whole of the consent, which is also why profile
+## privacy is not a case here: an access token minted from the account's own
+## refresh token sees the account's own library.
+API_AUTH_BEGIN='https://api.steampowered.com/IAuthenticationService/BeginAuthSessionViaQR/v1/'
+API_AUTH_POLL='https://api.steampowered.com/IAuthenticationService/PollAuthSessionStatus/v1/'
+API_AUTH_TOKEN='https://api.steampowered.com/IAuthenticationService/GenerateAccessTokenForApp/v1/'
+API_OWNED='https://api.steampowered.com/IPlayerService/GetOwnedGames/v1/'
+
+## The public store page for one game, as JSON, and the only endpoint here that
+## is not on api.steampowered.com. Keyless and unauthenticated: it answers about
+## a STORE PAGE, not about an account, so it needs none of the credential
+## machinery above and would answer the same for a machine nobody has signed in
+## on. It is asked only for games the library already named, which is the whole
+## of what keeps it bounded.
+API_APPDETAILS='https://store.steampowered.com/api/appdetails'
+
+## Valve's own record of which accounts have logged into the CLIENT on this
+## machine. It holds a SteamID64, an account name, a display name and a "most
+## recent" flag, and it holds NO PASSWORD and no token -- those live in
+## config.vdf and the keyring, and nothing here reads either. It is consulted
+## for exactly one derived fact, `client_signed_in`, because a game with Steam
+## DRM cannot start without that client having its own session, and the honest
+## UI for that limit is a sentence rather than a launch that silently does
+## nothing. The fixed /var/home/player is this image's one user, created by
+## sysusers at uid 1000; /var/home rather than the /home symlink for the reason
+## the contract's sandbox section gives.
+STEAM_DATA=/var/home/player/.var/app/com.valvesoftware.Steam/.local/share/Steam
+LOGINUSERS="$STEAM_DATA/config/loginusers.vdf"
+
+## Where an installed game leaves its manifest. Both libraries, in the order
+## marwanos-appscan walks them: the one this repo downloads into, then the
+## client's own private one. Read here only to set `installed` on a library
+## row, which is what stops the shell offering to download a game that is
+## already on the disk.
+STEAM_APPS_DIRS="/var/home/player/Games/SteamLibrary/steamapps $STEAM_DATA/steamapps"
+
+## How often to look for a request. Matches every other seam: a person has just
+## pressed a button and is watching the screen, so this is the latency of the
+## whole feature. Half a second is under what reads as lag and costs nothing.
+POLL=0.5
+
+## Per-request network ceiling. The API answers in well under a second on a
+## working link; the point of the number is that a dead link fails in seconds
+## rather than hanging this single-threaded loop.
+CURL_MAX_TIME=20
+
+## How long a stored library is served without asking Valve again. An hour is
+## chosen against what the data IS: an account's owned games change when
+## somebody buys something, which is not an hourly event, and it means walking
+## in and out of the library screen during one evening makes exactly one call.
+CACHE_SECONDS=3600
+
+## How long a FAILED request is refused before it may be tried again. The shell
+## asks on every screen open, so without this an outage would be answered with
+## one request per visit.
+RETRY_SECONDS=60
+
+## How long a QR sign-in waits for a phone before giving up. Five minutes is
+## generous for "find your phone, open the Steam app, point it at the TV", and
+## the bound matters: the poll is a network call every few seconds against
+## somebody else's endpoint, and an abandoned QR should not become an all-night
+## drip of them.
+SIGNIN_TIMEOUT=300
+
+## The floor under the poll interval, applied REGARDLESS of what Valve asks for.
+## The begin answer names its own interval and it has been measured at ONE
+## second -- politeness their native clients can afford and this appliance
+## leaning on a public endpoint should not spend. Nobody walking to find their
+## phone notices the difference between one second and three.
+SIGNIN_POLL_FLOOR=3
+
+## How many polls in a row may fail on the wire before the session is called
+## dead. A lossy link in the middle of a scan is not a failed sign-in; three of
+## them is.
+SIGNIN_MISS_LIMIT=3
+
+## How many games get artwork per `library` request. A library is hundreds of
+## games where a shelf is a screenful, so art is PAGINATED ACROSS VISITS rather
+## than fanned out: a game whose capsule is already on disk costs one stat and
+## is skipped, so each visit reaches this many games deeper. The list is ordered
+## most-recently-played first, which is what makes the first page of it the
+## games a person actually recognises.
+LIBRARY_ART_BOUND=24
+
+## How many store pages get fetched per `library` request. A SEPARATE budget
+## from the artwork one on purpose: the two caches miss on different games (a
+## title can have a capsule and no description, or the reverse), so sharing a
+## counter would let a run of art-complete games starve the descriptions
+## forever. Same number for the same reason -- it is a page of games deep per
+## visit, front of the list first.
+META_BOUND=24
+
+## The cache format version, stamped into every document written here and
+## checked before one is trusted. Inherited from the deleted marwanos-storeart,
+## and deliberately NOT bumped:
+##
+##   1  filters=basic. Never written -- rev 2 was the first stamped document,
+##      and an unstamped file reads as 0, which is what made that upgrade work.
+##   2  the full appdetails payload.
+##
+## This implementation adds `l=english` to the request, which changes the
+## LANGUAGE of a document and not its SHAPE, so every rev-2 file already on an
+## installed machine is still usable and still holds every key GameMeta reads.
+## Bumping would force a whole-library refetch on every machine this image has
+## ever touched to change the language of descriptions somebody is already
+## reading happily -- which is exactly the traffic the stamp's own comment in
+## storeart said not to spend. Bump it when a change makes an older document
+## UNUSABLE, never when one merely reads differently.
+META_REV=2
+
+## How long a NEGATIVE marker stands before the store is asked again. Seven days.
+##
+## See fetch_meta for what a marker is and why it is written at all. The expiry
+## exists because `success:false` is not always permanent: a delisted game can
+## return, and an app too new to be indexed answers false for a while. Without
+## it, a title that gained a store page the day after this ran would be
+## description-less until somebody deleted a file on a bench, which is a silent
+## permanent regression and nobody would ever do it. A POSITIVE document never
+## expires -- descriptions change on the timescale of a store page rewrite, and
+## the bench escape hatch is deleting the file.
+META_NEGATIVE_SECONDS=604800
+
+## How long the whole store-page pass stands down after a 429. Five minutes,
+## which is the window the community's rate figure (roughly 200 requests per
+## five minutes per IP) is quoted over -- so waiting one full window is the
+## smallest wait that can be expected to clear it. Held in memory, like the
+## failure cooldown: a restart forgetting it costs at most one more 429.
+META_RATE_BACKOFF=300
+
+## A quarter second between store-page requests. THE BOUND IS THE COURTESY, not
+## this -- 24 requests against a 200-per-5-minute allowance is nowhere near it.
+## The delay only stops a cold library arriving as one instantaneous burst, and
+## it is a quarter second rather than storeart's full second because this pass
+## BLOCKS THE REQUEST LOOP: every second spent here is a second a button press
+## sits queued, and 24 seconds of deliberate sleep would be felt from the sofa.
+META_DELAY=0.25
+
+## The longest appid this will accept from anywhere. Comfortably above anything
+## Valve has issued and below anything that overflows.
+APPID_MAX_DIGITS=10
+
+info() { printf '<6>%s: %s\n' "$TAG" "$*" >&2; }
+warn() { printf '<4>%s: %s\n' "$TAG" "$*" >&2; }
+err()  { printf '<3>%s: %s\n' "$TAG" "$*" >&2; }
+
+
+# ---------------------------------------------------------------------------
+# The directories
+# ---------------------------------------------------------------------------
+#
+# Created here as well as in tmpfiles.d so the existence of a path never depends
+# on which of the two got there first. FATAL rather than logged-and-continue,
+# for marwanos-wifi's reason: without them this loop would run forever answering
+# nothing -- `active (running)` with the feature dead, on a machine with no
+# console to notice -- where exiting lets Restart=always make the failure loud.
+
+install -d -m 0755 "$RUN_DIR" || { err "cannot create $RUN_DIR"; exit 1; }
+install -d -m 0700 -o player -g player "$REQ_DIR" \
+    || { err "cannot create $REQ_DIR -- the shell could never ask for anything"; exit 1; }
+install -d -m 0755 /var/marwanos "$VAR_DIR" "$ART_DIR" \
+    || { err "cannot create $VAR_DIR -- there is nowhere to put an answer"; exit 1; }
+# 0700 root-owned: refresh tokens live here and nothing that is not root has any
+# business listing the directory, let alone reading a file in it. A sign-in that
+# could never store its token would look approved on the phone and signed out on
+# the television, forever.
+install -d -m 0700 "$SECRETS_DIR" \
+    || { err "cannot create $SECRETS_DIR -- a sign-in would have nowhere to keep its token"; exit 1; }
+# WARNED, NOT FATAL, and the asymmetry with the four above is the point: a
+# machine that cannot store a token cannot sign in and there is nothing left for
+# this service to do, whereas a machine that cannot cache descriptions still
+# signs in, still lists a library and still launches games -- it just draws
+# titles with nothing under them. Taking the whole client down over a subtitle
+# would be the worse failure.
+#
+# CREATED HERE AND NOWHERE ELSE, as of the teardown. tmpfiles.d carried these
+# two lines while marwanos-storeart owned the tree and lost them with it, so
+# this `install -d` is now the only thing that makes the directory exist.
+install -d -m 0755 /var/marwanos/store "$META_DIR" \
+    || warn "cannot create $META_DIR -- game cards will have titles and no descriptions"
+
+
+# ---------------------------------------------------------------------------
+# Small shared machinery
+# ---------------------------------------------------------------------------
+
+## One word plus optional detail, for the shell to render. Atomic via rename,
+## logged-not-fatal on failure, the same contract as every other state file.
+##
+## The vocabulary is CLOSED, and deliberately so -- see the contract. Words:
+## idle, working, done, offline, failed. On `failed` the detail is one of
+## `no token`, `sign in again`, `no answer`, `cannot write`, `not owned`,
+## `no space`; anything more specific belongs in the journal, where a person
+## triaging a machine will look, rather than on a television. So a response that
+## arrives but cannot be parsed reports `no answer` here and says exactly what
+## was wrong through err().
+state() {
+    local word="$1" detail="${2:-}"
+    { printf '%s\t%s\n' "$word" "$detail" > "$STATE.tmp" && mv -f "$STATE.tmp" "$STATE"; } \
+        || err "cannot write $STATE"
+}
+
+
+## Is netcheck saying the machine is online? A missing file is a boot too young
+## to have answered, which reads the same as offline: do not try.
+online() {
+    local net=""
+    net="$(cat "$NET_STATE" 2>/dev/null)" || net=""
+    [ "$net" = "online" ]
+}
+
+
+## Age in seconds of a file, or a very large number if it is not there -- the
+## cache and the failure cooldown both need "no file" to sort as old.
+age_of() {
+    local path="$1"
+    local mtime=""
+    mtime="$(stat -c %Y "$path" 2>/dev/null)" || { printf '999999999'; return 0; }
+    local now
+    now="$(date +%s)"
+    printf '%s' "$(( now - mtime ))"
+}
+
+
+## Field N (1-based) of a tab-separated record, or nothing.
+##
+## THE THIRD TIME THIS TRAP HAS COST THIS PROJECT A FEATURE, which is why this
+## is a copy of a function that already exists in this tree rather than a fresh
+## idea. Tab counts as IFS WHITESPACE in the shell's field-splitting rules even
+## when IFS holds nothing else, so `IFS=$'\t' read -r a b c` discards a LEADING
+## EMPTY FIELD and shifts every value one place left.
+##
+## What that cost, measured on the bench 2026-08-11 22:31:38: an approval
+## response has no challenge rotation in it, so its first column is empty, so
+## the refresh token was read into the rotation variable and the account name
+## into the token variable -- and the store was handed the string `bronzefesta`
+## as a credential. It was rightly refused, and the scan died reporting a token
+## this machine could not read while the real token sat one variable away.
+##
+## The two shapes that DID work are why this survived a shipped feature: a
+## rotation puts its value first, and a begin response starts with a client_id
+## printed as %d which is never empty. So the QR appeared, the QR rotated, and
+## only the approval was broken. Every parse in this file goes through here now,
+## including the ones that would work either way, because the next person to add
+## a column ahead of an existing one should not have to rediscover this.
+tsv_field() {
+    local record="$1" want="$2" i=1
+    while [ "$i" -lt "$want" ]; do
+        case "$record" in
+            *$'\t'*) record="${record#*$'\t'}" ;;
+            *) return 0 ;;
+        esac
+        i=$(( i + 1 ))
+    done
+    printf '%s' "${record%%$'\t'*}"
+}
+
+
+## Text that came from outside, made safe to display and to be a TSV column.
+## Control characters out, sixty-four characters kept. This is politeness rather
+## than a safety property -- the safety properties are that such text never
+## reaches a path, a URL or a shell word.
+clean_text() {
+    local value="$1"
+    value="$(printf '%s' "$value" | tr -d '[:cntrl:]')" || value=""
+    printf '%s' "${value:0:64}"
+}
+
+
+## Publish one result file into VAR_DIR. Atomic via rename, and 0644 by an
+## EXPLICIT chmod rather than by umask: the reader is a different uid, so the
+## umask this service happens to inherit must not be what decides whether the
+## shell can open its own answers.
+publish() {
+    local name="$1" body="$2"
+    local dest="$VAR_DIR/$name.json"
+    local tmp="$dest.tmp"
+    printf '%s\n' "$body" > "$tmp" || { err "cannot write $tmp"; rm -f "$tmp"; return 1; }
+    chmod 0644 "$tmp" || { err "cannot chmod $tmp"; rm -f "$tmp"; return 1; }
+    mv -f "$tmp" "$dest" || { err "cannot install $dest"; rm -f "$tmp"; return 1; }
+    return 0
+}
+
+
+## Does a file begin with the given hex magic? A CONTENT check, not a status
+## check, and the distinction is the whole reason this exists: `curl -f` keeps
+## out the 404s but not a CDN edge answering 200 with an error page, and a
+## picture that is really an HTML apology renders on the television as a broken
+## texture where a missing one is just a wash a moment longer.
+magic_ok() {
+    local path="$1" want="$2"
+    local bytes=""
+    bytes="$(od -An -tx1 -N4 "$path" 2>/dev/null | tr -d ' \n')" || bytes=""
+    case "$bytes" in
+        "$want"*) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+
+## Fetch one picture into ART_DIR/<name>, if it is not already there.
+##
+## THE HOST ALLOW-LIST IS NOT TIDINESS. Every URL this function is given today
+## is built from a constant and an appid, so nothing arbitrary can reach it --
+## and that is exactly the property a later change would remove without
+## noticing, the day somebody threads a URL out of a response body. The check
+## stands between that day and a root process fetching whatever an answer tells
+## it to.
+##
+## THE PREFIX IS PART OF THE HOST, and mixing the two yields 404s that look
+## exactly like a game having no artwork. `shared.*` hosts REQUIRE
+## /store_item_assets/steam/apps/...; the legacy `cdn.*`, steamcdn-a and
+## media.steampowered.com hosts use a bare /steam/apps/... . So the pairing is
+## checked rather than just the hostname, and a URL that gets it backwards is
+## refused here instead of being diagnosed as missing art an hour later.
+##
+## Returns 0 if the file is there afterwards (fetched or already present), 1 if
+## it is not. A missing picture is never a failed request: the shell draws a
+## wash under the name, which is the same fallback every other icon here has.
+fetch_art() {
+    local url="$1" name="$2" magic="$3"
+    local dest="$ART_DIR/$name"
+
+    [ -n "$url" ] || return 1
+    [ -f "$dest" ] && return 0
+
+    case "$url" in
+        https://shared.steamstatic.com/store_item_assets/steam/apps/*|\
+https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/*|\
+https://shared.cloudflare.steamstatic.com/store_item_assets/steam/apps/*) ;;
+        https://cdn.akamai.steamstatic.com/steam/apps/*|\
+https://cdn.cloudflare.steamstatic.com/steam/apps/*|\
+https://steamcdn-a.akamaihd.net/steam/apps/*|\
+https://media.steampowered.com/steam/apps/*) ;;
+        *) warn "refusing artwork from an unexpected host or path shape"; return 1 ;;
+    esac
+
+    local tmp="$dest.tmp"
+    if ! curl -fsSL --max-time "$CURL_MAX_TIME" --retry 1 -o "$tmp" "$url" 2>/dev/null; then
+        rm -f "$tmp"
+        return 1
+    fi
+    if ! magic_ok "$tmp" "$magic"; then
+        warn "a picture came back as something other than the image it claimed to be"
+        rm -f "$tmp"
+        return 1
+    fi
+    # 0644 explicitly rather than by umask: the shell reads these as `player`.
+    chmod 0644 "$tmp" || { rm -f "$tmp"; return 1; }
+    mv -f "$tmp" "$dest" || { rm -f "$tmp"; return 1; }
+    return 0
+}
+
+
+## Base URL for one asset of one app. `shared.steamstatic.com` with the
+## /store_item_assets/ prefix, which is the pairing fetch_art enforces.
+art_url() {
+    printf 'https://shared.steamstatic.com/store_item_assets/steam/apps/%s/%s' "$1" "$2"
+}
+
+
+## Both pictures for one game, tried in the contract's fallback order.
+##
+## THE APPID IS THE UNIT OF WORK, not the individual file, and that is what
+## keeps the steady state free: a game whose capsule is on disk is never
+## revisited, so a missing asset is probed once in the life of the machine
+## rather than on every library refresh forever.
+##
+## THE LOGO IS NOT FETCHED, and the deletion is the point. This function pulled
+## logo.png as a third asset until an audit asked who drew it, and the answer
+## was nobody -- not the tile, not the shelf, not the rail's card. It was a
+## request per game, inside a budget of 24 games per refresh, for a file that
+## reached no screen. The capsule and the hero both have a reader (the shelf
+## and, since marwanos-appscan's art fallback, the rail), which is the test any
+## third asset has to pass before it earns a request here.
+##
+## APPINFO IS NOT ASKED FIRST, which is a knowing departure from the contract's
+## artwork section. That check wants `common.library_assets_full` out of
+## Valve's appinfo, which arrives over a protobuf service this build has no
+## codec for; adding one to save a 404 would be a large piece of machinery to
+## avoid a cheap negative answer. The fallback chain below IS the probe: a
+## missing asset costs one refused request, bounded by LIBRARY_ART_BOUND and
+## never repeated once the capsule lands. What is lost is the exact correlation
+## the contract names -- tools, DLC and delisted apps cost three requests each
+## instead of none -- and that is the trade, stated rather than hidden.
+##
+## Returns 0 if the main capsule is on disk afterwards.
+art_for_appid() {
+    local appid="$1" file
+
+    for file in library_600x900_2x.jpg library_600x900.jpg header.jpg; do
+        if fetch_art "$(art_url "$appid" "$file")" "$appid.jpg" ffd8ff; then
+            break
+        fi
+    done
+
+    for file in library_hero.jpg hero_capsule.jpg capsule_616x353.jpg; do
+        if fetch_art "$(art_url "$appid" "$file")" "$appid.hero.jpg" ffd8ff; then
+            break
+        fi
+    done
+
+    [ -f "$ART_DIR/$appid.jpg" ]
+}
+
+
+# ---------------------------------------------------------------------------
+# Store pages: the sentence under the title
+# ---------------------------------------------------------------------------
+
+## What the cached store page for an appid is: `current`, `negative`, `stale` or
+## `missing`. Only `current` and an unexpired `negative` are worth keeping.
+##
+## PARSED RATHER THAN GREPPED, and not for the reason you would expect. A grep
+## for the stamp's key is safe from false positives -- JSON escapes a quote
+## inside a string as \", so `"_marwanos_meta_rev"` cannot appear in any value
+## Valve sends. What a grep cannot do is COMPARE. The question is not "is there
+## a stamp" but "is the stamp at least this rev": a grep for the key alone would
+## call a rev-2 document current under a future rev 3 and never refetch the one
+## library that most needs it, and a grep for the key AND the literal 2 would
+## call a rev-3 document stale and refetch everything after a rollback. Both
+## failures are silent and both are permanent.
+##
+## A DOCUMENT THAT DOES NOT PARSE READS AS `stale`, folding three answers into
+## one: no stamp (anything written before rev 2), a truncated file, and a file
+## that is not JSON at all. There is nothing this caller could usefully do
+## differently about any of them -- a document it cannot read is a document it
+## must replace.
+meta_state() {
+    local file="$1"
+    [ -f "$file" ] || { printf 'missing'; return 0; }
+    local word=""
+    word="$(jq -r --argjson rev "$META_REV" '
+        if (._marwanos_meta_rev // 0) < $rev then "stale"
+        elif (._marwanos_no_store_page // false) then "negative"
+        else "current" end' "$file" 2>/dev/null)" || word=""
+    case "$word" in
+        current|negative|stale) printf '%s' "$word" ;;
+        *) printf 'stale' ;;
+    esac
+}
+
+
+## Should this appid's store page be fetched? Exit 0 for yes.
+meta_wanted() {
+    local file="$1"
+    local st
+    st="$(meta_state "$file")"
+    case "$st" in
+        current) return 1 ;;
+        # A negative marker is honoured until it expires -- see
+        # META_NEGATIVE_SECONDS for why it expires at all.
+        negative) [ "$(age_of "$file")" -ge "$META_NEGATIVE_SECONDS" ] ;;
+        *) return 0 ;;
+    esac
+}
+
+
+## Record that Steam has no store page for this appid, as a document the shell
+## reads as silence.
+##
+## WHY A FILE AT ALL, when there is nothing to cache. Without it, `success:false`
+## apps are asked again on every library refresh -- and because the pass is
+## bounded at META_BOUND, a couple of dozen delisted or never-published titles
+## sitting at the front of a most-recently-played list would consume the ENTIRE
+## budget every single time and no other game in the library would ever get a
+## description. The marker is what makes the budget move down the list.
+##
+## WHY IT IS SAFE FOR THE SHELL TO READ. GameMeta._from_steam asks this document
+## for eight keys and gets "" or [] or 0 for every one of them, and _has_answer
+## rejects all three shapes -- so a marker resolves exactly as a missing file
+## does, and `description` still falls through to the catalogue and the record
+## behind it. The stamp is included so meta_state can tell a marker from a
+## rev-1 leftover; the flag is underscored so it cannot collide with a key
+## Valve adds later.
+meta_write_marker() {
+    local appid="$1"
+    local dest="$META_DIR/steam.$appid.json"
+    local tmp="$dest.tmp"
+    if ! jq -nc --argjson rev "$META_REV" \
+        '{_marwanos_meta_rev: $rev, _marwanos_no_store_page: true}' > "$tmp" 2>/dev/null; then
+        rm -f "$tmp"
+        return 1
+    fi
+    chmod 0644 "$tmp" || { rm -f "$tmp"; return 1; }
+    mv -f "$tmp" "$dest" || { rm -f "$tmp"; return 1; }
+    return 0
+}
+
+
+## Fetch one game's store page into the shell's metadata cache.
+##
+## Returns 0 when a document landed, 1 when the network or the parse failed,
+## 2 when Steam rate-limited us (the caller ends the whole pass), and 3 when
+## Steam has no store page for this appid and a marker was written instead.
+##
+## `success` IS THE GATE, AND IT IS NOT AN HTTP STATUS. Valve answers 200 with
+## `{"<appid>":{"success":false}}` for an appid with no store page -- delisted
+## titles, region-locked ones, tools, and anything that is a package rather than
+## an application. curl is perfectly happy and there is nothing to cache, so
+## this is not an error and does not colour the request's state word. Treating
+## it as a failure would put a red unit on a machine where nothing is wrong.
+##
+## THE HTTP CODE IS READ RATHER THAN LEFT TO `curl -f`, which is the one real
+## departure from how fetch_art works next door. `-f` collapses every 4xx into
+## exit 22, and the difference between "this app has no page" and "this machine
+## has been asked to stop" is the difference between carrying on down the list
+## and standing down for five minutes. A 429 answered by hammering is how a
+## public endpoint stops answering an appliance's user agent for everybody.
+##
+## THE DOCUMENT WRITTEN IS THE INNER `data` OBJECT, unwrapped from the appid key
+## it arrived under, so the shell reads `.name` and `.short_description` rather
+## than having to know the appid twice -- once in the filename and once inside
+## it. The stamp is MERGED IN rather than wrapped around: a wrapper would move
+## every field the shell reads down a level and break the panel on a machine
+## that upgraded the image before this had run, which is precisely the window
+## the stamp exists to survive.
+fetch_meta() {
+    local appid="$1"
+    local dest="$META_DIR/steam.$appid.json"
+    local raw="$dest.raw"
+    local tmp="$dest.tmp"
+    local url="$API_APPDETAILS?appids=$appid&l=english"
+    local code=""
+
+    # The appid is digits by the time it reaches here, so it cannot smuggle a
+    # second query parameter into that URL -- and the host is checked anyway,
+    # for the reason fetch_art's allow-list is checked: today every URL here is
+    # a constant plus digits, and that is exactly the property a later change
+    # removes without noticing.
+    case "$url" in
+        https://store.steampowered.com/api/appdetails\?*) ;;
+        *) warn "refusing a store-page request to an unexpected host"; return 1 ;;
+    esac
+
+    rm -f "$raw" "$tmp"
+    code="$(curl -sS --max-time "$CURL_MAX_TIME" --retry 1 \
+        -o "$raw" -w '%{http_code}' "$url" 2>/dev/null)" || code=""
+    case "$code" in
+        200) ;;
+        429) rm -f "$raw"; return 2 ;;
+        *)   rm -f "$raw"; return 1 ;;
+    esac
+
+    # jq -e exits 1 when the expression is false and 5 when the input does not
+    # parse at all. Folding them together is deliberate: an HTML error page from
+    # an interception proxy, a body truncated mid-flight, and an honest
+    # `success:false` are equally not-a-description. The truncation case is the
+    # one this check is load-bearing for -- it is what stops a half-written body
+    # ever reaching the cache, where it would be a present, stamped, permanently
+    # wrong document.
+    if ! jq -e --arg id "$appid" '.[$id].success == true' "$raw" >/dev/null 2>&1; then
+        rm -f "$raw"
+        meta_write_marker "$appid" || return 1
+        return 3
+    fi
+
+    # `error` rather than a silent pass-through when `data` is not an object:
+    # jq's `+` on a null left-hand side would otherwise yield a document
+    # containing nothing but the stamp, which meta_state would then call
+    # `current` forever.
+    if ! jq --arg id "$appid" --argjson rev "$META_REV" '
+        .[$id].data
+        | if type == "object" then . + {_marwanos_meta_rev: $rev}
+          else error("appdetails data is not an object") end' \
+        "$raw" > "$tmp" 2>/dev/null; then
+        rm -f "$raw" "$tmp"
+        return 1
+    fi
+    rm -f "$raw"
+
+    # 0644 explicitly rather than by umask: the shell may open this at the exact
+    # moment it lands, and it reads as `player`.
+    chmod 0644 "$tmp" || { rm -f "$tmp"; return 1; }
+    mv -f "$tmp" "$dest" || { rm -f "$tmp"; return 1; }
+    return 0
+}
+
+
+## The bounded store-page pass over a freshly published library.
+##
+## THIS BLOCKS THE REQUEST LOOP, like the artwork pass above it, and the bound
+## is what keeps that honest: at most META_BOUND requests with META_DELAY
+## between them, so the worst case a person can feel is a few seconds added to a
+## library refresh they asked for. Reading `<appid>` lines on stdin, in the
+## order do_library published them, which is most-recently-played first -- so
+## each visit reaches deeper and the first page is the games somebody
+## recognises.
+meta_pass() {
+    local appid rc
+    local considered=0 written=0 absent=0 failed=0
+    local now
+    now="$(date +%s)"
+
+    if [ "$now" -lt "$META_BACKOFF_UNTIL" ]; then
+        info "store pages are standing down after a rate limit; not asking this time"
+        return 0
+    fi
+
+    while IFS= read -r appid; do
+        case "$appid" in ''|*[!0-9]*) continue ;; esac
+        meta_wanted "$META_DIR/steam.$appid.json" || continue
+        [ "$considered" -ge "$META_BOUND" ] && break
+        considered=$(( considered + 1 ))
+
+        rc=0
+        fetch_meta "$appid" || rc=$?
+        case "$rc" in
+            0) written=$(( written + 1 )) ;;
+            2)
+                # Stood down rather than retried. The pass ends here and the
+                # rest of the list waits for the next refresh, which is the
+                # behaviour that makes a rate limit a pause instead of a
+                # spiral.
+                META_BACKOFF_UNTIL=$(( now + META_RATE_BACKOFF ))
+                warn "Steam rate-limited this machine; store pages will wait a few minutes"
+                break
+                ;;
+            3) absent=$(( absent + 1 )) ;;
+            *) failed=$(( failed + 1 )) ;;
+        esac
+
+        sleep "$META_DELAY"
+    done
+
+    # WHETHER, never WHO or WHAT: counts only. A game's title came out of
+    # somebody else's response body and this is a log a person reads to triage a
+    # machine.
+    if [ "$considered" -gt 0 ]; then
+        info "store pages: $written fetched, $absent with no page, $failed unanswered"
+    fi
+    return 0
+}
+
+
+# ---------------------------------------------------------------------------
+# Identity
+# ---------------------------------------------------------------------------
+
+## The SteamID64 of the newest refresh token on disk, or return 1 for "nobody
+## has scanned a QR here". Newest-wins is the whole multi-user policy, and mtime
+## is what "newest" means because the file is written exactly once, at approval.
+##
+## A GLOB AND `-nt`, NOT `ls -t | head`. Under pipefail, head closing the pipe
+## early SIGPIPEs ls (exit 141) and the guard then throws away a perfectly good
+## answer -- a signed-in machine reporting nobody, intermittently, for a reason
+## nothing on screen could ever explain. The loop opens no pipe. The unmatched
+## glob leaves the literal pattern behind, which the -e test drops.
+##
+## The id comes out of a FILENAME rather than a file, and it is re-checked here
+## even though this service wrote it, because the value goes into a URL and "we
+## wrote it earlier" is a weaker property than "it is digits right now".
+token_steamid() {
+    local newest="" f
+    for f in "$SECRETS_DIR"/steam-refresh.*.token; do
+        [ -e "$f" ] || continue
+        if [ -z "$newest" ] || [ "$f" -nt "$newest" ]; then
+            newest="$f"
+        fi
+    done
+    [ -n "$newest" ] || return 1
+    local id="${newest##*/steam-refresh.}"
+    id="${id%.token}"
+    case "$id" in
+        ''|*[!0-9]*) return 1 ;;
+    esac
+    # 15..20 digits, matching protocodec's jwt-sub: nothing in this image
+    # depends on the width, and the id is re-validated by Valve on every use.
+    case "${#id}" in
+        1[5-9]|20) ;;
+        *) return 1 ;;
+    esac
+    printf '%s' "$id"
+}
+
+
+## Whether Valve's own client has a session on this machine, and under whose
+## name, as `<steamid64>TAB<persona>`. Returns 1 for "it has never been opened".
+##
+## A BLOCK HEADER IS A QUOTED TOKEN ALONE ON ITS LINE: "76561198…". Telling that
+## apart from `"key"   "value"` needs more than "starts and ends with a quote",
+## because a pair does too -- and the first version of this parser used exactly
+## that glob, so every PersonaName line was read as a block header, failed the
+## digits test, and cleared the block that had just been opened. The result was
+## a parser that found nobody signed in on a perfectly ordinary file. So: strip
+## the outer quotes and require that what is left contains no quote at all.
+client_account() {
+    local line key value inner
+    local block="" recent="" newest="" newest_ts=0
+    local -A personas=()
+
+    [ -r "$LOGINUSERS" ] || return 1
+
+    while IFS= read -r line || [ -n "$line" ]; do
+        # Leading whitespace stripped so the tests below are about structure
+        # rather than about indentation, which Valve's writer has changed before.
+        line="${line#"${line%%[![:space:]]*}"}"
+
+        case "$line" in
+            \"*\")
+                inner="${line#\"}"
+                inner="${inner%\"}"
+                case "$inner" in
+                    *\"*) ;;
+                    *)
+                        case "$inner" in
+                            ''|*[!0-9]*) block="" ;;
+                            *) block="$inner" ;;
+                        esac
+                        continue
+                        ;;
+                esac
+                ;;
+        esac
+
+        [ -n "$block" ] || continue
+
+        case "$line" in
+            \"*\"*\"*\"*)
+                key="${line#\"}"; key="${key%%\"*}"
+                # $key QUOTED SEPARATELY inside the expansion (SC2295): an
+                # unquoted one is a glob PATTERN, not a literal, so a key
+                # containing `*` or `?` would strip a different span of this
+                # line than the one it names -- and this file is written by
+                # somebody else's client, so its key names are not ours to
+                # assume are plain.
+                value="${line#*\""$key"\"}"
+                value="${value#*\"}"; value="${value%%\"*}"
+                case "$key" in
+                    PersonaName) personas["$block"]="$value" ;;
+                    MostRecent)  [ "$value" = "1" ] && recent="$block" || true ;;
+                    Timestamp)
+                        case "$value" in
+                            ''|*[!0-9]*) ;;
+                            *) if [ "$value" -gt "$newest_ts" ]; then
+                                   newest_ts="$value"; newest="$block"
+                               fi ;;
+                        esac
+                        ;;
+                esac
+                ;;
+        esac
+    done < "$LOGINUSERS"
+
+    local chosen="${recent:-$newest}"
+    [ -n "$chosen" ] || return 1
+
+    # The persona is display text out of somebody else's file and it is about to
+    # become a TSV column; clean_text is what stops a tab in it forging one.
+    printf '%s\t%s' "$chosen" "$(clean_text "${personas[$chosen]:-}")"
+}
+
+
+## Who is signed in, published for the shell. LOCAL ONLY -- this opens no socket
+## at all, which is why it runs before every gate below rather than after them: a
+## machine with no network still knows perfectly well whose Steam is on it, and a
+## card that forgot the account whenever the wifi dropped would be lying about
+## something it can see from where it stands.
+##
+## TWO SOURCES, AND THE TOKEN WINS. The refresh token is the only identity that
+## unlocks the library, so it is the one the shell must key its "offer a sign-in"
+## decision on: a machine whose CLIENT is signed in but which has never had a QR
+## scanned has no library access, and if `source` said "client" there the shell
+## would think it was done and never offer the scan that would fix it. So
+## `source` is "web" whenever a token exists, "client" only when that is the sole
+## account, and `client_signed_in` rides alongside as a SEPARATE fact -- the
+## shell needs it because a Steam-DRM game cannot start without that client's own
+## session, and the honest UI for that is a sentence rather than a dead button.
+do_account() {
+    local found="" body=""
+    local client_id="" client_persona=""
+    local web_id="" web_persona=""
+    local steamid="" persona="" source="" client_signed_in=false
+
+    if found="$(client_account)"; then
+        client_id="$(tsv_field "$found" 1)"
+        client_persona="$(tsv_field "$found" 2)"
+    fi
+    # Digits only, and a SteamID64-sized number. This id is the one that would
+    # otherwise reach a URL.
+    case "$client_id" in
+        ''|*[!0-9]*) client_id="" ;;
+    esac
+    if [ -n "$client_id" ]; then
+        case "${#client_id}" in
+            1[5-9]|20) ;;
+            *) client_id="" ;;
+        esac
+    fi
+    [ -n "$client_id" ] && client_signed_in=true || true
+
+    if web_id="$(token_steamid)"; then
+        web_persona="$(cat "$SECRETS_DIR/steam-persona.$web_id" 2>/dev/null)" || web_persona=""
+        web_persona="$(clean_text "$web_persona")"
+    else
+        web_id=""
+    fi
+
+    if [ -n "$web_id" ]; then
+        steamid="$web_id"
+        source="web"
+        persona="$web_persona"
+        # A sign-in whose persona sidecar was lost still borrows the client's
+        # display name when the two are the same account, rather than being left
+        # nameless over a name it could show.
+        if [ -z "$persona" ] && [ "$web_id" = "$client_id" ]; then
+            persona="$client_persona"
+        fi
+    elif [ -n "$client_id" ]; then
+        steamid="$client_id"
+        source="client"
+        persona="$client_persona"
+    fi
+
+    if [ -n "$steamid" ]; then
+        body="$(jq -nc --arg id "$steamid" --arg persona "$persona" \
+            --arg source "$source" --argjson client "$client_signed_in" \
+            --argjson now "$(date +%s)" \
+            '{signed_in: true, steamid: $id, persona: $persona,
+              source: $source, client_signed_in: $client, fetched: $now}' 2>/dev/null)" || body=""
+    else
+        body="$(jq -nc --argjson client "$client_signed_in" --argjson now "$(date +%s)" \
+            '{signed_in: false, steamid: "", persona: "",
+              source: "", client_signed_in: $client, fetched: $now}' 2>/dev/null)" || body=""
+    fi
+
+    if [ -z "$body" ]; then
+        err "could not describe the Steam account"
+        state failed "cannot write"
+        return 0
+    fi
+
+    if ! publish account "$body"; then
+        state failed "cannot write"
+        return 0
+    fi
+    # WHETHER, never WHO.
+    if [ -n "$steamid" ]; then
+        info "an account is signed in"
+    else
+        info "no account is signed in on this machine"
+    fi
+    state "done" account
+}
+
+
+# ---------------------------------------------------------------------------
+# Sign-in
+# ---------------------------------------------------------------------------
+
+## Progress for the shell's QR panel, as one small file. `fetched` moves on every
+## publish INCLUDING a re-publish of an unchanged status, and that is not an
+## accident: it is what tells the shell a rotated QR is worth re-reading, on a
+## seam where the picture may change while the word does not.
+signin_publish() {
+    local status="$1" persona="${2:-}"
+    local client=false
+    client_account >/dev/null 2>&1 && client=true || true
+    local body=""
+    body="$(jq -nc --arg status "$status" --arg persona "$persona" \
+        --argjson client "$client" --argjson now "$(date +%s)" \
+        '{status: $status, fetched: $now, persona: $persona,
+          client_signed_in: $client}' 2>/dev/null)" || body=""
+    [ -n "$body" ] || { err "could not describe the sign-in"; return 1; }
+    publish signin "$body"
+}
+
+
+## The current sign-in status word, or nothing. Read back rather than tracked in
+## a variable so that the answer survives this service being restarted, which is
+## exactly when a stale `waiting` needs settling.
+signin_status() {
+    [ -f "$VAR_DIR/signin.json" ] || return 0
+    jq -r '.status // ""' < "$VAR_DIR/signin.json" 2>/dev/null || printf ''
+}
+
+
+## The challenge URL as a picture, atomically, 0644 into the shell-readable
+## channel.
+##
+## ONLY s.team CHALLENGES ARE RENDERED, and this is fetch_art's host allow-list
+## wearing a different coat with higher stakes. The URL comes out of a response
+## body and a QR code is an instruction to somebody's PHONE -- the one screen in
+## this whole flow that this appliance does not control and cannot take back.
+## Drawing an arbitrary URL on a television for a phone to follow is precisely
+## the shape of mistake the artwork check exists to prevent, aimed at a person
+## instead of at a fetcher.
+render_qr() {
+    local url="$1"
+    local tmp="$QR.tmp"
+    case "$url" in
+        https://s.team/q/*) ;;
+        *) warn "refusing to render a sign-in challenge that is not Valve's"; return 1 ;;
+    esac
+    # -s 8: eight pixels a module, which at a television's scale survives a phone
+    # camera from across a living room. -m 2: the quiet zone the spec wants.
+    if ! qrencode -s 8 -m 2 -o "$tmp" "$url" 2>/dev/null; then
+        rm -f "$tmp"
+        warn "qrencode could not render the sign-in challenge"
+        return 1
+    fi
+    chmod 0644 "$tmp" || { rm -f "$tmp"; return 1; }
+    mv -f "$tmp" "$QR" || { rm -f "$tmp"; return 1; }
+    return 0
+}
+
+
+## Store an approved sign-in: the refresh token root-side, the account name
+## beside it for do_account, and nothing anywhere else.
+##
+## umask RATHER THAN chmod-after-write, so there is no window in which the file
+## exists more readable than it ends up. The token crosses into protocodec on
+## stdin, never as an argument.
+signin_store_token() {
+    local refresh="$1" account_name="$2"
+    local steamid="" shape=""
+    steamid="$(printf '%s' "$refresh" | "$PROTO" jwt-sub 2>/dev/null)" || steamid=""
+    case "$steamid" in
+        ''|*[!0-9]*) steamid="" ;;
+    esac
+    if [ -z "$steamid" ]; then
+        # THE SHAPE GOES TO THE JOURNAL, THE TOKEN GOES NOWHERE. The first live
+        # approval this project ever received (2026-08-11 22:31:38) died right
+        # here, holding the wrong string entirely -- the caller's tab-splitting
+        # had handed it an account name. Refusing was correct and storing
+        # nothing was correct; what was missing was any way to tell "Valve sent
+        # something odd" from "we mangled it ourselves", and without that the
+        # answer cost a bench session and a spent scan. One line of shape would
+        # have said `length=11 parts=1` and ended it.
+        shape="$(printf '%s' "$refresh" | "$PROTO" jwt-shape 2>/dev/null)" || shape=""
+        err "an approved sign-in carried a token this machine could not read"
+        [ -n "$shape" ] && err "the refused token's shape: $shape" || true
+        return 1
+    fi
+
+    # Two `local` statements rather than one: assignments on a single `local`
+    # line run left to right but the second cannot see the first (SC2318).
+    local dest="$SECRETS_DIR/steam-refresh.$steamid.token"
+    local tmp="$dest.tmp"
+    # No trailing newline. The file is read back and piped verbatim into
+    # protocodec and into curl, and a stray byte on the end of a JWT is a
+    # credential that stops working for no visible reason.
+    if ! ( umask 077; printf '%s' "$refresh" > "$tmp" ); then
+        rm -f "$tmp"
+        err "cannot store the sign-in token"
+        return 1
+    fi
+    if ! mv -f "$tmp" "$dest"; then
+        rm -f "$tmp"
+        err "cannot install the sign-in token"
+        return 1
+    fi
+
+    # The persona sidecar, best-effort: an account whose name cannot be written
+    # still signs in, it just renders as "Signed in" with no name.
+    account_name="$(clean_text "$account_name")"
+    ( umask 077; printf '%s' "$account_name" > "$SECRETS_DIR/steam-persona.$steamid" ) \
+        || warn "could not keep the account name beside the token"
+
+    rm -f "$QR"
+    # THE CACHED LIBRARY IS INVALIDATED HERE, and this is the fix for a real
+    # trap rather than tidiness. The shell asks for the library on every visit,
+    # so it was published EMPTY while nobody was signed in -- a correct answer,
+    # with a fresh mtime -- and the hour-long cache would then serve that empty
+    # file back for an hour after this approval. A sign-in that plainly worked
+    # would show an empty library and no reason anywhere. Deleting it makes the
+    # next request a cache miss that refetches with the token that now exists.
+    rm -f "$VAR_DIR/library.json"
+    # WHETHER, never who -- and above all never the token.
+    info "a QR sign-in was approved"
+    signin_publish approved "$account_name" || true
+    return 0
+}
+
+
+## The whole QR session, run as a BACKGROUND job. The one departure from this
+## service's single-threaded shape, and the reason is arithmetic: an approval
+## takes as long as a person takes to find their phone, minutes against a loop
+## that answers everything else in seconds, and blocking would freeze the client
+## for the length of a scan.
+##
+## WHAT KEEPS TWO WRITERS HONEST: this narrates ONLY through signin.json, qr.png
+## and the secrets directory. It never touches steam.state -- the main loop owns
+## that, and the seam's one-word contract stays single-writer.
+##
+## THE POLL IS BOUNDED THREE WAYS: by SIGNIN_TIMEOUT overall, by the floor under
+## Valve's own interval, and by SIGNIN_MISS_LIMIT consecutive transport failures.
+## The sleep comes FIRST, before the first poll: the QR has only just been drawn
+## and nobody has had time to look at it, so an immediate poll is a request that
+## can only answer "not yet".
+do_signin_job() {
+    local req="" resp="" parsed=""
+    local client_id challenge request_id interval
+
+    req="$("$PROTO" begin-req 2>/dev/null)" || req=""
+    if [ -z "$req" ]; then
+        err "could not encode a sign-in request"
+        signin_publish failed || true
+        return 0
+    fi
+    # The begin request holds no credential, so it may ride an argument -- but it
+    # is spelled the same way as the two calls that DO carry one, because the
+    # difference between them is not visible at a glance and the next person to
+    # copy a line from here should copy the safe shape.
+    resp="$(printf '%s' "$req" | curl -fsS --max-time "$CURL_MAX_TIME" --retry 1 \
+        --data-urlencode "input_protobuf_encoded@-" \
+        "$API_AUTH_BEGIN" 2>/dev/null | base64 -w0)" || resp=""
+    if [ -z "$resp" ]; then
+        err "Steam's sign-in endpoint did not answer"
+        signin_publish failed || true
+        return 0
+    fi
+    parsed="$(printf '%s' "$resp" | "$PROTO" begin-resp 2>/dev/null)" || parsed=""
+    client_id="$(tsv_field "$parsed" 1)"
+    challenge="$(tsv_field "$parsed" 2)"
+    request_id="$(tsv_field "$parsed" 3)"
+    interval="$(tsv_field "$parsed" 4)"
+    if [ -z "$client_id" ] || [ -z "$challenge" ] || [ -z "$request_id" ]; then
+        err "Steam's sign-in answer could not be read"
+        signin_publish failed || true
+        return 0
+    fi
+
+    # The interval arrives as a decimal; the sleep uses whole seconds with the
+    # floor under it. See SIGNIN_POLL_FLOOR for why Valve's number is not simply
+    # obeyed -- it has been measured at one second.
+    local wait_s="${interval%%.*}"
+    case "$wait_s" in ''|*[!0-9]*) wait_s=5 ;; esac
+    if [ "$wait_s" -lt "$SIGNIN_POLL_FLOOR" ]; then
+        wait_s="$SIGNIN_POLL_FLOOR"
+    fi
+
+    if ! render_qr "$challenge"; then
+        signin_publish failed || true
+        return 0
+    fi
+    signin_publish waiting || true
+    info "a sign-in QR is up; waiting for a phone"
+
+    local now deadline
+    now="$(date +%s)"
+    deadline=$(( now + SIGNIN_TIMEOUT ))
+    local pollreq pollresp pollparsed new_challenge refresh account_name new_client_id
+    local misses=0
+
+    while :; do
+        now="$(date +%s)"
+        [ "$now" -lt "$deadline" ] || break
+
+        sleep "$wait_s"
+
+        pollreq="$("$PROTO" poll-req "$client_id" "$request_id" 2>/dev/null)" || pollreq=""
+        if [ -z "$pollreq" ]; then
+            err "could not encode a sign-in poll"
+            rm -f "$QR"
+            signin_publish failed || true
+            return 0
+        fi
+        if ! pollresp="$(printf '%s' "$pollreq" | curl -fsS --max-time "$CURL_MAX_TIME" \
+                --data-urlencode "input_protobuf_encoded@-" \
+                "$API_AUTH_POLL" 2>/dev/null | base64 -w0)"; then
+            misses=$(( misses + 1 ))
+            if [ "$misses" -ge "$SIGNIN_MISS_LIMIT" ]; then
+                err "Steam's sign-in poll stopped answering"
+                rm -f "$QR"
+                signin_publish failed || true
+                return 0
+            fi
+            continue
+        fi
+        misses=0
+
+        # AN EMPTY BODY IS PROTOBUF FOR "every field is default": nothing
+        # approved, nothing rotated, keep waiting. It is the normal answer, most
+        # of the time, for minutes. It is never an error and it is never a
+        # reason to end the session.
+        pollparsed="$(printf '%s' "$pollresp" | "$PROTO" poll-resp 2>/dev/null)" || continue
+
+        # THE LINE THE WHOLE FEATURE ONCE TURNED ON. An approval's first column
+        # is empty, and `read` with IFS=$'\t' swallows a leading empty field --
+        # see tsv_field.
+        new_challenge="$(tsv_field "$pollparsed" 1)"
+        refresh="$(tsv_field "$pollparsed" 2)"
+        account_name="$(tsv_field "$pollparsed" 3)"
+        new_client_id="$(tsv_field "$pollparsed" 4)"
+
+        # THE APPROVAL IS CHECKED BEFORE THE ROTATION. Valve may send both in one
+        # response, and taking the rotation first would redraw the QR and go back
+        # to waiting while holding the token that ends the session.
+        if [ -n "$refresh" ]; then
+            signin_store_token "$refresh" "$account_name" || signin_publish failed || true
+            return 0
+        fi
+        if [ -n "$new_challenge" ]; then
+            # Valve rotates the challenge about every thirty seconds and a phone
+            # can only approve a live one, so the picture follows it. The
+            # re-publish is what nudges the shell to re-read the PNG, since the
+            # status word has not changed and only `fetched` moves.
+            #
+            # The client id is reissued alongside, and polling on with the old
+            # one is a slow way to time out. Zero means the field was absent, in
+            # which case the id we have is still the current one.
+            case "$new_client_id" in
+                ''|0|*[!0-9]*) ;;
+                *) client_id="$new_client_id" ;;
+            esac
+            render_qr "$new_challenge" && signin_publish waiting || true
+        fi
+    done
+
+    rm -f "$QR"
+    signin_publish expired || true
+    info "a sign-in QR expired unanswered"
+}
+
+
+## Answer a signin request: spawn the job, or re-publish the live one.
+##
+## A SECOND PRESS WHILE A QR IS ALREADY UP MUST NOT START A SECOND SESSION.
+## Valve would happily issue one, the television would show the newer picture,
+## and the older poll loop would keep running against a challenge nobody can see
+## -- two sessions, one of them invisible, both burning requests. So the live
+## job's CURRENT status is re-published instead, which moves `fetched` and tells
+## the shell to re-read the picture it already has.
+do_signin_start() {
+    local current=""
+    if [ -n "$SIGNIN_PID" ] && kill -0 "$SIGNIN_PID" 2>/dev/null; then
+        current="$(signin_status)" || current=""
+        case "$current" in
+            starting|waiting) ;;
+            *) current="waiting" ;;
+        esac
+        info "a sign-in is already waiting on a phone"
+        signin_publish "$current" || true
+        state "done" signin
+        return 0
+    fi
+    signin_publish starting || true
+    do_signin_job &
+    SIGNIN_PID=$!
+    state "done" signin
+}
+
+
+# ---------------------------------------------------------------------------
+# Library
+# ---------------------------------------------------------------------------
+
+## Every appid with a manifest on this disk, one per line. Read from the two
+## steamapps directories marwanos-appscan already walks, so a game installed by
+## this repo's downloader and one installed by Valve's client both count.
+installed_appids() {
+    local dir f id
+    for dir in $STEAM_APPS_DIRS; do
+        [ -d "$dir" ] || continue
+        for f in "$dir"/appmanifest_*.acf; do
+            [ -e "$f" ] || continue
+            id="${f##*/appmanifest_}"
+            id="${id%.acf}"
+            case "$id" in
+                ''|*[!0-9]*) continue ;;
+            esac
+            printf '%s\n' "$id"
+        done
+    done
+}
+
+
+## The account's owned games -- INCLUDING the ones this disk has never seen,
+## which is the whole point: the rail already shows what is installed, and this
+## is the half of the library the machine cannot know without asking.
+##
+## ONE API CALL for the list. GetOwnedGames returns every name in the same
+## response, so there is no per-item fan-out here; the artwork below is bounded
+## and paginated instead.
+##
+## MOST RECENTLY PLAYED FIRST, and the order is the pagination policy as much as
+## the shelf order: art is fetched for at most LIBRARY_ART_BOUND games per
+## refresh, front of the list first, skipping what is already on disk -- so each
+## visit reaches deeper and the first page is the games a person recognises.
+do_library() {
+    local steamid="" token="" tokreq="" tokresp="" access="" raw="" body="" count=0
+
+    if ! steamid="$(token_steamid)"; then
+        # Not an error and not a failure of the wire: nobody has scanned a QR on
+        # this machine. An empty library is the honest answer and the shell draws
+        # the sign-in invitation instead.
+        info "asked for a library with no QR sign-in on this machine"
+        publish library "$(jq -nc --argjson now "$(date +%s)" '{fetched: $now, items: []}')" || true
+        state "done" library
+        return 0
+    fi
+
+    token="$(cat "$SECRETS_DIR/steam-refresh.$steamid.token" 2>/dev/null)" || token=""
+    if [ -z "$token" ]; then
+        err "the sign-in token file has gone missing or unreadable"
+        state failed "no token"
+        return 0
+    fi
+
+    # Refresh -> access. The access token lives only in this function's memory;
+    # the refresh token crosses into protocodec on STDIN and into Valve inside a
+    # blob curl reads from STDIN, so neither ever reaches a log line, an argv or
+    # a file the shell can read.
+    tokreq="$(printf '%s' "$token" | "$PROTO" token-req "$steamid" 2>/dev/null)" || tokreq=""
+    if [ -z "$tokreq" ]; then
+        err "could not encode the token exchange"
+        state failed "no answer"
+        return 0
+    fi
+    # THE BLOB NEVER TOUCHES ARGV. $tokreq is base64 protobuf whose first field
+    # IS the refresh token, and /proc/<pid>/cmdline is world-readable -- so
+    # `--data-urlencode "name=$tokreq"` would hand the one credential this
+    # appliance holds to the player uid for the life of the request. `name@-`
+    # reads the value from stdin instead, and printf feeds it with NO TRAILING
+    # NEWLINE: a herestring would append one and corrupt the base64.
+    tokresp="$(printf '%s' "$tokreq" | curl -fsS --max-time "$CURL_MAX_TIME" --retry 1 \
+        --data-urlencode "input_protobuf_encoded@-" \
+        "$API_AUTH_TOKEN" 2>/dev/null | base64 -w0)" || tokresp=""
+    if [ -z "$tokresp" ]; then
+        err "Steam's token endpoint did not answer"
+        state failed "no answer"
+        return 0
+    fi
+    access="$(printf '%s' "$tokresp" | "$PROTO" token-resp 2>/dev/null)" || access=""
+    if [ -z "$access" ]; then
+        # The exchange answered and declined: the refresh token has expired or
+        # been revoked. That is "scan the QR again", not a dead wire, and the two
+        # deserve different words on the television.
+        warn "Steam declined the stored sign-in; a new QR scan is needed"
+        state failed "sign in again"
+        return 0
+    fi
+
+    # The access token rides stdin too, for the refresh token's reason -- it is
+    # shorter-lived but it is a credential, and a GET puts every other parameter
+    # in a URL where a proxy or a log could keep it. Only the token uses `@-`;
+    # the steamid is digits and the flags are constants.
+    raw="$(printf '%s' "$access" | curl -fsS --max-time "$CURL_MAX_TIME" --retry 1 --get \
+        --data-urlencode "access_token@-" \
+        --data-urlencode "steamid=$steamid" \
+        --data-urlencode "include_appinfo=1" \
+        --data-urlencode "include_played_free_games=1" \
+        "$API_OWNED" 2>/dev/null)" || raw=""
+    if [ -z "$raw" ]; then
+        err "Steam's owned-games endpoint did not answer"
+        state failed "no answer"
+        return 0
+    fi
+
+    local installed_ids=""
+    installed_ids="$(installed_appids)" || installed_ids=""
+
+    # NATIVE_LINUX IS PUBLISHED AS false FOR EVERY ROW, and that is a knowing
+    # gap rather than a claim. GetOwnedGames does not carry an oslist, and the
+    # contract is explicit that the only trustworthy test is whether some
+    # appinfo `config.launch.<n>.config.oslist` contains linux -- the
+    # store-level claim is coarser and does not guarantee a runnable Linux entry
+    # point. So this half of the client does not know, and false is the SAFE
+    # direction of not knowing: it sends a launch through Valve's client, which
+    # works for every game including the DRM-free ones, where a wrong `true`
+    # would send a Windows-only title down a native path that cannot start it.
+    # The half that reads appinfo to build a manifest is where this field gets
+    # filled in honestly.
+    #
+    # THE INSTALLED SET IS AN OBJECT, NOT AN ARRAY SEARCHED WITH `index`. The
+    # obvious spelling, `($inst | index(.appid | tostring))`, does not work and
+    # does not fail quietly either: the pipe rebinds `.` to the array, so the
+    # argument is evaluated against the array and jq aborts the whole filter
+    # with "Cannot index array with string". Because the filter's stderr is
+    # discarded and an empty body is read as an unparseable answer, the visible
+    # symptom would have been a library that always says the endpoint could not
+    # be read. Caught by a fixture rather than on the bench. A keyed object also
+    # makes the lookup O(1) per row instead of a scan of every installed game.
+    body="$(printf '%s' "$raw" | jq -c \
+        --arg installed "$installed_ids" \
+        --argjson now "$(date +%s)" '
+        ($installed | split("\n") | map(select(length > 0))
+                    | map({(.): true}) | add // {}) as $inst
+        | {
+            fetched: $now,
+            items: ([
+                (.response.games // [])[]
+                | select((.appid | type) == "number")
+                | select(((.name // "") | length) > 0)
+                | {appid: .appid, name: .name,
+                   last: (.rtime_last_played // 0),
+                   played: (.playtime_forever // 0)}
+            ] | sort_by(.last, .played) | reverse
+              | map({appid: .appid, name: .name,
+                     installed: ($inst[.appid | tostring] // false),
+                     playtime: .played,
+                     native_linux: false}))
+          }' 2>/dev/null)" || body=""
+    if [ -z "$body" ]; then
+        err "Steam's owned-games answer could not be parsed"
+        state failed "no answer"
+        return 0
+    fi
+
+    count="$(printf '%s' "$body" | jq -r '.items | length' 2>/dev/null)" || count=0
+    case "$count" in ''|*[!0-9]*) count=0 ;; esac
+
+    # AN EMPTY LIBRARY IS PUBLISHED. A brand-new account owning nothing is a real
+    # answer about that account, and the token having WORKED is what tells that
+    # apart from an outage -- an outage never gets this far.
+    if ! publish library "$body"; then
+        state failed "cannot write"
+        return 0
+    fi
+    info "library: $count owned game(s)"
+
+    local appid considered=0 fetched=0
+    while IFS= read -r appid; do
+        case "$appid" in ''|*[!0-9]*) continue ;; esac
+        # The capsule's presence is what marks an appid as done -- see
+        # art_for_appid for why the appid rather than each file is the unit.
+        [ -f "$ART_DIR/$appid.jpg" ] && continue
+        [ "$considered" -ge "$LIBRARY_ART_BOUND" ] && break
+        considered=$(( considered + 1 ))
+        if art_for_appid "$appid"; then
+            fetched=$(( fetched + 1 ))
+        fi
+    done < <(printf '%s' "$body" | jq -r '.items[].appid' 2>/dev/null)
+    info "$fetched of $considered new library picture set(s) fetched"
+
+    # THE SENTENCE UNDER THE TITLE. Six of the eight fields the rail's details
+    # panel draws have Steam's store page as their only source, so without this
+    # pass every card is a name over a blank. Bounded and paced separately from
+    # the artwork above -- see META_BOUND -- and deliberately last, because it
+    # is the part a person can most afford to have arrive on the next visit.
+    meta_pass < <(printf '%s' "$body" | jq -r '.items[].appid' 2>/dev/null)
+
+    state "done" library
+}
+
+
+# ---------------------------------------------------------------------------
+# Downloads: accepted here, performed elsewhere
+# ---------------------------------------------------------------------------
+
+## Hand `install`, `cancel` and `uninstall` to the download worker.
+##
+## NOTHING IS DOWNLOADED FROM THIS FILE. A depot transfer takes minutes to hours
+## and this loop answers a button press in half a second; the two cannot share a
+## thread, and a download that blocked the loop would freeze sign-in and the
+## library for its whole duration. So the verb is validated, appended to the
+## queue, and answered `done` -- meaning "heard", not "finished". What happened
+## next is steam.downloads.json's story, written by the worker, exactly as the
+## contract splits them.
+##
+## `not owned` and `no space` are the worker's words to say, not this one's: it
+## is the half that knows what a depot weighs and what the account is entitled
+## to. This half checks only that the appid is a number.
+##
+## APPENDED WITH `>>` AND NO LOCK, deliberately. This loop is the only writer;
+## the worker only consumes. A single short line written to a regular file
+## opened O_APPEND is not interleaved, and a consumer that takes the queue by
+## rename(2) either gets the line or does not -- never half of it. A lock file
+## here would be a second thing to leave behind on a crash for no property this
+## does not already have.
+queue_download() {
+    local verb="$1" appid="$2"
+    if ! ( umask 077; printf '%s\t%s\n' "$verb" "$appid" >> "$QUEUE" ); then
+        err "cannot write the download queue"
+        state failed "cannot write"
+        return 0
+    fi
+    info "queued a $verb for appid $appid"
+    state "done" "$verb"
+}
+
+
+# ---------------------------------------------------------------------------
+# The loop
+# ---------------------------------------------------------------------------
+
+state idle
+
+# A RESTART ORPHANS ANY SIGN-IN THAT WAS MID-SCAN: the poll loop died with the
+# old process, so a stored `waiting` would leave the shell drawing a QR that
+# nobody is polling and a phone approving a session nothing will collect.
+# Settled at startup rather than papered over -- the person scans again, which
+# costs one press and is honest.
+rm -f "$QR"
+case "$(signin_status)" in
+    starting|waiting) signin_publish expired || true ;;
+esac
+
+## The last request that FAILED and when, so a repeat is refused for
+## RETRY_SECONDS. Kept in memory rather than on disk: a restart of this service
+## is rare enough that forgetting the cooldown across one is fine, and a file
+## would be state to invalidate.
+last_failed_name=""
+last_failed_at=0
+
+## The background sign-in job, if one is up. See do_signin_start.
+SIGNIN_PID=""
+
+## Epoch until which the store-page pass stands down after a 429. In memory for
+## the failure cooldown's reason -- a restart forgetting it costs at most one
+## more rate-limited request, and a file would be state to invalidate.
+META_BACKOFF_UNTIL=0
+
+while :; do
+    # THE MOVE IS THE SECURITY BOUNDARY. `player` owns REQ_DIR, so between any
+    # test and any read the file could become a symlink or a FIFO -- the latter
+    # blocking this single-threaded loop in open() forever with the unit still
+    # reporting `active (running)`, so Restart=always never fires. rename(2)
+    # follows neither and opens nothing.
+    if mv -f "$REQ" "$CONSUMED" 2>/dev/null; then
+        line=""
+        if [ -L "$CONSUMED" ] || [ ! -f "$CONSUMED" ]; then
+            # Nothing is read from it -- in particular its contents never reach
+            # the journal.
+            warn "discarding a request that was not a regular file"
+        else
+            IFS= read -r line < "$CONSUMED" 2>/dev/null || true
+        fi
+        rm -f "$CONSUMED"
+
+        # tsv_field, not `read`, on the request line too. It works either way
+        # today because a verb is never empty -- which is exactly what was true
+        # of the two sign-in responses that worked while the third was broken.
+        verb="$(tsv_field "$line" 1)"
+        arg="$(tsv_field "$line" 2)"
+
+        name=""
+        cache_window="$CACHE_SECONDS"
+        case "$verb" in
+            account)
+                name=account
+                ;;
+            library)
+                name=library
+                ;;
+            signin)
+                # Progress flows through signin.json and qr.png rather than a
+                # stored answer, so a cached file must never answer this verb: a
+                # fresh press deserves a fresh, or at least a live, QR.
+                name=signin
+                cache_window=0
+                ;;
+            install|cancel|uninstall)
+                # DIGITS ONLY, AND THIS IS THE LOAD-BEARING CHECK. The appid
+                # arrives from a file an unprivileged process wrote and goes on
+                # to become a line in a root-owned queue, a directory name and a
+                # URL. Numeric means it can be none of a path traversal, a
+                # second query parameter, a forged queue column or a shell word.
+                case "$arg" in
+                    ''|*[!0-9]*) arg="" ;;
+                esac
+                if [ -n "$arg" ] && [ "${#arg}" -gt "$APPID_MAX_DIGITS" ]; then
+                    arg=""
+                fi
+                if [ -n "$arg" ]; then
+                    name="$verb"
+                    cache_window=0
+                else
+                    warn "ignoring a download request whose appid is not a number"
+                fi
+                ;;
+            "")
+                ;;
+            *)
+                # The verb itself is NOT logged: everything in that file came
+                # from outside this service.
+                warn "ignoring a request with an unrecognised verb"
+                ;;
+        esac
+
+        # ACCOUNT IS ANSWERED BEFORE EVERY GATE BELOW, and that is the point of
+        # it rather than an exception to the rules. It reads two local files and
+        # opens no socket, so the cache window, the failure cooldown and the
+        # online check are all answering a question it does not ask -- and the
+        # one that would actually hurt is `online`: a card that forgot the
+        # account whenever the wifi dropped would be forgetting something it can
+        # see from where it stands.
+        if [ "$name" = "account" ]; then
+            do_account
+            continue
+        fi
+
+        # THE QUEUE VERBS ARE ANSWERED BEFORE THE GATES TOO, for a different
+        # reason: they open no socket either, and an `install` refused because
+        # netcheck has not answered yet would be a button that does nothing on a
+        # machine whose link is fine. Whether the download can proceed is the
+        # worker's judgement, made when it reaches the job.
+        case "$name" in
+            install|cancel|uninstall)
+                queue_download "$name" "$arg"
+                continue
+                ;;
+        esac
+
+        if [ -n "$name" ]; then
+            cached="$VAR_DIR/$name.json"
+            now="$(date +%s)"
+
+            if [ -f "$cached" ] && [ "$cache_window" -gt 0 ] \
+                && [ "$(age_of "$cached")" -lt "$cache_window" ]; then
+                # ANSWERED FROM DISK with the network untouched. The shell
+                # re-reads the same file it would have read anyway; `done` is
+                # what tells it to.
+                state "done" "$name"
+            elif [ "$name" = "$last_failed_name" ] \
+                && [ "$(( now - last_failed_at ))" -lt "$RETRY_SECONDS" ]; then
+                # Still inside the cooldown from a failure. Re-stating rather
+                # than staying silent: a request that vanished is
+                # indistinguishable, from the couch, from a shell that never
+                # sent one.
+                state failed "no answer"
+            elif ! online; then
+                # netcheck's answer, not a probe of our own. The result file may
+                # well still be on disk from a previous boot and the shell draws
+                # it -- `offline` says only that it could not be refreshed.
+                info "asked for $name with no network; the answer stays as it was"
+                if [ "$name" = "signin" ]; then
+                    # A QR nobody can poll is not worth drawing, and the panel
+                    # has its own file to be told so through.
+                    signin_publish failed || true
+                fi
+                state offline "$name"
+            else
+                state working "$name"
+                last_failed_name=""
+                case "$verb" in
+                    signin)  do_signin_start ;;
+                    library) do_library ;;
+                esac
+                # One read-back rather than a return code threaded through every
+                # branch of every function: the state file is the record of what
+                # happened, so it is also what the cooldown consults.
+                current=""
+                if [ -f "$STATE" ]; then
+                    current="$(cut -f1 < "$STATE" 2>/dev/null)" || current=""
+                fi
+                if [ "$current" = "failed" ]; then
+                    last_failed_name="$name"
+                    last_failed_at="$(date +%s)"
+                fi
+            fi
+        fi
+
+        # Deliberately no sleep before looping: a second request may already be
+        # waiting -- opening the library and pressing A on a tile is two -- and
+        # sleeping first would add latency to a queued press.
+        continue
+    fi
+
+    sleep "$POLL"
+done

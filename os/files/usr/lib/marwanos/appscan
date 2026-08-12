@@ -132,19 +132,59 @@ ICON_SIZES_SMALL=(128x128 96x96 64x64 48x48)
 # flatpak app's private home under the player user -- the same fixed
 # /var/home/player the APP_DIRS above use, because the appliance has exactly
 # one user, created by sysusers at uid 1000, and resolving it dynamically
-# would be ceremony around a constant. Extra Steam library folders
-# (libraryfolders.vdf can name several) are deliberately not followed: this
-# machine has one disk and the default library is on it.
+# would be ceremony around a constant.
 STEAM_DATA=/var/home/player/.var/app/com.valvesoftware.Steam/.local/share/Steam
-STEAM_APPS_DIR="$STEAM_DATA/steamapps"
 STEAM_LIBCACHE="$STEAM_DATA/appcache/librarycache"
 
-# Where marwanos-storeart lands artwork it fetched from the network, shared
+# TWO LIBRARIES ARE WALKED, NOT ONE, and the second is the one this appliance
+# actually fills. Since the 2026-08-12 rebuild (ADR 0010) downloads are driven
+# by marwanos-steam into ~player/Games, which is a Steam library folder in the
+# ordinary sense -- steamapps/ with an appmanifest per game -- registered with
+# the client through libraryfolders.vdf so the client can launch what we
+# fetched. The client's own private steamapps is still walked because a game
+# installed through the client itself before the rebuild, or by any future
+# path, still belongs on the rail.
+#
+# THE MANIFEST FORMAT IS THE WHOLE INTEGRATION. marwanos-steam writes the same
+# StateFlags / BytesDownloaded / BytesToDownload keys Valve's client writes, so
+# the download-progress rendering below needs no second code path and the rail
+# shows a percentage for a download this repo is performing itself.
+#
+# Order matters only for duplicates: a game present in both is emitted from
+# whichever is walked first, and ours is walked first because ours is the copy
+# this machine downloaded and the one the manifest describes accurately.
+#
+# THE NESTING IS NOT DECORATIVE. The library root is Games/SteamLibrary and not
+# Games itself, because the flatpak client has to be granted the PARENT of a
+# library folder to use it -- granted the root alone it fails to add it and says
+# nothing (Valve issue #10487). So `Games` is what the override exposes and
+# `Games/SteamLibrary` is what the client mounts. /var/home rather than /home
+# for the same reason every other path here does: /home is a symlink on ostree
+# and Steam does not follow symlinks in a library path.
+STEAM_APPS_DIRS="/var/home/player/Games/SteamLibrary/steamapps $STEAM_DATA/steamapps"
+
+# Where marwanos-steam lands artwork it fetched from the network, shared
 # with the shipped applications' Flathub icons. Read-only from here: this
 # scanner never downloads anything (the shell is not the only renderer in this
 # tree that opens no sockets -- see this file's header), it just notices when a
 # file has appeared. root-owned 0755, per tmpfiles.d/50-marwanos.conf.
 STORE_ICON_DIR=/var/marwanos/store/icons
+
+# WHERE THE GAME ARTWORK ACTUALLY COMES FROM NOW. marwanos-steam fetches a
+# portrait and a hero per owned game into here, keyed by bare appid; the
+# storeart-era names under STORE_ICON_DIR (steam.<appid>.jpg and its .header
+# sibling) went out with the fetcher that wrote them, and leaving them in the
+# fallback chains would have been three stat calls a scan against files nothing
+# on this machine can ever create again.
+#
+# STORE_ICON_DIR itself is kept for the FLATHUB icons, which are a different
+# thing with a different key (an application id, not an appid). It has no
+# writer at the moment either -- storeart fetched both halves -- so an
+# application that is not installed draws its fallback glyph until something
+# fills it again. That is a smaller hole than it looks: every INSTALLED
+# application resolves a real icon from its desktop entry, which is the walk
+# this file is mostly about.
+STEAM_ART_DIR=/var/marwanos/steam/art
 
 info() { printf '<6>%s: %s\n' "$TAG" "$*"; }
 err()  { printf '<3>%s: %s\n' "$TAG" "$*" >&2; }
@@ -429,8 +469,7 @@ steam_art() {
         "$STEAM_LIBCACHE/$appid/library_600x900.jpg" \
         "$STEAM_LIBCACHE/${appid}_icon.jpg" \
         "$STEAM_LIBCACHE/$appid/icon.jpg" \
-        "$STORE_ICON_DIR/steam.$appid.jpg" \
-        "$STORE_ICON_DIR/steam.$appid.header.jpg"; do
+        "$STEAM_ART_DIR/$appid.jpg"; do
         [ -f "$candidate" ] && { printf '%s' "$candidate"; return 0; }
     done
     return 0
@@ -479,7 +518,7 @@ steam_hero() {
     for candidate in \
         "$STEAM_LIBCACHE/${appid}_library_hero.jpg" \
         "$STEAM_LIBCACHE/$appid/library_hero.jpg" \
-        "$STORE_ICON_DIR/steam.$appid.hero.jpg"; do
+        "$STEAM_ART_DIR/$appid.hero.jpg"; do
         [ -f "$candidate" ] && { printf '%s' "$candidate"; return 0; }
     done
     return 0
@@ -521,16 +560,24 @@ human_bytes() {
 
 
 steam_games() {
-    local file appid flags name state detail done_bytes total_bytes percent
+    local dir file appid flags name state detail done_bytes total_bytes percent
+    local seen=" "
 
-    [ -d "$STEAM_APPS_DIR" ] || return 0
-    for file in "$STEAM_APPS_DIR"/appmanifest_*.acf; do
+    for dir in $STEAM_APPS_DIRS; do
+    [ -d "$dir" ] || continue
+    for file in "$dir"/appmanifest_*.acf; do
         [ -f "$file" ] || continue
 
         # The filename carries the appid too, but the manifest is the record
         # being trusted here, so the manifest answers.
         appid="$(acf_get "$file" appid)"
         case "$appid" in ''|*[!0-9]*) continue ;; esac
+
+        # One row per game even when both libraries hold a manifest for it.
+        # Two rows would be two cards for one game on the rail, and the second
+        # press would launch whichever the shell happened to keep.
+        case "$seen" in *" $appid "*) continue ;; esac
+        seen="$seen$appid "
 
         flags="$(acf_get "$file" StateFlags)"
         case "$flags" in ''|*[!0-9]*) continue ;; esac
@@ -601,6 +648,7 @@ steam_games() {
         # chose and the other is built here out of numbers.
         printf '%s\t%s\t%s\t%s\n' "$appid" "$name" "$state" "$detail"
     done
+    done
 }
 
 
@@ -628,14 +676,27 @@ scan_steam() {
         # anywhere downstream.
         exec_cmd=""
         if [ "$state" = "installed" ]; then
-            exec_cmd="flatpak run com.valvesoftware.Steam -silent steam://rungameid/$appid"
+            exec_cmd="/usr/lib/marwanos/steam/steamlaunch $appid"
         fi
 
-        # Launched back through Steam rather than directly: Steam owns the
-        # game's runtime container, Proton prefix and cloud saves. Directly
-        # under the session's gamescope, NOT inside a nested one -- the nested
-        # wrapper shipped for one evening and its inner compositor aborted on
-        # this NVIDIA driver three minutes into the first real game
+        # THROUGH steamlaunch RATHER THAN STRAIGHT AT THE FLATPAK, and the
+        # indirection is the whole point rather than a layer for its own sake.
+        # This line used to read `flatpak run com.valvesoftware.Steam -silent
+        # steam://rungameid/<appid>` -- which is still what happens for most
+        # games, and is what steamlaunch's first tier does. What it could not
+        # express is that a game has more than one way to start: a DRM-free
+        # native title needs no client at all, and a Windows one needs Proton.
+        # A scanner that walks manifests has no business deciding which; it
+        # names a program that decides, and that program is testable on its own
+        # (see steamlaunch's --explain and --dry-run).
+        #
+        # Written while the alternative was live: the tiers existed for half a
+        # day as code nothing invoked, because this string still said flatpak.
+        # A launch path with no caller is not a feature, it is a file.
+        #
+        # Directly under the session's gamescope, NOT inside a nested one -- the
+        # nested wrapper shipped for one evening and its inner compositor
+        # aborted on this NVIDIA driver three minutes into the first real game
         # (catalogue.gd carries the full story). Every word in this exec is
         # spaceless (the appid is numeric), which the space-joined, space-split
         # exec field requires -- the title, which may contain anything, never
@@ -799,16 +860,23 @@ dirs_signature() {
 ## order of cheap as the manifest walk below, and the alternative is an art
 ## column that is right on some Steam versions and permanently empty on others.
 steam_signature() {
-    local file
+    local dir file
     printf '%s:%s ' "$STORE_ICON_DIR" "$(stat -c %Y "$STORE_ICON_DIR" 2>/dev/null || echo 0)"
     printf '%s:%s ' "$STEAM_LIBCACHE" "$(stat -c %Y "$STEAM_LIBCACHE" 2>/dev/null || echo 0)"
     for file in "$STEAM_LIBCACHE"/*/; do
         [ -d "$file" ] && printf '%s:%s ' "$file" "$(stat -c %Y "$file" 2>/dev/null || echo 0)"
     done
-    [ -d "$STEAM_APPS_DIR" ] || return 0
-    printf '%s:%s ' "$STEAM_APPS_DIR" "$(stat -c %Y "$STEAM_APPS_DIR" 2>/dev/null || echo 0)"
-    for file in "$STEAM_APPS_DIR"/appmanifest_*.acf; do
-        [ -f "$file" ] && printf '%s:%s ' "$file" "$(stat -c %Y "$file" 2>/dev/null || echo 0)"
+    # BOTH libraries, and a `return` on the first missing one would have been
+    # the bug: ~player/Games does not exist until the first download, so
+    # returning there would stop the client's own library from ever being
+    # signed -- and a download landing in a directory nobody signs is a rail
+    # that never notices the game arrived.
+    for dir in $STEAM_APPS_DIRS; do
+        [ -d "$dir" ] || continue
+        printf '%s:%s ' "$dir" "$(stat -c %Y "$dir" 2>/dev/null || echo 0)"
+        for file in "$dir"/appmanifest_*.acf; do
+            [ -f "$file" ] && printf '%s:%s ' "$file" "$(stat -c %Y "$file" 2>/dev/null || echo 0)"
+        done
     done
 }
 

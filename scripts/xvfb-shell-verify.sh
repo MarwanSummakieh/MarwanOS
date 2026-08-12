@@ -17,12 +17,20 @@
 # logs, nothing else. Progress narration goes to stderr, so
 #
 #   out="$(wsl ... bash scripts/xvfb-shell-verify.sh Up Return)"
-#   grep -q 'launch requested: store.steam' <<< "$out"
+#   grep -q 'launch requested: steam.620' <<< "$out"
 #
 # is the whole harness. The shell's ShellLog lines are the assertion surface:
-# `home rail ready with N cards`, `stores screen up with N tabs`, `settings
-# opened`, `launch requested: <id>`, `install requested for <id>`. Counting a
-# line before and after a key press proves a screen survived an action.
+# `home rail ready with N cards`, `settings opened`, `launch requested: <id>`,
+# `install requested for <id>`. Counting a line before and after a key press
+# proves a screen survived an action.
+#
+# The Steam screen adds a second surface worth asserting on, and it is a
+# stronger one: STEAM_DIR is mounted read-write, so a press can be checked by
+# reading back the request the shell actually wrote --
+#
+#   grep -qx 'install\t620' "$STEAM_DIR/steam.request"
+#
+# which proves what was asked for rather than merely that something was logged.
 #
 # Environment:
 #   STATUS_DIR   directory of status-file fixtures, mounted read-only and
@@ -34,19 +42,36 @@
 #                directory, which is why the artwork seam deliberately did not
 #                get an override of its own).
 #   STORE_DIR    the artwork and metadata cache, mounted read-only and pointed
-#                at by MARWANOS_SHELL_STORE_DIR -- the /var/marwanos/store tree
-#                WHOLE: icons/<app-id>.png, meta/steam.<appid>.json, AND the
-#                storefront's front/featured.json + front/app.<appid>.json +
-#                front/art/<appid>[.shot].jpg, AND the account/sign-in set:
-#                front/account.json (who is signed in), front/wishlist.json +
-#                front/library.json (the personal shelves, appids for the
-#                first and {appid,name} items for the second), front/qr.png +
-#                front/signin.json (the QR sign-in panel's picture and its
-#                status word). A fixture built without front/ renders a
-#                storefront grid that says "Fetching the storefront"
-#                forever, which reads as a bug and is a missing directory.
-#                Without the whole tree a store page draws its fallback glyph
-#                and the details panel has no description from Steam to show.
+#                at by MARWANOS_SHELL_STORE_DIR -- the /var/marwanos/store tree:
+#                icons/<app-id>.png and meta/steam.<appid>.json. Without it a
+#                store page draws its fallback glyph and the details panel has
+#                no description from Steam to show.
+#
+#                THE STOREFRONT HALF OF THIS FIXTURE IS GONE, and so is the
+#                front/ subtree it used to describe -- featured, search,
+#                wishlist and the rest went out with the storefront in the
+#                2026-08-12 rebuild (ADR 0010). What replaced it is STEAM_DIR
+#                below.
+#   STEAM_DIR    the in-shell Steam client's whole seam, mounted read-only and
+#                pointed at by MARWANOS_SHELL_STEAM_DIR. ONE directory holding
+#                everything by basename, which is not tidiness: the seam spans
+#                /run/marwanos (steam.state, steam.downloads.json) AND
+#                /var/marwanos/steam (account.json, library.json, signin.json,
+#                qr.png, art/<appid>.jpg), so neither of the existing levers
+#                could have covered it and two would have meant keeping two
+#                fixtures in step by hand. Requests land here as steam.request.
+#
+#                WHAT EACH FILE MAKES THE SCREEN DO, since a fixture missing
+#                one renders as a different state rather than as an error:
+#                account.json decides signed-out vs the shelf, library.json is
+#                the shelf itself ({appid,name} items), signin.json + qr.png
+#                are the QR panel, and steam.downloads.json is what puts a
+#                percentage on a tile.
+#
+#                NOTE THE SHELF ALSO NEEDS STATUS_DIR: the screen gates every
+#                state behind the flatpak client being installed, so an
+#                apps.tsv without com.valvesoftware.Steam marked installed
+#                correctly draws the first-boot page no matter what is here.
 #   FILES_DIR    directory of file-manager fixtures, mounted at /files and
 #                pointed at by MARWANOS_SHELL_FILES_HOME, so the files
 #                screen's Home place browses it. Read-write, unlike
@@ -149,6 +174,9 @@ fi
 if [[ -n "${STORE_DIR:-}" && ! -d "$STORE_DIR" ]]; then
     die "STORE_DIR=$STORE_DIR is not a directory"
 fi
+if [[ -n "${STEAM_DIR:-}" && ! -d "$STEAM_DIR" ]]; then
+    die "STEAM_DIR=$STEAM_DIR is not a directory"
+fi
 
 say "Exporting the shell (only the shell-export stage rebuilds)"
 podman build \
@@ -181,9 +209,21 @@ fi
 STORE_ARGS=()
 if [[ -n "${STORE_DIR:-}" ]]; then
     # Read-only for STATUS_DIR's reason: this tree is root-written truth on the
-    # appliance (marwanos-storeart owns it) and the shell only ever reads it, so
+    # appliance (marwanos-steam owns it) and the shell only ever reads it, so
     # a fixture the shell could write to would be a fixture that proves less.
     STORE_ARGS=(-e MARWANOS_SHELL_STORE_DIR=/store -v "${STORE_DIR}:/store:ro")
+fi
+
+STEAM_ARGS=()
+if [[ -n "${STEAM_DIR:-}" ]]; then
+    # READ-WRITE, and it is the one fixture mount that has to be. Every other
+    # seam here is answers the shell only reads; this one also carries the
+    # REQUESTS the shell writes, so mounting it :ro would make every press on
+    # the Steam screen fail silently -- which is indistinguishable from the
+    # feature being broken, and is exactly what the harness exists to tell
+    # apart. Reading steam.request back out is also how a test asserts that a
+    # press asked for the right thing.
+    STEAM_ARGS=(-e MARWANOS_SHELL_STEAM_DIR=/steam -v "${STEAM_DIR}:/steam:rw")
 fi
 
 FILES_ARGS=()
@@ -228,6 +268,7 @@ podman run -d --name "$CTR" \
     -e MARWANOS_MOWSER_NO_SANDBOX=1 \
     "${STATUS_ARGS[@]}" \
     "${STORE_ARGS[@]}" \
+    "${STEAM_ARGS[@]}" \
     "${FILES_ARGS[@]}" \
     "${MEDIA_ARGS[@]}" \
     "${DEVMODE_ARGS[@]}" \

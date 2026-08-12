@@ -401,20 +401,57 @@ kill "$ticker_pid" 2>/dev/null
 # application is on the machine and works for everything except being handed a
 # path, and refusing to stamp a good install over a permission would turn a
 # degraded feature into no application at all.
-# NOTHING NEEDS A GRANT ANY MORE, and the whole block above is kept as a
-# comment rather than deleted because the NEXT app that takes a path on its
-# command line will need exactly this again.
+# THE GRANT IS BACK, for exactly the reason the paragraph above predicted it
+# would be -- though not because anything is handed a path on a command line.
 #
 # It existed for the browser: the Files screen launched `flatpak run <browser>
 # /run/media/player/STICK/page.html`, and a sandboxed app cannot read a path
-# outside its sandbox no matter who put it there -- so the install granted
-# read-only access to /run/media and home. The browser is not a flatpak now
-# (mowser links Chromium's engine into the shell, see mowser/src/mowser.h), so
-# it reads the stick as the session user, with no sandbox to widen and no
-# override to apply. Steam, the one app left in shipped-apps, is never handed
-# a path by anything.
+# outside its sandbox no matter who put it there. The browser is not a flatpak
+# now (mowser links Chromium's engine into the shell, see mowser/src/mowser.h),
+# so it reads the stick as the session user with no sandbox to widen.
+#
+# STEAM NEEDS ONE, and what it needs to reach is a LIBRARY. Since the
+# 2026-08-12 rebuild (ADR 0010) this repo downloads games itself, into
+# ~player/Games, and the client's whole remaining job is to launch what we
+# fetched -- which it cannot do if the files are outside its sandbox. Steam's
+# manifest grants /mnt, /media and /run/media but NOT the home directory, so an
+# external drive is reachable by default and the owner's own home is not.
+#
+# THE GRANT IS THE PARENT, NOT THE LIBRARY ROOT, and that is the trap this line
+# exists to have already avoided: a client granted only the library folder
+# fails to add it and says nothing at all (Valve issue #10487), because it
+# reads free space from the containing directory. So `Games` is granted and
+# `Games/SteamLibrary` is what the client mounts.
+#
+# :create so the grant survives the directory not existing yet. tmpfiles makes
+# it every boot, but an install racing the first boot's tmpfiles run would
+# otherwise get an override for a path that was not there when it was written.
+#
+# /var/home rather than /home: /home is a symlink on ostree and Steam does not
+# follow symlinks in a library path.
+#
+# Applied per install rather than once at build time, because a flatpak
+# override lives in /var/lib/flatpak/overrides -- machine state, which in bootc
+# is populated at install and never touched by an image upgrade. An override
+# baked into the image would not reach a machine that installs the application
+# later, which is every machine.
+#
+# Best effort: a failed override is logged and does not fail the install. The
+# client is on the machine and still runs; what breaks is launching a
+# downloaded game, and refusing to stamp a good install over a permission would
+# turn a degraded feature into no application at all.
 case "$APP" in
-    *) : "no application in this image needs a filesystem override" ;;
+    com.valvesoftware.Steam)
+        if flatpak override --system \
+                --filesystem=/var/home/player/Games:create \
+                "$APP" 2>/dev/null; then
+            info "granted $APP access to the games library"
+        else
+            err "could not grant $APP access to /var/home/player/Games --" \
+                "downloaded games will not launch until this is applied by hand"
+        fi
+        ;;
+    *) : "no other application in this image needs a filesystem override" ;;
 esac
 
 install -d /var/marwanos

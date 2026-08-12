@@ -15,7 +15,7 @@ extends Node
 ## process_menu.gd's heading.
 ##
 ## THIS SEAM HAS NO PRIVILEGED HALF, and it is the only one here that does not.
-## wifi, update, appctl, steamfront, display and window all cross a uid boundary:
+## wifi, update, appctl, steam, display and window all cross a uid boundary:
 ## the shell asks, root acts. This one does not cross anything. The background
 ## Steam client runs as `player`, marwanos-session runs as `player`, this shell
 ## runs as `player` -- three processes, one uid, arguing about a flatpak that uid

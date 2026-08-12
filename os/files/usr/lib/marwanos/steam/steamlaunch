@@ -1,0 +1,553 @@
+#!/usr/bin/env bash
+#
+# Start one installed game, having first worked out HOW it starts.
+#
+#   /usr/lib/marwanos/steam/steamlaunch <appid> [--dry-run] [--explain]
+#
+# WHY A SCRIPT AND NOT A COMMAND LINE IN A TSV. marwanos-appscan writes an exec
+# field per game and the shell splits it on spaces and spawns it, which was
+# exactly right while there was one way to start a game: hand the URL to Valve's
+# client. There are three ways now (ADR 0010 draws them honestly rather than
+# blinking), the choice depends on files on disk, and a decision that depends on
+# the disk cannot live in a column that was written ten seconds ago. So the
+# decision moves into a program with a spaceless path, and whoever writes the
+# exec field writes `/usr/lib/marwanos/steam/steamlaunch <appid>`.
+#
+# THE THREE TIERS, and which one a title gets:
+#
+#   1. STEAM DRM OR STEAMWORKS -> Valve's client.
+#      `flatpak run com.valvesoftware.Steam -silent steam://rungameid/<appid>`
+#      This is the tier the client exists for, and it is the DEFAULT for
+#      everything. Steam DRM wraps the executable and refuses to start unless a
+#      signed-in client is running to answer it; Steamworks titles want the same
+#      client for the overlay, cloud saves, achievements and multiplayer.
+#
+#   2. NATIVE LINUX, DRM-FREE -> the binary, directly, or through
+#      `UMU_NO_PROTON=1 umu-run` for the Steam Linux Runtime's sandbox.
+#
+#   3. WINDOWS, DRM-FREE -> `GAMEID=umu-<appid> PROTONPATH=GE-Proton umu-run`.
+#
+# umu CANNOT LAUNCH A STEAM-DRM'd GAME. It provides IDENTITY, not ENTITLEMENT:
+# it sets SteamAppId so a Steamworks library finds an appid to report, and it
+# ships no client, no logged-in session and no licence data. A DRM'd binary
+# under umu fails the same way it fails under a bare shell. Tiers 2 and 3 are
+# the DRM-free tiers and nothing else.
+#
+# AND DRM CANNOT BE DETECTED FROM METADATA. There is no appinfo field that says
+# "this executable is wrapped"; Valve's DRM is applied at upload time by the
+# publisher, per binary, and the only reliable test is running the thing. So
+# this file DEFAULTS TO TIER 1 WHENEVER IT IS UNSURE, which is almost always,
+# and the two DRM-free tiers are reached by an explicit per-game override that
+# somebody wrote after finding out. That is the honest arrangement: the wrong
+# guess in the tier-1 direction costs a client start; the wrong guess in the
+# other direction costs a game that refuses to launch with a message about Steam
+# not running, on a television.
+#
+# WHAT IS NOT GUESSWORK is the opposite signal: a `steam_api64.dll`,
+# `steam_api.dll` or `libsteam_api.so` inside the install is a Steamworks title
+# with certainty, so an override asking for tier 2 or 3 on such a game is
+# reported as the mistake it probably is rather than obeyed silently.
+#
+set -euo pipefail
+
+TAG=marwanos-steamlaunch
+
+VAR_DIR=/var/marwanos/steam
+APPINFO_DIR="$VAR_DIR/appinfo"
+## Per-game launch overrides, `key=value` per line. See read_override().
+LAUNCH_DIR="$VAR_DIR/launch"
+
+STEAM_FLATPAK_ID=com.valvesoftware.Steam
+
+# BOTH LIBRARIES, ours first, and the order matters for the same reason
+# marwanos-appscan gives: ours is the copy this machine downloaded and the one
+# whose manifest describes it accurately.
+#
+# /var/home rather than /home because /home is a symlink on ostree, and
+# Games/SteamLibrary rather than Games because the flatpak client must be
+# granted the PARENT of a library folder (Valve issue #10487).
+LIBRARIES=(
+    /var/home/player/Games/SteamLibrary
+    /var/home/player/.var/app/com.valvesoftware.Steam/.local/share/Steam
+)
+
+# STDERR FOR EVERY MESSAGE, including the ones a person is meant to read. This
+# program's stdout is its DATA channel -- --dry-run and --explain print the
+# answer there and something is expected to consume it -- so a log line on
+# stdout becomes part of the answer. Under the session, stderr is the journal.
+info() { printf '<6>%s: %s\n' "$TAG" "$*" >&2; }
+warn() { printf '<4>%s: %s\n' "$TAG" "$*" >&2; }
+err()  { printf '<3>%s: %s\n' "$TAG" "$*" >&2; }
+
+
+usage() {
+    printf 'usage: steamlaunch <appid> [--dry-run] [--explain]\n' >&2
+    exit 2
+}
+
+
+## Field <n> (1-based) of a tab-separated record, walked by hand.
+##
+## TAB IS IFS WHITESPACE, so `IFS=$'\t' read -r a b c` silently swallows a
+## leading empty field and shifts every value one place left. That has broken
+## two features in this tree. Walking the record cannot do it.
+tsv_field() {
+    local rest="$1" want="$2" i=1 field
+    while :; do
+        field="${rest%%$'\t'*}"
+        if [ "$i" -eq "$want" ]; then
+            printf '%s' "$field"
+            return 0
+        fi
+        case "$rest" in
+            *$'\t'*) rest="${rest#*$'\t'}" ;;
+            *)       return 0 ;;
+        esac
+        i=$(( i + 1 ))
+    done
+}
+
+
+## Digits only, at most ten. Validated at both ends of every seam in this
+## feature, and this end is the one where the value becomes a path and an argv.
+valid_appid() {
+    case "${1:-}" in
+        ''|*[!0-9]*) return 1 ;;
+    esac
+    [ "${#1}" -le 10 ]
+}
+
+
+## One top-level value out of a KeyValues (.acf) file.
+##
+## The same pure-bash walk marwanos-appscan and marwanos-steamdl use. Three
+## readers of one format is already one too many; a fourth PARSER would be the
+## thing that eventually disagrees, so this is a copy of the same twelve lines
+## rather than a new idea about the format.
+acf_value() {
+    local file="$1" key="$2" line
+    [ -r "$file" ] || return 0
+    while IFS= read -r line || [ -n "$line" ]; do
+        case "$line" in
+            *"\"$key\""*)
+                line="${line#*\""$key"\"}"
+                case "$line" in
+                    *\"*\"*)
+                        line="${line#*\"}"
+                        printf '%s' "${line%%\"*}"
+                        return 0
+                        ;;
+                esac
+                ;;
+        esac
+    done < "$file"
+    return 0
+}
+
+
+## `<key>TAB<value>` lines written by steamd from appinfo. Absent is a
+## first-class answer everywhere it is read.
+appinfo_get() {
+    local appid="$1" key="$2" line
+    # A second `local` line on purpose: bash expands every word of a `local`
+    # command before performing any of its assignments, so building this path in
+    # the same statement would read the CALLER's `appid`.
+    local file="$APPINFO_DIR/$appid.tsv"
+    [ -r "$file" ] || return 0
+    while IFS= read -r line || [ -n "$line" ]; do
+        [ "$(tsv_field "$line" 1)" = "$key" ] || continue
+        tsv_field "$line" 2
+        return 0
+    done < "$file"
+    return 0
+}
+
+
+## One value out of the per-game override, or nothing.
+##
+## `key=value`, one per line, `#` comments, first match wins -- deliberately the
+## shape of a desktop entry rather than the TSV everything else here uses. This
+## is the one file in the feature a HUMAN writes, by hand, after discovering
+## that a particular game runs without the client; a format whose field
+## separator is invisible and which an editor may convert to spaces is a bad
+## thing to ask somebody to type.
+##
+##   /var/marwanos/steam/launch/<appid>
+##     tier=client|native|proton     which of the three tiers to use
+##     exe=relative/path/to/game     relative to the install directory
+##     args=--windowed -foo          appended to the command line
+##
+## THE OVERRIDE IS THE ONLY WAY TO REACH TIERS 2 AND 3, and that is the design
+## rather than an omission: see the header on why DRM cannot be detected.
+read_override() {
+    local appid="$1" key="$2" line
+    local file="$LAUNCH_DIR/$appid"
+    [ -r "$file" ] || return 0
+    while IFS= read -r line || [ -n "$line" ]; do
+        case "$line" in
+            '#'*) continue ;;
+            "$key="*)
+                line="${line#*=}"
+                # Whitespace either side only; the value itself is passed
+                # through, because it is a path or an argument list and this is
+                # not the place to have opinions about either.
+                line="${line#"${line%%[![:space:]]*}"}"
+                line="${line%"${line##*[![:space:]]}"}"
+                printf '%s' "$line"
+                return 0
+                ;;
+        esac
+    done < "$file"
+    return 0
+}
+
+
+## The library holding this appid's manifest, or nothing. Ours first.
+library_of() {
+    local appid="$1" lib
+    for lib in "${LIBRARIES[@]}"; do
+        if [ -f "$lib/steamapps/appmanifest_$appid.acf" ]; then
+            printf '%s' "$lib"
+            return 0
+        fi
+    done
+    return 0
+}
+
+
+## Is a Steamworks library shipped with this game?
+##
+## THE ONE THING HERE THAT IS EVIDENCE RATHER THAN A GUESS. `steam_api64.dll`,
+## `steam_api.dll` and `libsteam_api.so` are the Steamworks SDK's redistributable
+## libraries; a game that ships one is talking to a client. It does not follow
+## that the game will refuse to start without one -- plenty of Steamworks titles
+## run fine offline -- so this is used to CONTRADICT an override, not to choose a
+## tier. Bounded depth because a large game is a hundred thousand files and this
+## runs while somebody is watching a screen.
+has_steamworks() {
+    local dir="$1"
+    [ -d "$dir" ] || return 1
+    find "$dir" -maxdepth 4 \
+        \( -iname 'steam_api64.dll' -o -iname 'steam_api.dll' -o -iname 'libsteam_api.so' \) \
+        -print -quit 2>/dev/null | grep -q . || return 1
+    return 0
+}
+
+
+## Is umu-run on this machine?
+##
+## ASKED, NEVER ASSUMED, because it may well not be: umu-launcher is not in
+## Fedora's repositories and upstream ships it as a release-asset RPM
+## (umu-launcher-1.4.4.fc43.x86_64.rpm). Whether this image installs it is a
+## separate decision from whether this file works, so every use of it below has
+## a path for its absence that says so and does not crash.
+have_umu() {
+    command -v umu-run >/dev/null 2>&1
+}
+
+
+## The game's entry point, relative paths resolved against the install
+## directory, or nothing when it cannot be decided.
+##
+## REFUSES RATHER THAN GUESSES when several candidates are equally good, and
+## prints them. A launcher that picks the wrong .exe starts an updater, a crash
+## reporter or an uninstaller -- and on a machine with no window management
+## visible to the person holding the pad, an uninstaller that opened is worse
+## than a button that explained itself.
+find_executable() {
+    local dir="$1" flavour="$2" want base candidates=() file count
+
+    want="$(read_override "$APPID" exe)"
+    if [ -n "$want" ]; then
+        case "$want" in
+            /*) printf '%s' "$want" ;;
+            *)  printf '%s' "$dir/$want" ;;
+        esac
+        return 0
+    fi
+
+    base="${dir##*/}"
+
+    if [ "$flavour" = "native" ]; then
+        # The names a Linux build actually uses, in the order they are worth
+        # trying: the directory's own name is what Valve's own installdir
+        # convention produces, and the .sh/.x86_64 pair is what Unity and most
+        # engines ship.
+        for file in "$dir/$base" "$dir/$base.sh" "$dir/$base.x86_64" \
+                    "$dir/start.sh" "$dir/run.sh" "$dir/run_game.sh"; do
+            if [ -f "$file" ] && [ -x "$file" ]; then
+                printf '%s' "$file"
+                return 0
+            fi
+        done
+        while IFS= read -r file; do
+            [ -n "$file" ] || continue
+            candidates+=("$file")
+        done < <(find "$dir" -maxdepth 1 -type f -perm -u+x \
+                    ! -name '*.so*' ! -name '*.txt' -print 2>/dev/null | sort)
+    else
+        while IFS= read -r file; do
+            [ -n "$file" ] || continue
+            case "${file##*/}" in
+                # The executables in a Windows game directory that are not the
+                # game. Every one of these has been somebody's accidental
+                # launch: the installer, the redistributable bundle, the crash
+                # reporter that opens a dialog nobody can dismiss.
+                [Uu]nins*|*[Ss]etup*|*[Rr]edist*|[Vv][Cc]*|*[Dd]irect[Xx]*|\
+                *[Cc]rash*|*[Rr]eport*|*[Uu]pdat*|*[Ii]nstall*) continue ;;
+            esac
+            candidates+=("$file")
+        done < <(find "$dir" -maxdepth 2 -type f -iname '*.exe' -print 2>/dev/null | sort)
+    fi
+
+    count="${#candidates[@]}"
+    if [ "$count" -eq 1 ]; then
+        printf '%s' "${candidates[0]}"
+        return 0
+    fi
+
+    if [ "$count" -eq 0 ]; then
+        err "found nothing runnable under $dir"
+    else
+        err "found $count things that could be the game under $dir:"
+        for file in "${candidates[@]}"; do
+            err "    ${file#"$dir/"}"
+        done
+    fi
+    err "write the one that is the game into $LAUNCH_DIR/$APPID as:  exe=<relative path>"
+    return 1
+}
+
+
+## Run it, or print it. `exec` on purpose: the shell's launcher and the process
+## pill both watch the process they spawned, and a wrapper that stayed in the
+## middle would be the thing they were watching.
+run() {
+    if [ -n "$DRY_RUN" ]; then
+        printf '%s\n' "$*"
+        return 0
+    fi
+    info "launching: $*"
+    exec "$@"
+}
+
+
+# ---------------------------------------------------------------------------
+
+APPID=""
+DRY_RUN=""
+EXPLAIN=""
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --dry-run) DRY_RUN=1 ;;
+        --explain) EXPLAIN=1 ;;
+        -*)        usage ;;
+        *)
+            [ -z "$APPID" ] || usage
+            APPID="$1"
+            ;;
+    esac
+    shift
+done
+
+valid_appid "$APPID" || usage
+
+# NOT AS ROOT, and it is refused rather than warned about. Everything a game
+# writes -- its prefix, its saves, its shader cache -- lands beside it in a
+# directory the player must own, and one root launch leaves root-owned files in
+# the middle of it that the next ordinary launch cannot write. That failure
+# arrives days later as a game that stopped saving.
+if [ "$(id -u)" = "0" ]; then
+    err "refusing to launch a game as root; run this as the session user"
+    exit 1
+fi
+
+LIBRARY="$(library_of "$APPID")"
+if [ -z "$LIBRARY" ]; then
+    err "app $APPID is not installed in any library this machine knows about"
+    exit 1
+fi
+
+MANIFEST="$LIBRARY/steamapps/appmanifest_$APPID.acf"
+FLAGS="$(acf_value "$MANIFEST" StateFlags)"
+NAME="$(acf_value "$MANIFEST" name)"
+INSTALLDIR="$(acf_value "$MANIFEST" installdir)"
+[ -n "$NAME" ] || NAME="app $APPID"
+
+case "$FLAGS" in
+    ''|*[!0-9]*) FLAGS=0 ;;
+esac
+if [ $(( FLAGS & 4 )) -eq 0 ]; then
+    # Bit 4 is StateFullyInstalled. Without it the game is mid-download, and
+    # marwanos-appscan already refuses to put an exec on such a card -- so
+    # reaching this line means something bypassed the rail. Said plainly, and
+    # with the state in it, because "it did nothing" is the complaint this whole
+    # project keeps designing against.
+    err "$NAME is not fully installed yet (StateFlags $FLAGS); not launching"
+    exit 1
+fi
+
+GAME_DIR="$LIBRARY/steamapps/common/$INSTALLDIR"
+
+# WHICH TIER. The override decides when it exists; otherwise tier 1, always, for
+# the reason in the header -- DRM is not visible from here and the wrong guess
+# in this direction is recoverable while the other one is a game that will not
+# start.
+TIER="$(read_override "$APPID" tier)"
+REASON=""
+case "$TIER" in
+    client|native|proton)
+        REASON="chosen in $LAUNCH_DIR/$APPID"
+        ;;
+    "")
+        TIER=client
+        REASON="the default: Steam DRM cannot be ruled out from metadata"
+        ;;
+    *)
+        warn "$LAUNCH_DIR/$APPID names a tier this image does not know ('$TIER')"
+        warn "the tiers are: client, native, proton"
+        TIER=client
+        REASON="fell back after an unrecognised tier"
+        ;;
+esac
+
+# The one contradiction worth raising. Not fatal: somebody who wrote the
+# override may have already proven the game runs without a client, and a shipped
+# Steamworks library does not by itself mean it will not. But it is the most
+# likely reason a tier-2 or tier-3 launch is about to fail, so it is on record
+# before it does.
+if [ "$TIER" != "client" ] && has_steamworks "$GAME_DIR"; then
+    warn "$NAME ships a Steamworks library, so it expects a running Steam client"
+    warn "if it exits immediately, remove the tier= line from $LAUNCH_DIR/$APPID"
+fi
+
+if [ -n "$EXPLAIN" ]; then
+    printf 'appid\t%s\nname\t%s\ntier\t%s\nreason\t%s\ndir\t%s\nnative_linux\t%s\n' \
+        "$APPID" "$NAME" "$TIER" "$REASON" "$GAME_DIR" \
+        "$(appinfo_get "$APPID" native_linux)"
+    exit 0
+fi
+
+EXTRA_ARGS="$(read_override "$APPID" args)"
+
+case "$TIER" in
+    client)
+        # TIER 1. The client is a runtime dependency in the same sense as a
+        # Proton build: it maps no window, it is reachable from no button, and
+        # its only job here is to satisfy the DRM and own the game's runtime
+        # container, prefix and cloud saves.
+        #
+        # -silent, not -gamepadui, and it is right in both states the client can
+        # be in. Against a WARM client `flatpak run` hands the URL over and
+        # exits; against a COLD one Steam starts windowless and then launches the
+        # game. Passing nothing at all would start a cold client in DESKTOP mode
+        # -- a mouse UI on a machine whose only pointer is a thumbstick.
+        if ! command -v flatpak >/dev/null 2>&1; then
+            err "this machine has no flatpak, so Valve's client cannot be asked to start $NAME"
+            exit 1
+        fi
+        if ! flatpak info --system "$STEAM_FLATPAK_ID" >/dev/null 2>&1; then
+            err "Valve's client is not installed, and $NAME needs it to start"
+            err "install Steam from the stores screen, or set tier=native or tier=proton"
+            err "in $LAUNCH_DIR/$APPID if this game is known to run without it"
+            exit 1
+        fi
+        # rungameid rather than rungame: for a base game the two ids are the
+        # same number, and rungameid is the form the client resolves without
+        # needing its own library scan to have finished first.
+        run flatpak run "$STEAM_FLATPAK_ID" -silent "steam://rungameid/$APPID"
+        ;;
+
+    native|proton)
+        if [ ! -d "$GAME_DIR" ]; then
+            err "$NAME has a manifest but no files at $GAME_DIR"
+            exit 1
+        fi
+
+        # A full `if` rather than `[ … ] && FLAVOUR=…`: under `set -e` a bare
+        # test-and-assign at statement position ends the script when the test is
+        # false, which here would be every native game.
+        FLAVOUR=native
+        if [ "$TIER" = "proton" ]; then
+            FLAVOUR=windows
+        fi
+        EXE="$(find_executable "$GAME_DIR" "$FLAVOUR")" || exit 1
+        if [ ! -f "$EXE" ]; then
+            err "$EXE does not exist"
+            exit 1
+        fi
+
+        # THE WORKING DIRECTORY IS THE GAME'S OWN, and it is not a detail: a
+        # great many games resolve their data files relative to the process's
+        # cwd and simply exit when they cannot find them.
+        cd "$GAME_DIR" || { err "cannot enter $GAME_DIR"; exit 1; }
+
+        # The prefix lives beside the game rather than in a second place, so
+        # uninstalling the game takes its prefix with it (marwanos-steamdl
+        # removes compatdata/<appid> for exactly this reason). BOTH names are
+        # exported because both have been the one Proton and umu read, and
+        # setting the one that is ignored costs nothing while setting neither
+        # scatters prefixes into a directory nothing here manages.
+        COMPAT="$LIBRARY/steamapps/compatdata/$APPID"
+        mkdir -p "$COMPAT" 2>/dev/null || true
+
+        if [ "$TIER" = "native" ]; then
+            # TIER 2. umu's value here is the Steam Linux Runtime's sandbox --
+            # a stable set of libraries for a binary built against a distro that
+            # no longer exists -- and UMU_NO_PROTON=1 is what asks for the
+            # runtime without asking for Proton. Without umu the binary is run
+            # directly, which is what a native game IS; it is a smaller
+            # guarantee, not a broken one, so this degrades with one line rather
+            # than refusing.
+            if [ ! -x "$EXE" ]; then
+                # A downloader does not always preserve the executable bit, and
+                # a game that "does nothing" because of one is a bad afternoon.
+                chmod +x "$EXE" 2>/dev/null || true
+            fi
+            if have_umu; then
+                # THROUGH `env`, NOT AS ASSIGNMENTS BEFORE THE CALL. A variable
+                # assignment written in front of a SHELL FUNCTION is a shell
+                # variable for the duration of that function -- it is not
+                # exported -- so `UMU_NO_PROTON=1 run umu-run …` would set
+                # nothing at all in the process `run` goes on to exec. The
+                # symptom would be a game launched with the wrong runtime and
+                # nothing anywhere saying which. `env` is a real program and its
+                # arguments are the environment by definition, and it makes
+                # --dry-run print the whole truth on one line.
+                # shellcheck disable=SC2086 -- EXTRA_ARGS is a deliberately split argument list
+                run env UMU_NO_PROTON=1 \
+                        GAMEID="umu-$APPID" \
+                        STEAM_COMPAT_DATA_PATH="$COMPAT" \
+                        umu-run "$EXE" $EXTRA_ARGS
+            else
+                info "umu-run is not installed; running $NAME directly without the Steam runtime"
+                # shellcheck disable=SC2086
+                run "$EXE" $EXTRA_ARGS
+            fi
+        else
+            # TIER 3. PROTONPATH=GE-Proton IS A TOKEN, not a path and not a
+            # version. umu treats that exact word as "fetch and use the latest
+            # GE-Proton", which is what makes this work on a machine that has
+            # never run a Windows game. A PINNED name like GE-Proton9-1 is
+            # resolved as a DIRECTORY instead and does not auto-download, so
+            # pinning here would produce a launch that fails on every machine
+            # that had not already been set up by hand.
+            if ! have_umu; then
+                err "$NAME is a Windows game and umu-run is not installed, so there is"
+                err "nothing on this machine that can run it outside Valve's client."
+                err "umu-launcher is not in Fedora's repositories; it ships as an RPM"
+                err "release asset. Until it is installed, remove the tier= line from"
+                err "$LAUNCH_DIR/$APPID so this game launches through the client instead."
+                exit 1
+            fi
+            # `env` for the reason spelled out in the native branch above.
+            # shellcheck disable=SC2086 -- EXTRA_ARGS is a deliberately split argument list
+            run env GAMEID="umu-$APPID" \
+                    PROTONPATH=GE-Proton \
+                    STEAM_COMPAT_DATA_PATH="$COMPAT" \
+                    WINEPREFIX="$COMPAT/pfx" \
+                    umu-run "$EXE" $EXTRA_ARGS
+        fi
+        ;;
+esac

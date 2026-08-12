@@ -16,82 +16,47 @@ extends RefCounted
 ## deletes this file too: marwand serves both the store list and the installed
 ## list over JSON-RPC.
 
-## The one real entry, and the only one carrying an "exec". It lives in the
+## The one real entry, and it no longer carries an "exec". It lives in the
 ## STORES list rather than on the rail since the third amendment (ADR 0006):
 ## the rail is the library, and a store is somewhere you go on purpose --
-## through the bag icon in the top bar, PS5-fashion. The stores screen renders
-## a page for it (title, wash, description, live install state) and pressing A
-## there launches this exec.
+## through the bag icon in the top bar, PS5-fashion.
 ##
-## `flatpak run` rather than a path: the app is a system flatpak installed by
-## marwanos-flatpak-install, and `flatpak run` is the entry point that sets up the
-## sandbox, the runtime and the environment. DISPLAY is inherited from the shell,
-## which is how it lands on gamescope (see Launcher._spawn).
+## THERE IS NO LONGER ANY WAY TO REACH VALVE'S OWN UI FROM HERE, and that is
+## the whole of the 2026-08-12 rebuild (ADR 0010). This entry used to carry
+## `flatpak run com.valvesoftware.Steam -gamepadui steam://store` as the
+## sign-in door, because a password was Valve's to collect and this shell had
+## no field for one. The QR sign-in removed that need -- nobody types a
+## password on a television, they scan a code with the phone already in their
+## hand -- and with the storefront gone there is nothing left that Big Picture
+## does better than this shell.
 ##
-## -gamepadui, NOT the bare desktop client, and the difference is the whole
-## bug this line used to be. The desktop UI is a tray-centric spread of CEF
-## windows, and under gamescope it frequently never maps a window the
-## compositor adopts -- while the flatpak wrapper pid stays alive. The launch
-## seam watches that pid, so the shell said Steam was open and offered Close
-## over a TV showing nothing, which is the worst state this machine has: a
-## system that claims a thing the screen contradicts. Big Picture is the one
-## Steam UI that reliably maps a single fullscreen window gamescope can seat,
-## and the only one a controller can drive at all -- it is what the Deck
-## itself runs under this same compositor. -gamepadui is the flag every
-## community gamescope session starts the client with -- it is the Deck UI's
-## own name for itself. -bigpicture is the older documented alias that lands
-## in the same UI on current clients, and the first thing to try if a client
-## update ever changes what -gamepadui does.
-##
-## THIS ENTRY IS NOW THE SIGN-IN DOOR AND NOTHING ELSE. It used to be what A on
-## the Steam tab did in every state, back when this shell could only describe a
-## storefront; the shell draws one now -- shelves, search, wishlist, prices, all
-## of it pad-navigable -- so browsing through Valve's client would be replacing
-## the page somebody is looking at with a lower-fidelity copy of it, on the one
-## UI whose flicker is why any of this was built. stores_screen only reaches for
-## this when NOBODY IS SIGNED IN, because a password is Valve's to collect and
-## this shell will never have a field for one.
-##
-## steam://store rides along after the flag so Big Picture lands somewhere
-## sensible rather than on its home screen. If a client update ever stops
-## honouring the pairing, the failure mode is Big Picture's home screen: wrong
-## page, still the place a person can sign in, which is the direction this line
-## is allowed to fail in.
+## The client is still INSTALLED, and still runs: it is the launch backend that
+## makes Steam's DRM and Steamworks features work, supervised windowless by the
+## session (see marwanos-session's supervise_steam). What changed is that no
+## press anywhere in this shell maps one of its windows. See ADR 0010 for why
+## the runtime survived the UI.
 ##
 ## Phase 1 deletes this alongside the rest of the file: marwand enumerates real
 ## installs and stores stop being a hand-written list.
 const STEAM_STORE := {
 	"id": "store.steam",
 	"title": "Steam",
-	"tagline": "Valve's storefront and library, installed from Flathub",
-	# Shown ONLY before Steam is installed -- once it is, this card is a live
-	# storefront and stores_screen hides every line of prose on it. So this text
-	# is written for exactly one reader: somebody looking at a machine that
+	"tagline": "Your Steam library, signed in by scanning a code",
+	# Shown ONLY before the client is installed -- once it is, this card is the
+	# library client and steam_screen hides every line of prose on it. So this
+	# text is written for exactly one reader: somebody looking at a machine that
 	# cannot yet do any of it.
-	"description": "Browse and buy on the Steam store, and pull your library"
-		+ " down to this machine. A downloads and installs it; after that this"
-		+ " page becomes the store itself, browsable with the pad.",
+	"description": "Sign in by scanning a code with your phone, then download"
+		+ " and play the games you already own. Downloads land in your Games"
+		+ " folder.",
 	"accent": "#2A3F5A",
-	# DIRECTLY UNDER THE SESSION'S OWN GAMESCOPE -- the nested-gamescope
-	# detour is over, and the bench journal is why. The nesting shipped as a
-	# flicker fix and lasted one evening: gamescope 3.16.23 as an inner
-	# compositor on NVIDIA 610.43.03 died of `terminate called without an
-	# active exception` three minutes into Hollow Knight (2026-08-10 10:33,
-	# coredump on the bench), taking the game with it and leaving the sandbox
-	# running behind a returned rail. The flicker it was chasing has a fix
-	# that does not stack compositors: the SESSION's gamescope now runs
-	# --force-composition, which closes the direct-scanout path the blinking
-	# came from. One compositor, half the crash surface; the nested shape can
-	# come back if a future gamescope survives it, and Launcher._spawn still
-	# fills {W}/{H} tokens for whatever needs them next.
-	"exec": ["flatpak", "run", "com.valvesoftware.Steam", "-gamepadui", "steam://store"],
 	# The desktop-entry id, which is how the tab finds the application's REAL
 	# icon: marwanos-appscan resolves an absolute path for everything installed,
-	# and store_tab.gd matches on this rather than on the "id" above. The two are
+	# and the tab matches on this rather than on the "id" above. The two are
 	# deliberately different strings -- "store.steam" is the shell's name for a
 	# tab, and this is what the file on disk is called. Empty or absent means the
-	# tab draws its fallback glyph, which is also what happens until Steam is
-	# actually installed.
+	# tab draws its fallback glyph, which is also what happens until the client
+	# is actually installed.
 	"app_id": "com.valvesoftware.Steam",
 }
 
@@ -440,7 +405,7 @@ static func tagline_for(app_id: String) -> String:
 ## ---------------------------------------------------------------------------
 ## THE STEAM METADATA CACHE, read side.
 ##
-## The same shape as the icon cache above and in the same tree: marwanos-storeart
+## The same shape as the icon cache above and in the same tree: marwanos-steam
 ## writes /var/marwanos/store/meta/steam.<appid>.json, which is the `data` object
 ## of Steam's own appdetails answer -- name, short_description and the rest of
 ## what the store page says about a game. The shell never calls the API: it reads
@@ -457,6 +422,18 @@ static func tagline_for(app_id: String) -> String:
 ## per game and only when the machine has a network; the panel has two more
 ## sources behind this one (see details_panel.gd) and drawing one of those is a
 ## complete screen.
+##
+## THERE IS A THIRD SHAPE, and it is deliberately not special-cased here. Steam
+## answers `success:false` for a delisted, region-locked or never-published
+## appid, and marwanos-steam records that as a small marker document rather than
+## as no file at all -- otherwise a handful of such games at the front of the
+## library would consume its whole per-refresh fetch budget forever and no other
+## game would ever get a description. A marker parses as an object and is
+## returned from here like any other, and it answers nothing: GameMeta asks it
+## for eight keys, gets "" or [] or 0 for every one, and _has_answer rejects all
+## three shapes -- so it resolves exactly as a missing file does and
+## `description` still falls through to the catalogue behind it. Nothing on this
+## side needs to know the difference, which is why this function does not look.
 const STORE_META_SUBDIR := "meta"
 
 

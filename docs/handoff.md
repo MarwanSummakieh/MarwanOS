@@ -7,6 +7,76 @@ what is stale.
 
 ---
 
+## The Steam client is OURS now, and Valve's is the runtime underneath (2026-08-12)
+
+**On the owner's word:** *"remove every instance of steam currently and
+reimplement the flow ... implementing my own steam client in the stores menu
+where I can sign in and download my library games"*, and on downloads:
+*"I would like to have my own implementation and destination of downloads eg
+the games folder in home so choose whatever gives me control."*
+
+**What went.** `steamfront` (Valve's storefront, fetched and re-rendered),
+`steamproto` (its protobuf codec), `storeart` (an artwork prefetcher), their
+three units, and the whole storefront UI — `stores_screen.gd` at 2217 lines,
+`steamfront.gd`, `store_front_tile.gd`, `store_tab.gd`. Search, wishlist,
+prices and the buy door that opened Valve's store in mowser are all gone. The
+owner asked for a rebuild from zero *including* the QR sign-in that already
+worked; what survives of it is a written protocol specification, not code.
+
+**What stayed, and it is not a contradiction.** The Valve flatpak is still
+installed and still supervised windowless by the session. A Steam-DRM'd game
+will not start without a signed-in client answering it, so the client is a
+runtime dependency in the same sense as a Proton build: it maps no window, no
+button reaches it, and the only sign of it is the process pill. See
+[ADR 0010](adr/0010-our-own-steam-client.md) for the argument, and
+[the seam contract](steam-client-contract.md) for every path and verb.
+
+**What is new.** Four programs under `/usr/lib/marwanos/steam` — `protocodec`
+(protobuf), `steamd` (sign-in, tokens, library, art), `steamdl` (the download
+queue) and `steamlaunch` (three launch tiers) — plus DepotDownloader 3.4.0
+pinned into the image, two units, and a shell screen that is a library and
+nothing else. Downloads land in `~player/Games/SteamLibrary`.
+
+**Three traps, each measured rather than reasoned about, each now asserted at
+build time:**
+
+- **The old sign-in minted the wrong kind of token.** It began the QR session
+  as `WebBrowser`, whose token Steam accepts for web calls and *refuses* at
+  client logon. The library would have drawn perfectly while every download
+  fell back to asking for a password nobody can type on a television. The
+  rebuild begins it as `SteamClient`, whose token carries both audiences — one
+  scan for the whole feature.
+- **DepotDownloader's path is frozen.** Its credential cache lives in a
+  directory named from a hash of its own absolute path, so moving the binary in
+  a later image silently signs out every machine that upgrades.
+- **`StateFlags 4` does not stop the client re-downloading a game.** It also
+  compares build ids. A believable manifest needs the real `buildid`,
+  `TargetBuildID 0` and an `InstalledDepots` manifest matching what was pulled.
+
+**What was proven, and how.** The DepotDownloader layer builds and passes its
+assertions. The shell exports (Godot's exporter fails on any parse error in a
+packed script). The screen was driven under Xvfb against fixtures: three valid
+tiles from five rows — the blank name and the zero appid correctly dropped —
+sign-in read, a download rendered, and A on an installed game producing exactly
+`flatpak run com.valvesoftware.Steam -silent steam://rungameid/620`. A
+screenshot then caught what the log could not: at 220 px the state line read
+*"Downloading 4..."*, the ellipsis eating the one number somebody watching a
+download is looking at. Tiles are 260 px now.
+
+Running DepotDownloader against Spacewar also settled the manifest question:
+`-manifest-only` really does write `manifest_<depot>_<manifest>.txt` carrying
+`Total bytes on disk`, which is what the downloader's parser is built on.
+
+**What is NOT proven.** Nothing has touched Valve with a real token, and
+nothing has run on the bench. The `SteamClient` change means even the parts
+that worked before are being exercised in a new configuration. Unresolved: the
+appinfo sidecar that supplies `buildid` has no producer yet, so an install
+today commits with `buildid 0` and walks into the third trap; and
+`/var/marwanos/store/meta` lost its only writer with `storeart`, so the details
+panel has no Steam description to draw until something fills it.
+
+---
+
 ## The browser is MOWSER: Chromium's engine inside the shell (2026-08-11/12)
 
 **On the owner's word:** *"I wanted to fork it and make my own custom made

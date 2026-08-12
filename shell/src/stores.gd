@@ -24,11 +24,19 @@ signal stores_opened()
 ## Emitted when the screen is gone and the home rail should come back.
 signal stores_closed()
 
-const StoresScreen = preload("res://src/stores_screen.gd")
+## WHAT THIS SEAM OPENS IS NOT A STORE ANY MORE, and the seam kept its name on
+## purpose. ADR 0010 replaced the storefront with this repository's own Steam
+## client -- sign in by scanning a code, then the games the account already owns
+## -- so the screen behind the bag icon is steam_screen.gd. The signals stay
+## `stores_opened` and `stores_closed` because the HOME RAIL is what listens to
+## them and what they mean to it is unchanged: one fullscreen surface came up,
+## get out of the way; it went, come back. Renaming them would be a rename in
+## shell_root for a fact shell_root does not care about.
+const SteamScreen = preload("res://src/steam_screen.gd")
 
 # Typed as the script rather than as Control so `closed` resolves statically --
 # the same argument as Launcher's _placeholder.
-var _screen: StoresScreen = null
+var _screen: SteamScreen = null
 
 
 func is_open() -> bool:
@@ -56,7 +64,7 @@ func open() -> void:
 	# standard ordering: is_open() is true for every handler of stores_opened,
 	# and the home rail captures its focus owner before the screen's _ready
 	# grabs focus.
-	_screen = StoresScreen.new()
+	_screen = SteamScreen.new()
 	_screen.closed.connect(_on_closed, CONNECT_ONE_SHOT)
 
 	stores_opened.emit()
