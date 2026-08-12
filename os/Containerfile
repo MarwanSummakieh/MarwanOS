@@ -1535,6 +1535,23 @@ RUN set -euxo pipefail; \
         *2206436c69656e74*) : "website_id = Client" ;; \
         *) echo "the QR begin request does not carry website_id Client: $beginreq" >&2; exit 1 ;; \
     esac; \
+    : "AND THE WEB AUDIENCE, the other half of the same rule, run the same way."; \
+    : "The two shapes fail in OPPOSITE directions, which is why one assertion"; \
+    : "cannot cover both: a client session mints a token the HTTPS token"; \
+    : "exchange refuses outright -- measured 2026-08-12, eresult 63, the call"; \
+    : "is CM-gated for client-platform tokens -- so a web phase begun as"; \
+    : "SteamClient leaves the shelf empty while downloads, logon and every"; \
+    : "check above stay green. field 2 = 2 is WebBrowser and field 4 = 'Store'"; \
+    : "is its website id; 1002 and 220553746f7265 are those two encodings."; \
+    beginwebreq="$(/usr/lib/marwanos/steam/protocodec begin-req web | base64 -d | od -An -tx1 | tr -d ' \n')"; \
+    case "$beginwebreq" in \
+        *1002*) : "platform_type = WebBrowser" ;; \
+        *) echo "the web QR begin request is not platform_type 2 (WebBrowser): $beginwebreq" >&2; exit 1 ;; \
+    esac; \
+    case "$beginwebreq" in \
+        *220553746f7265*) : "website_id = Store" ;; \
+        *) echo "the web QR begin request does not carry website_id Store: $beginwebreq" >&2; exit 1 ;; \
+    esac; \
     : "THE TAB SPLIT, asserted because it has silently broken two features in"; \
     : "this tree already. Tab is IFS WHITESPACE to the shell even when IFS holds"; \
     : "nothing else, so a leading empty field is swallowed and every value after"; \
