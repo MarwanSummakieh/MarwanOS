@@ -1,0 +1,48 @@
+[Unit]
+# The muscle half of the link scrub. The whole story -- what the artifact is,
+# why a plymouth modeset settles it, and why this costs a session restart -- is
+# in the script's header and in docs/flicker-nvidia-610.md.
+Description=Bounce the display through one plymouth modeset to settle a fresh link
+Documentation=file:///usr/lib/marwanos/display/link-scrub
+
+# The escape hatch, machine-local and reversible with `rm`. This unit ships
+# enabled because the artifact it works around is present on every fresh boot of
+# the affected chassis, but it is a workaround for a fault nobody understands
+# and it costs a visible session restart, so turning it off must not require a
+# build. /var rather than /etc: bootc three-way merges /etc, and a switch that
+# survives invisibly into an image that no longer needs it is worse than no
+# switch.
+ConditionPathExists=!/var/marwanos/no-link-scrub
+
+# The boot splash must be down before this puts a new one up. Without this the
+# two path units on the ready flag are a race between one plymouthd being quit
+# and another being started.
+After=marwanos-plymouth-quit.service
+
+[Service]
+Type=oneshot
+# RemainAfterExit is the same trick marwanos-plymouth-quit.service uses: the
+# ready flag persists for the rest of the boot and the session this script
+# restarts touches it AGAIN, so a path unit whose triggered service went
+# inactive would re-fire immediately. Staying active makes this once per boot.
+#
+# It is not the whole guard, though -- a service that FAILS goes inactive
+# regardless -- which is why the script writes /run/marwanos/link-scrub.done
+# before it touches anything and refuses to run twice against it. Two mechanisms
+# for one property, because the failure mode is an appliance that splashes in a
+# loop with no console to stop it from.
+RemainAfterExit=yes
+ExecStart=/usr/lib/marwanos/display/link-scrub
+
+# The script stops and starts greetd itself, which means it must not be killed
+# when greetd goes down and must not be part of greetd's own cgroup. A oneshot
+# triggered by a path unit is neither, but the timeout matters: six seconds of
+# splash plus polling for gamescope to die plus two greetd transitions. 120 is
+# far above the measured ~15s and still bounded, because a hung scrub holding
+# the session down forever is the one outcome worse than the artifact.
+TimeoutStartSec=120
+
+StandardOutput=journal
+StandardError=journal
+SyslogLevelPrefix=true
+SyslogIdentifier=marwanos-link-scrub

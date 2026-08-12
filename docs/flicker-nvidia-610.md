@@ -1,200 +1,550 @@
-# The tearing, the day of elimination, and the driver swap that was reverted
+# The tearing: reproduced, recovered, and cornered to the link-after-training
 
-**Status (2026-08-11, LATEST — supersedes everything below): THE TEARING IS
-INTERMITTENT PER BOOT, and no single-boot test in this file proves anything.**
+**Status (2026-08-12, small hours — supersedes everything below, including
+every previous status header). THE CAUSAL LOOP IS CLOSED AND REPRODUCIBLE:**
 
-Measured: the bench booted 610.57.04 and the owner reported "tearing is gone".
-It was rebooted with NOTHING changed — same image digest 383d90b3, same driver
-610.57.04, same kernel 7.1.8, same `hundred` profile, same 99.99 Hz confirmed in
-the journal — and it tore again. Same everything, opposite result.
+1. **Trigger: a freshly-trained link.** A cold boot or a physical
+   unplug/replug of the display cable puts the link in a state where the
+   gamescope session shimmers on a static screen and tears under motion. This
+   was demonstrated on demand: the owner replugged DP mid-session and the
+   artifact returned immediately.
+2. **Recovery: a plymouth modeset cycle.** Stop greetd → `plymouthd` +
+   `plymouth show-splash` → quit → start greetd, and the same session on the
+   same connector is clean. **Demonstrated twice**, the second time against a
+   deliberately re-broken link. The clean state then survives everything:
+   greetd restarts (6+), GPU at 53°C, memory clock locked at 7001, memory
+   clock flapping freely, gamescope color management on and off. Only a fresh
+   link training breaks it again.
+3. **The artifact needs BOTH halves.** On the same freshly-trained marginal
+   link, plymouth's splash is stable (3/3 across its own modesets) while
+   gamescope shimmers. The scanout difference is measured, not guessed:
+   plymouth scans an **8-bit XR24 linear** framebuffer with no color
+   pipeline; gamescope scans a **10-bit XB30 NVIDIA block-linear**
+   (`modifier=0x300000000606014`, decoded: uncompressed, kind 6) framebuffer
+   through nvidia-drm's color pipeline with live PQ-125 EOTF/inverse-EOTF
+   colorops. Fresh link + plymouth-style scanout = clean. Settled link +
+   gamescope-style scanout = clean. Fresh link + gamescope-style scanout =
+   the artifact.
+4. **Transport does not matter; driver version does not matter.** Both HDMI
+   ports and DP-1 show it; 610.43.03/7.1.5 and 610.57.04/7.1.8 show it
+   identically. The same panel, same cable, same 3440x1440@100 over HDMI is
+   clean on a different laptop — so it is this machine's side, in whatever
+   the NVIDIA driver family negotiates onto a fresh link that plymouth's
+   legacy 8-bit modeset then settles.
 
-**So every verdict recorded in this file was N=1 against a random variable.**
-That includes the ones that read as discoveries: killing Steam "stopping" it,
-`flat` "not stopping" it, and 610.57.04 "fixing" it. The elimination table below
-is still a useful record of what was TRIED, but it is not proof that any of
-those things were exonerated — a test that runs once cannot exonerate anything
-when the symptom flips on its own across identical boots.
+**Eliminated this session, each at n≥3 and mostly blind** (details in the trial
+log): the compositor's composition flag, the shell (vkcube control), the HDMI
+ports, the HDMI transport itself (DP identical), the driver version, GPU
+temperature (still clean at 53°C), and GPU memory-clock flapping — measured
+flapping P3↔P5 every ~7s on an idle screen, but clean with it flapping and
+shimmering with it locked, so it is out in both directions.
 
-**THE REAL SHAPE**: the variable is per-modeset, not per-configuration. It was
-visible earlier and misread — "identical config, minutes apart, gave 'worse'
-then 'stopped', the difference being a compositor restart" — which is the same
-coin flip, seen once and explained away.
+**The workaround this arms** (now built — see "The scrub is built" below): a
+boot-time "link scrub" — after the first session is up, bounce the display
+through one plymouth cycle. Boot already runs plymouth BEFORE greetd and still
+tears, so the order matters: the healing transition observed is specifically
+gamescope-modeset → plymouth-modeset → gamescope-modeset. Cost: one ~9s splash
+shortly after the shell first appears. Ugly, mechanical, and it worked 2 out of
+2 times that night. n=2, so it was built as an experiment, not as a triumph.
 
-**METHODOLOGY FROM HERE, non-negotiable**: no configuration may be called good
-or bad on fewer than 3 boots (or 3 `systemctl restart greetd` cycles, which
-re-roll the same dice more cheaply). Record every trial, including the boring
-ones. A run of 3 clean starts is weak evidence; 5 is worth acting on.
+**For the NVIDIA report**, the sentence this file existed to find: *on an RTX
+3070 Laptop (10de:2488), open kernel modules 610.43.03 and 610.57.04
+identically, a freshly-trained HDMI or DP link shows static-image sparkle and
+motion tearing when scanning a 10-bit XB30 block-linear framebuffer with
+active color-pipeline PQ colorops, is clean scanning an 8-bit XR24 linear
+framebuffer on the same link state, and becomes permanently clean for the
+10-bit path after one legacy 8-bit modeset cycle — surviving all subsequent
+atomic modesets until the link is physically retrained.*
 
-**Previous status, now known unreliable and kept only as history: "610.57.04
-FIXES THE TEARING; it also runs games badly; the image is pinned back at
-610.43.03."** The performance half may also have been N=1.
+## The scrub is built (2026-08-12, morning) — and the way it is built cannot be judged by eye
 
-The verdict arrived after the revert, which is the coordination failure this
-file's own "next moves" list was written to prevent: the swap was reverted on
-the performance report alone, while the question it was made to answer — what
-did it do to the tearing — was still unasked. Asked and answered 2026-08-11 by
-the owner, on the bench, booted on 610.57.04: **"tearing is gone"**. Two days of
-elimination end here, and the cause is named: the tearing is the NVIDIA
-**610.43.03** open-kernel-module flip path.
+The owner reported the artifact back on a bench that had rebooted nine minutes
+earlier, which is the model's own prediction: nothing had been built, and a
+boot re-rolls the link. The manual cycle healed it a **third** time, on demand,
+from an SSH shell. That is the mechanism's n=3 and it is the strongest claim in
+this file.
 
-So the choice is no longer "find the cause". It is a trade, and both sides are
-measured:
+It now ships as `marwanos-link-scrub.service`, triggered by
+`marwanos-link-scrub.path` on the **session's own ready flag** — the same
+`/run/user/1000/marwanos/plymouth-quit` the splash handoff uses, because the
+one thing that flag means is "gamescope has provably taken the display and
+programmed a mode", which is the precondition the healing order needs. The
+script is `/usr/lib/marwanos/display/link-scrub`. Measured on the bench: it
+fires at **t≈10s**, the whole cycle costs **~9s**, and the session comes back
+at the same mode.
 
-| Pin | Tearing | Games |
+**Three things were learned by building it, and two of them are unwelcome.**
+
+**One: the artifact did not appear on either of the two boots tested, so
+nothing here proves the scrub fixes anything.** A warm reboot at 09:34 showed
+it (that is the owner's report that started the morning). A warm reboot at
+09:51 did not. A cold boot at 09:54 — genuinely powered off, 29s dark — did not
+either. "Every fresh boot shows it" is therefore **1 for 3**, and the trigger
+is not as reliable as the status header above implies. The header's claim rests
+on the *replug*, which was demonstrated on demand twice; the *boot* half of it
+is weaker than it reads and should be treated as such.
+
+**Two: as built, the scrub is unfalsifiable from the couch.** It fires at
+t≈10s, which is early enough that the splash is still on screen — the owner
+watching the cold boot saw splash, dim, splash, shell, and never saw a first
+shell at all. That is excellent product behaviour (the artifact never reaches
+the eye) and useless experimental behaviour (there is no before-picture to
+compare). **To ever falsify this, the scrub has to be delayed on purpose** —
+put twenty seconds in front of it, let the shell be visibly broken, then let
+the cycle run — and that trial has not been done. Until it is, the honest
+statement is: the mechanism is proven by hand at n=3, and the *automation of
+it* is proven only to run safely.
+
+**Three: `plymouth quit` is the wrong way to end the cycle**, and the owner
+caught it by watching. Quit takes the splash off the screen and leaves the VT
+underneath visible: "the linux start text showed up", between the splash and
+the shell, on a boot that is supposed to go splash → shell. That is precisely
+the regression `marwanos-plymouth-hold.service` was written to prevent, put
+back halfway through the boot by the scrub. The cycle now ends with
+`plymouth deactivate` — which releases DRM master, the only thing the cycle
+needs from plymouth's exit, while the splash's last frame stays in the
+framebuffer until gamescope's modeset — and reaps the daemon after the session
+is provably back. Confirmed gone by the same instrument that found it.
+
+Two independent once-per-boot guards exist because the service restarts the
+session that touches its own trigger: `RemainAfterExit=yes` for the success
+case and a `/run/marwanos/link-scrub.done` stamp written before anything else
+for the failure case. A failed oneshot goes inactive, and an inactive triggered
+unit with a satisfied path condition fires again — which on an appliance with
+no console is a boot that splashes forever. `greetd` is restored from an EXIT
+trap on every path out, including signals, because the failure this script can
+cause is a machine with no session and no keyboard.
+
+**The off switch is `/var/marwanos/no-link-scrub`.** A workaround for a fault
+nobody understands must be removable without a build. `/var` and not `/etc`,
+because bootc three-way merges `/etc` and a switch left there would outlive the
+image that needed it, invisibly.
+
+---
+
+**The finding that reordered the investigation: THE ARTIFACT IS PRESENT ON A
+COMPLETELY STATIC SCREEN.** With nothing moving — no input, no animation, no frames being
+delivered that differ from the last one — the owner reports shimmer and sparkle
+on the picture. That single observation moves the fault below every layer this
+investigation has spent three days in. A compositor that is presenting the same
+unchanged pixels cannot tear them; a shell that is drawing nothing cannot ghost.
+Whatever is corrupting the image is doing it **after the GPU has finished with
+the frame**, which means the signal on the wire or the hardware driving it.
+
+**It is also no longer honest to call this a coin flip.** Eighteen judged trials
+produced three clean verdicts. A 1-in-6 rate is not a 50/50 variable flipping
+across identical boots; it is much better explained by an artifact that is
+*nearly always present* and is *sometimes not noticed* — which is exactly how
+2026-08-11's "tearing is gone", followed hours later by "it tears", came about.
+The per-modeset variability is real (severity genuinely moves between restarts,
+and a marginal link re-trains at every modeset), but the previous status header
+overstated it into a coin flip and then let that coin flip excuse everything.
+
+## What this session actually did
+
+Nineteen `systemctl restart greetd` trials plus one non-shell control, on the
+bench, with the owner as the instrument and **the two native-resolution
+configurations blinded** — the owner was told nothing about which trial was
+which, and consecutive trials at the same resolution are visually identical, so
+there was nothing to infer from. Blinding matters here specifically: this
+investigation has produced three confident wrong answers and every one of them
+was scored by someone who knew what they were hoping to see.
+
+The 1920x1080 arm could not be blinded — a 16:9 mode on a 21:9 panel is
+obvious — and that is stated rather than papered over, because it is also the
+arm with the best score and the one most likely to be flattered by the
+monitor's own upscaler blurring a high-frequency artifact.
+
+### The trial log, all of it, including the boring ones
+
+| # | Output mode | Composition | Port | Verdict |
+| --- | --- | --- | --- | --- |
+| 1 | 3440x1440@60 | on | HDMI-A-1 | **Clean** |
+| 2 | 3440x1440@100 | on | HDMI-A-1 | Tearing |
+| 3 | 1920x1080@60 | on | HDMI-A-1 | Tearing |
+| 4 | 3440x1440@100 | on | HDMI-A-1 | Tearing |
+| 5 | 1920x1080@60 | on | HDMI-A-1 | **Clean** |
+| 6 | 3440x1440@60 | on | HDMI-A-1 | Worse |
+| 7 | 3440x1440@100 | on | HDMI-A-1 | Tearing |
+| 8 | 1920x1080@60 | on | HDMI-A-1 | **Clean** |
+| 9 | 3440x1440@60 | on | HDMI-A-1 | Worse |
+| 10 | 3440x1440@60 | **off** | HDMI-A-1 | Tearing |
+| 11 | 3440x1440@60 | on | HDMI-A-1 | Tearing |
+| 12 | 3440x1440@60 | **off** | HDMI-A-1 | Tearing |
+| 13 | 3440x1440@60 | on | HDMI-A-1 | Tearing |
+| 14 | 3440x1440@60 | on | HDMI-A-1 | Tearing |
+| 15 | 3440x1440@60 | **off** | HDMI-A-1 | Tearing |
+| — | 3440x1440@100, **vkcube instead of the shell** | on | HDMI-A-1 | Tears identically |
+| — | 3440x1440@100, **screen completely static** | on | HDMI-A-1 | **Shimmers/sparkles** |
+| 16 | 3440x1440@100 | on | **HDMI-A-2** | Tearing |
+| 17 | 3440x1440@100 | on | **HDMI-A-2** | Tearing |
+| 18 | 3440x1440@100 | on | **HDMI-A-2** | Tearing |
+| 19 | 3440x1440@100, shell pillarboxed at 1920x1080 | on | HDMI-A-2 | (config change, not judged) |
+| 20 | 2560x1080@100 requested | on | HDMI-A-2 | **Void** — see below |
+| 21 | 3440x1440@100 on **610.43.03 / 7.1.5**, static | on | HDMI-A-2 | **Shimmers** |
+| 22 | 3440x1440@100 on **610.43.03 / 7.1.5**, moving | on | HDMI-A-2 | Tearing |
+
+### The DP night session (2026-08-12, owner connected a DP cable; all on 610.43.03 / 7.1.5)
+
+All of these ran at 3440x1440@60 — the booted (old) image does not know the
+`hundred` profile, so the stock session falls back to `steady`/`-r 60`. Mode
+verified from the journal per trial as before.
+
+| # | What | Verdict |
 | --- | --- | --- |
-| 610.43.03 (shipping now) | **tears** | fast |
-| 610.57.04 | **clean** | slow |
+| DP1–DP3 | gamescope, fresh DP link, 3 restarts | Shimmers/tears, 3/3 |
+| — | memclock watch: P3↔P5 flap (5001↔810) every ~7s on an idle static screen | measured |
+| — | memclock **locked** 5001, static screen | Still shimmers |
+| P1–P3 | plymouth splash, no gamescope, same mode (verified in DRM state), 3 modesets | **Stable, 3/3** |
+| — | gamescope again after the plymouth cycle, stock config | **Clean** |
+| A | gamescope, `GAMESCOPE_COLOR_MANAGEMENT_DISABLE=1` | Clean |
+| B | gamescope, stock (blind interleave) | **Clean** — kills the CM theory |
+| C | gamescope, CM disabled again | Clean |
+| — | GPU heated to 53°C, mem locked 7001 / gfx 1305 | **Still clean** — kills the temperature theory |
+| — | owner **replugs DP** (fresh link training) | **Shimmer returns** |
+| — | plymouth cycle repeated against the re-broken link | Splash stable; **gamescope clean again after** |
 
-**AND THE TRADE MAY BE FALSE, which is the next thing to test rather than
-assume.** The swap moved TWO things at once: the driver 610.43.03 → 610.57.04
-*and* the base kernel 7.1.5 → 7.1.8, because an akmods kmod is built against one
-exact kernel and the pair moves together. Nothing has separated "610.57.04 is
-slow" from "7.1.8 is slow" — see the Containerfile's own note. Until that is
-split, "the newer driver runs games badly" is one of two candidate sentences,
-and the other one has a different fix.
+Objective facts pulled from debugfs/NVML during the above: gamescope does
+**not** page-flip while the screen is static (same fb id over 10s), so flips
+are out; gamescope's scanout buffer is XB30 10-bit block-linear, uncompressed
+(modifier `c=0`); plymouth's is XR24 8-bit linear; nvidia-drm's
+`color_pipeline` parameter defaults on and keeps PQ-125 EOTF colorop pairs
+active in the plane pipeline even with gamescope's color management disabled
+(`nvidia_drm.color_pipeline=0` exists and was NOT yet tried — it needs a karg
+via a direct BLS edit and became moot for tonight once the link-state
+mechanism was found, but it is the right first lever if the 10-bit/colorop
+path needs to be split from the link-training half).
 
-The elimination table below stands and is still the material for an NVIDIA
-report — which is now a much sharper report than it was, because it names a
-version that fixes it.
+### Found in passing, and it was NOT a real image bug — corrected 2026-08-12
+
+**What this section said, kept because being wrong in public is the point of
+this file:** that the current `:latest` (the post-revert image) was *internally
+mismatched* — kernel modules 610.43.03 beside 610.57.04 userspace
+(`/usr/lib64/libnvidia-ml.so.610.57.04`, flatpak GL extension
+`nvidia-610-57-04`) — that the revert had moved the akmods sidecar digest back
+without moving the userspace packages with it, and that every conclusion about
+"the 610.43.03 driver" was therefore really about a mixed pair.
+
+**No shipped image is mixed. Every artifact was inspected directly on
+2026-08-12 and each one is self-consistent:**
+
+- **GHCR `:latest` (`sha256:78ee8727…`)** — which is the bench's *rollback*
+  deployment, not its booted one — is **610.43.03 throughout**: the rpmdb read
+  with `rpm --dbpath` against
+  `/ostree/deploy/default/deploy/3bf1e336….0/usr/share/rpm`, `modinfo -F
+  version` on the baked `nvidia.ko.xz` inside that same deployment, and
+  `libnvidia-ml.so.610.43.03` present on its disk. There is no `.610.57.04`
+  library in it.
+- **The bench's booted, pinned deployment (`43.20260811.1`,
+  `sha256:383d90b3…`)** is the *pre-revert* image and is **610.57.04
+  throughout**.
+- **Both cached ostree image refs** (`ostree/1/1/0` and `ostree/1/1/1`) are
+  likewise each internally consistent.
+
+So the mismatch was a **runtime observation made across two deployments**, not
+image content: the kmod version was read from one deployment and the userspace
+filename from the other, and the pair was reported as though it came from one
+image. The bench was booted and pinned on 610.57.04 the whole time it was
+believed to be running the reverted 610.43.03 image — which is a real trap and
+worth remembering, but it is a bookkeeping trap on the bench, not a defect in
+anything that was built.
+
+**What the correction gives back:** the caveat this section attached to the
+driver comparison is withdrawn. Each deployment is a consistent stack, so the
+610.43.03-vs-610.57.04 trials above compared two whole driver branches and not
+a mixed pair against a clean one. The confound that *does* remain is the old
+one and is unrelated: the kernel moved with the driver (7.1.5-101 ↔ 7.1.8-100),
+because an akmods kmod is built against one exact kernel.
+
+**What it cost, and what was built so it cannot cost that again:** an evening
+of image forensics to answer a question the build should have answered.
+`os/Containerfile` now **welds the kmod to the userspace at build time**, in
+the same `RUN` that already asserted one driver version across the rpm
+transaction:
+
+- `kmod-nvidia` joined that one-version `rpm -q` assert. Its `VERSION` field is
+  the driver version, and it was the one driver package the test did not reach
+  — a sidecar shipping a kmod from one branch beside userspace from another
+  would have built green.
+- A second check compares the **artifacts** rather than the rpm metadata:
+  `modinfo -F version` on the baked `nvidia.ko*` must equal
+  `nvidia-driver-libs`'s rpm version, and `libnvidia-ml.so.<ver>` and
+  `libnvidia-glcore.so.<ver>` must exist at that exact version. That catches a
+  module disagreeing with its own package, or one arriving by some future
+  non-rpm path, at build time instead of on the bench.
+
+That change lives in worktree `elastic-vaughan-17505c` on branch
+`claude/elastic-vaughan-17505c` and is **uncommitted as of 2026-08-12**.
+
+Every trial's mode was verified from the journal (`drm: selecting mode ...` and
+the shell's own `screen 0: ... refresh ...`) before its verdict was recorded, so
+no verdict is about a configuration that did not actually run. Trial 20 is void
+for exactly that reason and is kept because a void trial is a result: gamescope
+did **not** synthesise the requested mode, it fell back to a listed one and
+selected 3440x1440@**60**. `--generate-drm-mode cvt` does not get a 21:9
+low-bandwidth mode out of this connector.
+
+### Scores
+
+| Configuration | Clean / trials |
+| --- | --- |
+| 3440x1440@100, composited, HDMI-A-1 | 0 / 3 |
+| 3440x1440@100, composited, HDMI-A-2 | 0 / 3 |
+| 3440x1440@60, composited | 1 / 6 |
+| 3440x1440@60, **not** composited | 0 / 3 |
+| 1920x1080@60 output | 2 / 3 |
+| **Total** | **3 / 18** |
+
+## What is now excluded, and how
+
+Each of these is a claim about evidence, not a hunch. Where the old elimination
+table had one observation against a symptom nobody had characterised, these have
+three or more against a measured 1-in-6 base rate.
+
+**`--force-composition` is not the variable. Six blind trials, one mode.** Three
+with the flag and three without, at 3440x1440@60, interleaved, all six torn.
+This flag was added on 2026-08-10 to fix ghosting, the ghosting survived it, and
+until now it had never been tested more than once in either direction. It does
+nothing for this symptom and the ghosting it was supposed to fix is not
+something it fixes.
+
+**The shell is not the cause.** `vkcube` — a different client, a different
+renderer, none of the shell's code — was run fullscreen under the same
+gamescope at 3440x1440@100, and its rotating cube shows the same displacement
+and trails. This control had never been run: for three days every single
+observation in this investigation was of the Godot shell's rail scrolling, so
+"the shell" was never on the suspect list and was never eliminated either. It is
+eliminated now.
+
+**The port is not the cause. Three trials.** The owner moved the cable to the
+laptop's second HDMI port (confirmed in sysfs: HDMI-A-1 disconnected, HDMI-A-2
+connected) and all three trials at 3440x1440@100 tore. The old table's "BOTH
+HDMI ports → identical tearing" row was N=1; it now has n=3 behind it.
+
+**The panel, the cable and the mode are cleared — by the owner, not by us.** The
+same monitor, over the *same cable*, at *3440x1440@100 or higher*, over HDMI, on
+a different laptop, is clean. That is the strongest single fact in this file and
+it was obtained by asking one question. It means the fault is on this machine's
+side of the connector.
+
+**Frame delivery is not the cause**, which is the static-screen observation
+above and is what makes everything else in this section make sense. No
+compositor flag, no refresh rate, no scanout path and no client can explain a
+picture that breaks up while it is not being redrawn.
+
+## The driver was separated after all, and it is not the cause
+
+The 610.43.03 / kernel 7.1.5 deployment turned out not to need any bootloader
+surgery: `ostree admin status` showed it **already staged**. The bench was
+rebooted into it and confirmed on the target — `uname -r` 7.1.5-101.fc43,
+`modinfo -F version nvidia` 610.43.03, `NVIDIA UNIX Open Kernel Module …
+610.43.03` in dmesg — with everything else held still: stock session (greetd
+restored from the pre-trial backup), `hundred` profile, HDMI-A-2, same cable,
+live mode verified at 3440x1440 / 99.99 Hz.
+
+| Driver | Kernel | Static screen | Under motion |
+| --- | --- | --- | --- |
+| 610.57.04 | 7.1.8-100 | Shimmers | Tears (0/6 clean at this mode) |
+| 610.43.03 | 7.1.5-101 | **Shimmers** | **Tears** |
+
+So the driver swap that started all of this was never going to fix anything, in
+either direction. The trade the previous status header described — "610.43.03
+tears / 610.57.04 is clean" — was one lucky observation in six on a symptom that
+is nearly always present, and there is no trade. The remaining honest reason to
+prefer one pin over the other is the *performance* report, which is untested at
+power and confounded with the kernel, and which now has nothing pulling against
+it.
+
+### And the auto-update timer had already fired
+
+The staged deployment was not left over from anything deliberate. Found the same
+evening: `rpm-ostreed-automatic.timer` was enabled and active with
+`AutomaticUpdates: stage`, and it had run 22 minutes earlier, resolved `:latest`
+— the reverted image, carrying 610.43.03 — and staged it. **The next reboot was
+going to change the driver under the investigation with nobody knowing.** Any
+observation made across that reboot would have compared two drivers while
+believing it was comparing two boots of one.
+
+The timer is now masked (`systemctl mask --now rpm-ostreed-automatic.timer`,
+machine-local, reversible with `unmask`). Note that masking is per-deployment
+`/etc`, so it must be re-applied after booting a different deployment. And note
+what pinning does and does not do: it protects a deployment from garbage
+collection; **it does not stop a newer one becoming the default boot.** The
+2026-08-11 warning about `rpm-ostree kargs` being "an upgrade in disguise" was
+right about the mechanism and too narrow about the trigger — nothing had to be
+typed at all.
+
+## What is NOT separated, and this is the honest limit
+
+The driver *version* is now separated and eliminated. What is **not** separated
+is "this chassis's HDMI hardware" from "the NVIDIA Linux driver in general",
+because the one clean reference — the other laptop — changed the GPU *and* the
+operating system at the same time. Two readings survive, and both are outside
+this repository's reach:
+
+- **This laptop's HDMI output is marginal at these rates.** Fits the static
+  shimmer, fits the severity moving across modesets (a marginal link re-trains
+  at every modeset), fits the weak improvement at lower pixel clocks, fits both
+  drivers behaving identically.
+- **Both NVIDIA Linux branches program this chassis's link badly** — drive
+  strength, scrambling/SCDC, bit depth — in a way the other laptop's stack does
+  not. A driver can absolutely produce static corruption; "software can't do
+  that" is not an argument available here. This reading is still a filable NVIDIA
+  bug, and the fact that two branches fourteen point-releases apart are identical
+  makes it a long-standing one rather than a regression.
+
+Separating these needs something this bench cannot currently offer: the same
+laptop, same port, under a different operating system; or a DisplayPort cable,
+which the owner does not have. Until one of those exists, the file should not
+claim to know which.
+
+Note also that the resolution gradient is weak and confounded. 1920x1080 scored
+2/3, but a 16:9 mode on a 21:9 panel is upscaled by the *monitor*, and upscaling
+softens exactly the kind of high-frequency sparkle being judged. A better score
+there may be a blurrier picture rather than a healthier link.
+
+## What this means for the product, which is the part that outlives the bug
+
+The appliance is meant to drive a TV, and the owner's stated next target is
+**4K at 60 Hz**. That is not an easier signal than the one failing today — it is
+the same class or worse. 3840x2160@60 in RGB 8bpc is about **594 MHz** of TMDS
+character rate; 3440x1440@100 is about 582 MHz. If this machine cannot hold 582
+MHz cleanly, it will not hold 4K60 RGB either, and the plan should not assume
+otherwise.
+
+The routes that actually buy margin, in order of how much they cost the picture:
+
+- **HDMI 2.1 FRL.** A different signalling scheme entirely rather than faster
+  TMDS, and the sink advertises HDMI Forum support. If the driver negotiates FRL
+  the margin question changes shape completely. Worth measuring before assuming
+  anything, because it is the only route that costs nothing.
+- **YCbCr 4:2:0.** Halves the rate for 4K60. Cheap in bandwidth, visible on UI
+  text, and this connector currently reports `ycbcr_420_allowed=0`.
+- **Lower refresh.** 4K at 30 Hz is unusable for a games appliance; 1440p or
+  1080p at 60 is the realistic fallback and is what the trial data weakly
+  favours.
+
+None of these is a fix for the fault. They are what a product does about a link
+it cannot fully trust.
+
+## The trial harness, which is still installed
+
+Under `/etc/marwanos-trial/` on the bench. Nothing in the image was modified and
+no build was pulled, because the bench's booted deployment is pinned to a driver
+`main` no longer carries and pulling is the one thing that must not happen here.
+
+- `bin/gamescope` — a shim ahead of `/usr/bin/gamescope` on `PATH`. It rewrites
+  the output mode (`-W/-H`), the nested resolution (`-w/-h`) and the refresh
+  (`-r`) from a one-line file, can subtract `--force-composition` (`NOCOMPOSITE`)
+  and can split the two resolutions (`NESTED=<w>x<h>`). Every unusable input —
+  absent file, malformed line, mistyped token — execs the real gamescope with the
+  session's own unmodified argument list, because the alternative on a machine
+  with no console is a black television.
+- `session` — sets `PATH` and execs the image's own session script, unchanged.
+- `round` — runs a list of trials: write mode, restart greetd, dwell, then print
+  what the journal says was *actually* selected.
+- `mode` — the current trial's one line.
+- `revert` — restores `/etc/greetd/config.toml` from the backup taken before the
+  first edit and restarts greetd onto the stock session.
+
+**greetd is back on the stock session** (`revert` run again at the end of the
+DP night session), so the harness is installed but inert — it changes nothing
+until greetd is pointed at it again. It survives on both deployments' `/etc`,
+so it is there for the next round without re-uploading anything. The harness
+gained two pieces during the night: the session file now sources
+`/etc/marwanos-trial/env` (VAR=value lines, allexport) so per-trial environment
+reaches gamescope, and `round2` runs env-varying trials the way `round` runs
+mode-varying ones. `/root/nvml_clocks.py` and `/root/nvml_lock.py` (NVML via
+ctypes; the image has no nvidia-smi) watch and lock GPU clocks.
+
+**The bench was left as the owner chose**: DP cable connected, stock session,
+native 3440x1440@60, in the healed-link state — clean at handoff. A reboot or
+a replug re-rolls the fresh-link dice until the link-scrub workaround exists.
+
+The pillarboxed configuration tried during this session —
+`3440 1440 100 NESTED=1920x1080 -S fit`, native 3440x1440@100 on the wire with
+the shell rendered at 1920x1080 and pillarboxed inside it — was reverted with
+the rest. It fixes the *shape* of a 16:9 picture on a 21:9 panel and changes the
+link not at all; it is not a tearing workaround and was not chosen as one. It
+also costs sharpness, since the UI is upscaled 1.33x to fill the output. If it
+is wanted for real it belongs in the image as a display profile, not in a
+machine-local shim.
+
+## Corrections to earlier records in this file
+
+- **The GPU is an RTX 3070 Laptop, not a 3060.** `10de:2488` is GA104M, and both
+  gamescope and vkcube name it `NVIDIA GeForce RTX 3070`. Every earlier version
+  of this document says 3060. An NVIDIA report with the wrong part number is
+  worth very little, so this matters more than a typo normally would.
+- The EDID's own limits, decoded this session: preferred detailed timing is
+  3440x1440@60 at **349.25 MHz**; the range-limit descriptor declares **50–120
+  Hz**, 30–162 kHz, and a **590 MHz** maximum pixel clock; the HDMI Forum block
+  declares a 600 MHz maximum TMDS character rate while the older HDMI 1.4 block
+  in the same EDID says 340 MHz. The 100 Hz mode therefore runs at about 98% of
+  the ceiling the monitor declares for itself.
+- `-W/-H` **do** move the DRM output mode on this connector, not just the nested
+  surface — verified directly (`drm: selecting mode 1920x1080@60Hz` with the
+  shell reporting 59.96). Only `video=` kargs are inert.
+
+---
+
+Everything below this line is the record as it stood before this session. It is
+kept because it documents what was tried, and because two of its confident
+verdicts being wrong is itself part of the history. **Read none of its
+conclusions as current.**
 
 ## Symptom
 
 Heavy tearing and ghosting on the bench appliance. Not brightness pulsing —
-tearing: horizontal displacement lines under motion, plus ghost trails.
+tearing: horizontal displacement lines under motion, plus ghost trails. (Now
+known to be present without motion as well.)
 
 ## Hardware and stack
 
 | Piece | Exactly |
 | --- | --- |
-| GPU | NVIDIA RTX 3060 Laptop (10de:2488) |
-| Driver | **610.43.03 open kernel modules** (ublue akmods sidecar, landed in the image ~2026-08-02) |
-| Panel | Samsung Odyssey G85SD, 3440x1440 QD-OLED, over **HDMI** (`card1-HDMI-A-1`; DP unused by design — TVs are HDMI) |
-| Cable | PS5-certified Ultra High Speed HDMI |
+| GPU | NVIDIA RTX 3070 Laptop (10de:2488) — *corrected; this file said 3060* |
+| Driver | 610.57.04 open kernel modules on the bench's pinned deployment; `main` is pinned to 610.43.03 |
+| Panel | Samsung Odyssey G85SD, 3440x1440 QD-OLED, over HDMI (DP unused by design — TVs are HDMI) |
+| Cable | PS5-certified Ultra High Speed HDMI — *cleared: clean on another laptop at the same mode* |
 | Compositor | gamescope 3.16, `--backend drm`, DRM master, no desktop underneath |
-| OS | MarwanOS (bootc image on ublue-os/base-main:43), kernel 7.1.5-101.fc43 at the time of measurement |
-| Kargs | `nvidia-drm.modeset=1` (image default), `nvidia_drm.fbdev=0` tested both ways |
+| OS | MarwanOS (bootc image on ublue-os/base-main:43), kernel 7.1.8-100.fc43 |
+| Kargs | `nvidia-drm.modeset=1`, `nvidia_drm.fbdev=1`, `video=HDMI-A-1:3440x1440@100` |
 
-## The elimination table (all measured 2026-08-11, one day, one machine)
+## The old elimination table (2026-08-11, one day, all N=1)
 
-Every row below was tested live on the bench with the tearing present, and the
-instrument for the mode rows was the session's own `screen 0:` journal line —
-not an assumption about what the compositor did.
+Kept as a record of what was tried. The rows are **not** exonerations: each was
+one observation, and at the time nobody knew the artifact's base rate. Several
+have since been re-tested properly and are listed in "What is now excluded".
 
 | Theory | Test | Result |
 | --- | --- | --- |
-| Steam's background client | Zero Steam processes (pgrep-verified, zero GPU handles) | Tears — reported *worse* |
-| gamescope layering / direct scanout | `--force-composition` + `--disable-layers` (maximally conservative pipeline) | Tears |
-| 60 Hz panel starvation | 100 Hz confirmed live (`screen 0: refresh 99.99`) | Tears "a lot" |
+| Steam's background client | Zero Steam processes (pgrep-verified) | Tears — reported *worse* |
+| gamescope layering / direct scanout | `--force-composition` + `--disable-layers` | Tears |
+| 60 Hz panel starvation | 100 Hz confirmed live | Tears "a lot" |
 | 60 Hz itself | 59.90 confirmed live | Tears |
-| Async flips | No `--immediate-flips`, no async env vars anywhere in the session | Tears (sync flips confirmed) |
+| Async flips | No `--immediate-flips` anywhere in the session | Tears |
 | Monitor VRR interaction | OSD Adaptive Sync off | Tears |
 | Cable | PS5-certified Ultra High Speed | Tears |
 | Port | BOTH HDMI ports | Identical tearing |
 | fbdev console path | `nvidia_drm.fbdev=0` booted | Identical |
-| `video=` mode forcing | `video=HDMI-A-1:3440x1440@100` karg | Inert — DRM backend takes EDID-preferred regardless |
+| `video=` mode forcing | `video=HDMI-A-1:3440x1440@100` karg | Inert |
 
-One observed correlation survives: the tearing's severity changes across
-**modesets** — identical config minutes apart went "worse" then "stopped"
-across a compositor restart that re-trained the HDMI link. That is consistent
-with a link/flip-training fault, not with any of the software rows above.
+## The driver swap, and why it was reverted
 
-## Verdict of the elimination
+610.43.03 → 610.57.04 was swapped on 2026-08-11 and reverted the same day on the
+owner's report: **"this broke performance completely, no game runs well
+anymore."** Checked before reverting, none of which explained it: the driver
+loaded (`NVRM: 610.57.04`), gamescope was on the GPU, the Flatpak GL extension
+matched, Runtime D3 was disabled, there were no Xid errors, `cap_sys_nice` was
+intact, and the `hundred` profile's compositing cost was identical in the
+previous boot.
 
-With Steam absent, composition forced, both refresh rates, sync flips, VRR
-off, a certified cable, both ports, and the fbdev path all individually
-eliminated, what remains is the **610.43.03 open-kernel-module KMS/HDMI flip
-path** itself. The driver landed in the image ~2026-08-02 (dmesg akmods
-stamp) — a week before the reports — which is regression-shaped.
+**The confound, still unresolved:** an akmods kmod is built against one exact
+kernel, so the swap moved 610.43.03 → 610.57.04 *and* kernel 7.1.5-101 →
+7.1.8-100 together. "The new driver is slow" and "the new kernel is slow" have
+never been separated. The performance half of that report may also have been
+N=1; it was never repeated.
 
-## The experiment this commit arms
-
-The image's driver comes entirely from the pinned
-`ghcr.io/ublue-os/akmods-nvidia-open:main-43` sidecar digest (the
-fedora-multimedia repo is excluded by name for every package the sidecar
-ships, so the digest IS the driver pin). The sidecar publishes no
-per-driver-version tags, so the branch is chosen by choosing the digest.
-
-Swapped 2026-08-11: **610.43.03 → 610.57.04** (the newest available; same
-branch, fourteen point-releases ahead), paired with the base digest whose
-kernel (7.1.8-100.fc43) the new kmod is built for. Instruments after the
-owner's reboot, over SSH:
-
-```
-journalctl -b -t marwanos-session | grep "screen 0:"
-```
-
-```
-dmesg | grep -i "nvidia.*610"
-```
-
-## Verdict of the swap: REVERTED — performance collapse
-
-The bench booted 610.57.04 (image 43.20260811.1, kernel 7.1.8-100.fc43) and
-the owner's report was immediate and unambiguous: **"this broke performance
-completely, no game runs well anymore."** The pin was reverted the same day.
-
-What was checked on the bench *before* reverting, so that the revert is a
-measured decision rather than a flinch — none of these explain it:
-
-| Suspected | Measured | Verdict |
-| --- | --- | --- |
-| Driver failed to load / wrong module | `NVRM: 610.57.04`, `nvidia_drm` + `nvidia_modeset` + `nvidia_uvm` all loaded | Healthy |
-| Compositor fell back to software | gamescope on `NVIDIA GeForce RTX 3070`, `selecting mode 3440x1440@100Hz` | On the GPU |
-| **Flatpak GL extension missing** (the classic: host driver moves, Steam's sandbox has no matching GL, everything drops to llvmpipe) | `org.freedesktop.Platform.GL.nvidia-610-57-04` **and** `GL32.` both installed from flathub | Not it |
-| GPU stuck in a low-power state | Runtime D3 `Disabled by default`, power state `D0`, Video Memory `Active` | Full power |
-| GPU faults | no `Xid`, no NVRM errors in dmesg | Clean |
-| `CAP_SYS_NICE` lost in the rebuild (would degrade frame pacing globally) | `getcap`: `cap_sys_nice=ep` present | Intact |
-| The `hundred` display profile's compositing tax (`-r 100 --force-composition`) | **Identical in the previous boot**, on the OLD driver, with Hollow Knight running under Proton 10.0 | Constant across both boots — not the new variable |
-
-That last row is the load-bearing one. The compositing profile is a real and
-permanent cost, but it did not change between the good boot and the bad one,
-so it cannot be what changed. The only variable was the image.
-
-**THE CONFOUND, stated plainly rather than buried:** the akmods kmod is built
-against one exact kernel, so the base image and the driver sidecar are welded
-and can only move together. This swap therefore moved 610.43.03 → 610.57.04
-*and* kernel 7.1.5-101 → 7.1.8-100 *and* a day of base packages, in one step.
-"The new driver is slow" is the leading hypothesis, not a proven one; "the new
-kernel is slow" has not been separated from it. Separating them needs a base
-bump with the driver held still, which the welding makes awkward — a
-deliberate experiment, not a side effect of the next bump.
-
-## Where this leaves the tearing
-
-Both known states are now bad in different ways, which is worth saying out
-loud so nobody re-runs this loop by accident:
-
-- **610.43.03** (pinned, shipping): games run well, panel tears.
-- **610.57.04**: **tearing gone** (owner, 2026-08-11, on the bench), games run
-  badly.
-
-Step 1 below is now ANSWERED and struck through; the live question is step 1a.
-
-1. ~~Ask what 610.57.04 did to the tearing before spending anything else.~~
-   **Done: it fixes it.** So this is no longer a hunt for the cause — it is a
-   trade between two known-bad states, and the work is to break the trade.
-1a. **Separate the driver from the kernel, because the swap moved both.**
-   610.43.03 pairs with base kernel 7.1.5 and 610.57.04 with 7.1.8, so the
-   performance report accuses two suspects at once. Find an akmods digest for
-   610.57.04 built against 7.1.5 (or any pair that holds one variable still)
-   and the answer falls out in one boot. If the kernel is the slow half, the
-   trade dissolves entirely: 610.57.04 on 7.1.5 would be clean AND fast.
-1b. **Failing that, make it a choice rather than a default.** Both pins work;
-   they are simply good at different things. A build-time switch — or an owner
-   who knowingly runs the clean-but-slow image while games wait — beats
-   shipping the tearing silently, which is what the revert did.
-2. **An older pair** — an akmods digest carrying a driver *older* than
-   610.43.03, with the base digest whose kernel it was built against. This is
-   the "previous stable branch" idea, and note it is a pair hunt, not a
-   one-line change. Lower priority now that a KNOWN-GOOD-for-tearing driver
-   exists.
-3. **The closed kmod sidecar** (`akmods-nvidia` rather than
-   `akmods-nvidia-open`) purely as a diagnostic: if the closed module does not
-   tear, the fault is specific to the open module's flip path, which is
-   exactly the sentence an NVIDIA bug report wants.
-4. **File the report regardless.** The elimination table above is complete and
-   reproducible, and it is worth sending whether or not we ever find a
-   workaround.
-
-Do NOT reopen compositor, Steam, cable, port, VRR, or refresh-rate theories —
-they are measured out in the table at the top of this file.
+The tearing half of that report — "610.57.04 fixes it" — is now known to be one
+of the three clean observations in six, and is not a finding.

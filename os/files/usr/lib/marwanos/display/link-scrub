@@ -1,0 +1,163 @@
+#!/usr/bin/env bash
+#
+# THE LINK SCRUB: bounce the display through one plymouth modeset shortly after
+# the first session is up, because a freshly-trained link on this chassis scans
+# gamescope's framebuffer wrong until something does a legacy 8-bit modeset over
+# the top of it.
+#
+# WHY THIS EXISTS, in one paragraph. docs/flicker-nvidia-610.md closed the loop
+# on 2026-08-12: a cold boot or a physically replugged cable puts the link in a
+# state where the gamescope session shimmers on a completely static screen and
+# tears under motion; stopping greetd, running plymouth's splash, quitting it
+# and starting greetd again makes the same session on the same connector clean;
+# and the clean state then survives every subsequent greetd restart, GPU heat,
+# memory-clock lock, and colour-management toggle until the link is retrained.
+# Demonstrated twice that night -- the second time against a link deliberately
+# re-broken by unplugging the cable -- and a third time on 2026-08-12 morning
+# after the bench rebooted into the artifact again. It is not understood. It is
+# reproducible in both directions, which is the most this repository can say.
+#
+# WHY THE ORDER IS WHAT IT IS. Boot ALREADY runs plymouth before greetd and the
+# artifact is there anyway, so "show a splash early" is not the fix and this
+# unit would be pointless if that were all it did. The healing transition
+# observed is specifically gamescope-modeset -> plymouth-modeset ->
+# gamescope-modeset. The session has to have taken the display and programmed it
+# ONCE before the plymouth modeset means anything, which is why this runs off
+# the session's own ready flag and not off greetd's ordering.
+#
+# WHY IT COSTS A SESSION RESTART, which is the ugly part and cannot be argued
+# away. plymouthd cannot do a modeset without DRM master, and gamescope holds
+# DRM master for as long as the session lives. So the session must let go: the
+# shell appears, disappears behind a splash for about six seconds, and comes
+# back. Steam restarts with it. That is roughly twenty seconds added to a cold
+# boot in exchange for a picture that does not sparkle.
+#
+# HOW TO TURN IT OFF WITHOUT A REBUILD. Create /var/marwanos/no-link-scrub on
+# the machine (the unit's ConditionPathExists checks it) and reboot. /var and
+# not /etc for the reason every other machine-local file here is under /var:
+# bootc three-way merges /etc on upgrade, and a switch that silently survives
+# into an image that no longer needs it is a switch nobody can find later.
+#
+# ONCE PER BOOT, ENFORCED BY A STAMP AND NOT BY THE UNIT'S EXIT STATUS. The
+# service is triggered by a path unit watching the session's ready flag, and the
+# restart this script performs makes the NEXT session touch that flag again. A
+# oneshot with RemainAfterExit=yes is normally enough to stop a path unit
+# retriggering -- that is exactly how marwanos-plymouth-quit.service does it --
+# but a FAILED oneshot goes inactive, and an inactive triggered unit with a
+# satisfied path condition fires again. On an appliance with no console, that is
+# a boot that splashes forever. So the stamp is written before anything else
+# happens and is checked first: whatever goes wrong below, it goes wrong once.
+set -uo pipefail
+
+STAMP=/run/marwanos/link-scrub.done
+SPLASH_DWELL=6
+
+log() { echo "<5>$*"; }
+warn() { echo "<4>$*"; }
+err() { echo "<3>$*"; }
+
+# greetd comes back no matter how this exits, including on a signal. This is the
+# single most important line in the file: the failure this script can cause is
+# an appliance with no session and no keyboard, and that failure must not be
+# reachable from any path through it.
+restore_session() {
+    if ! systemctl is-active --quiet greetd; then
+        log "starting greetd"
+        systemctl start greetd || err "COULD NOT START greetd -- the machine has no session"
+    fi
+}
+trap restore_session EXIT INT TERM
+
+mkdir -p /run/marwanos
+if [[ -e $STAMP ]]; then
+    log "already scrubbed this boot; nothing to do"
+    trap - EXIT INT TERM
+    exit 0
+fi
+: >"$STAMP"
+
+if ! systemctl is-active --quiet greetd; then
+    warn "greetd is not active; the scrub has nothing to bounce"
+    trap - EXIT INT TERM
+    exit 0
+fi
+
+log "stopping greetd to release DRM master"
+systemctl stop greetd
+
+# greetd's stop returns before the session's children are reaped, and plymouthd
+# takes DRM master or it does not -- there is no retry inside it. Poll for the
+# compositor actually being gone rather than sleeping a guessed interval.
+waited=0
+while pgrep -x gamescope-wl >/dev/null 2>&1 || pgrep -x gamescope >/dev/null 2>&1; do
+    ((waited++))
+    if ((waited > 60)); then
+        warn "gamescope still present after 12s; continuing anyway"
+        break
+    fi
+    sleep 0.2
+done
+log "gamescope released after $((waited * 200))ms"
+
+# START FROM A KNOWN PLYMOUTH STATE, because the unit's After= cannot be
+# trusted to deliver one. This service and marwanos-plymouth-quit.service are
+# both triggered by path units watching the same file, and path activation
+# starts each in its OWN transaction -- an ordering dependency between units in
+# different transactions is not enforced. So the boot's plymouthd may still be
+# alive here, and it is a DEACTIVATED one: it holds no DRM master, which means
+# `plymouth show-splash` against it draws nothing and does no modeset, and the
+# scrub would report success having settled nothing. Quitting first costs a
+# fraction of a second and removes the whole race.
+if plymouth --ping 2>/dev/null; then
+    log "a plymouthd from boot is still alive; quitting it before starting our own"
+    plymouth quit
+    gone=0
+    while pgrep -x plymouthd >/dev/null 2>&1; do
+        ((gone++))
+        ((gone > 25)) && { warn "plymouthd will not exit; the scrub may be a no-op"; break; }
+        sleep 0.2
+    done
+fi
+
+plymouthd --mode=boot || log "plymouthd exited nonzero (one may already be running)"
+sleep 1
+
+if ! plymouth --ping; then
+    err "no live plymouthd; the link cannot be scrubbed this boot"
+    exit 0
+fi
+
+plymouth show-splash
+log "splash up: this is the modeset that settles the link"
+sleep "$SPLASH_DWELL"
+
+# DEACTIVATE, NOT QUIT, and this is not a detail. `plymouth quit` tears the
+# splash off the screen and leaves the VT underneath it visible -- the owner
+# watched the 2026-08-12 cold boot and reported "the linux start text showed
+# up", which is the exact regression marwanos-plymouth-hold.service exists to
+# prevent and which this script had reintroduced halfway through the boot.
+# `deactivate` releases DRM master (so gamescope can take it, which is the
+# whole point of the cycle) while leaving the splash's last frame in the
+# framebuffer with nothing repainting it until the compositor's own modeset.
+# Frozen splash, then the shell. No console text, no black.
+plymouth deactivate
+log "splash frozen and DRM released; bringing the session back"
+
+# Started here rather than left to the EXIT trap so the reap below happens
+# after the session is actually up. The trap stays armed regardless -- it is
+# what covers every path that does not reach this line.
+restore_session
+
+# Now reap the daemon. It has no DRM master and draws nothing at this point, so
+# quitting is bookkeeping rather than anything the screen can see -- but a
+# plymouthd left running for the rest of the boot is the stray daemon
+# marwanos-plymouth-quit.path's header refuses to leave behind, and this script
+# has no business shipping the thing that unit was written to avoid.
+reaped=0
+while ! pgrep -x gamescope-wl >/dev/null 2>&1; do
+    ((reaped++))
+    ((reaped > 100)) && { warn "gamescope has not come back after 20s"; break; }
+    sleep 0.2
+done
+plymouth quit
+log "session back after $((reaped * 200))ms; plymouthd reaped"
