@@ -39,13 +39,13 @@ temperature (still clean at 53°C), and GPU memory-clock flapping — measured
 flapping P3↔P5 every ~7s on an idle screen, but clean with it flapping and
 shimmering with it locked, so it is out in both directions.
 
-**The workaround this arms** (not yet built): a boot-time "link scrub" — after
-the first session is up, bounce the display through one plymouth cycle. Boot
-already runs plymouth BEFORE greetd and still tears, so the order matters: the
-healing transition observed is specifically gamescope-modeset →
-plymouth-modeset → gamescope-modeset. Cost: one ~10s splash flash shortly
-after the shell first appears. Ugly, mechanical, and it worked 2 out of 2
-times tonight. n=2, so build it as an experiment, not as a triumph.
+**The workaround this arms** (now built — see "The scrub is built" below): a
+boot-time "link scrub" — after the first session is up, bounce the display
+through one plymouth cycle. Boot already runs plymouth BEFORE greetd and still
+tears, so the order matters: the healing transition observed is specifically
+gamescope-modeset → plymouth-modeset → gamescope-modeset. Cost: one ~9s splash
+shortly after the shell first appears. Ugly, mechanical, and it worked 2 out of
+2 times that night. n=2, so it was built as an experiment, not as a triumph.
 
 **For the NVIDIA report**, the sentence this file existed to find: *on an RTX
 3070 Laptop (10de:2488), open kernel modules 610.43.03 and 610.57.04
@@ -55,6 +55,70 @@ active color-pipeline PQ colorops, is clean scanning an 8-bit XR24 linear
 framebuffer on the same link state, and becomes permanently clean for the
 10-bit path after one legacy 8-bit modeset cycle — surviving all subsequent
 atomic modesets until the link is physically retrained.*
+
+## The scrub is built (2026-08-12, morning) — and the way it is built cannot be judged by eye
+
+The owner reported the artifact back on a bench that had rebooted nine minutes
+earlier, which is the model's own prediction: nothing had been built, and a
+boot re-rolls the link. The manual cycle healed it a **third** time, on demand,
+from an SSH shell. That is the mechanism's n=3 and it is the strongest claim in
+this file.
+
+It now ships as `marwanos-link-scrub.service`, triggered by
+`marwanos-link-scrub.path` on the **session's own ready flag** — the same
+`/run/user/1000/marwanos/plymouth-quit` the splash handoff uses, because the
+one thing that flag means is "gamescope has provably taken the display and
+programmed a mode", which is the precondition the healing order needs. The
+script is `/usr/lib/marwanos/display/link-scrub`. Measured on the bench: it
+fires at **t≈10s**, the whole cycle costs **~9s**, and the session comes back
+at the same mode.
+
+**Three things were learned by building it, and two of them are unwelcome.**
+
+**One: the artifact did not appear on either of the two boots tested, so
+nothing here proves the scrub fixes anything.** A warm reboot at 09:34 showed
+it (that is the owner's report that started the morning). A warm reboot at
+09:51 did not. A cold boot at 09:54 — genuinely powered off, 29s dark — did not
+either. "Every fresh boot shows it" is therefore **1 for 3**, and the trigger
+is not as reliable as the status header above implies. The header's claim rests
+on the *replug*, which was demonstrated on demand twice; the *boot* half of it
+is weaker than it reads and should be treated as such.
+
+**Two: as built, the scrub is unfalsifiable from the couch.** It fires at
+t≈10s, which is early enough that the splash is still on screen — the owner
+watching the cold boot saw splash, dim, splash, shell, and never saw a first
+shell at all. That is excellent product behaviour (the artifact never reaches
+the eye) and useless experimental behaviour (there is no before-picture to
+compare). **To ever falsify this, the scrub has to be delayed on purpose** —
+put twenty seconds in front of it, let the shell be visibly broken, then let
+the cycle run — and that trial has not been done. Until it is, the honest
+statement is: the mechanism is proven by hand at n=3, and the *automation of
+it* is proven only to run safely.
+
+**Three: `plymouth quit` is the wrong way to end the cycle**, and the owner
+caught it by watching. Quit takes the splash off the screen and leaves the VT
+underneath visible: "the linux start text showed up", between the splash and
+the shell, on a boot that is supposed to go splash → shell. That is precisely
+the regression `marwanos-plymouth-hold.service` was written to prevent, put
+back halfway through the boot by the scrub. The cycle now ends with
+`plymouth deactivate` — which releases DRM master, the only thing the cycle
+needs from plymouth's exit, while the splash's last frame stays in the
+framebuffer until gamescope's modeset — and reaps the daemon after the session
+is provably back. Confirmed gone by the same instrument that found it.
+
+Two independent once-per-boot guards exist because the service restarts the
+session that touches its own trigger: `RemainAfterExit=yes` for the success
+case and a `/run/marwanos/link-scrub.done` stamp written before anything else
+for the failure case. A failed oneshot goes inactive, and an inactive triggered
+unit with a satisfied path condition fires again — which on an appliance with
+no console is a boot that splashes forever. `greetd` is restored from an EXIT
+trap on every path out, including signals, because the failure this script can
+cause is a machine with no session and no keyboard.
+
+**The off switch is `/var/marwanos/no-link-scrub`.** A workaround for a fault
+nobody understands must be removable without a build. `/var` and not `/etc`,
+because bootc three-way merges `/etc` and a switch left there would outlive the
+image that needed it, invisibly.
 
 ---
 
