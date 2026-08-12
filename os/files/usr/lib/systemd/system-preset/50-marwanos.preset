@@ -28,4 +28,5 @@
 
 enable greetd.service
 enable marwanos-panel.service
+enable marwanos-link-scrub.path
 disable getty@tty1.service

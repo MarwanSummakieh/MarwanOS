@@ -1,0 +1,26 @@
+[Unit]
+# The trigger half of the link scrub. See /usr/lib/marwanos/display/link-scrub
+# for what the scrub is and why the display needs one.
+#
+# It watches the SAME file marwanos-plymouth-quit.path watches, and that is
+# deliberate rather than lazy: the session touches
+# /run/user/1000/marwanos/plymouth-quit the moment gamescope's ready handshake
+# succeeds, which is the only signal in this image that means "the compositor
+# has provably taken the display and programmed a mode". That -- not greetd
+# being started, not the session process existing -- is the precondition the
+# scrub needs, because the healing sequence is gamescope-modeset ->
+# plymouth-modeset -> gamescope-modeset and the first of those has to have
+# happened.
+#
+# Two path units on one file is fine; systemd triggers each independently. The
+# service they trigger is ordered After=marwanos-plymouth-quit.service so the
+# boot splash is down before this brings a new one up, rather than the two
+# fighting over one plymouthd.
+Description=Watch for the first session so the display link can be scrubbed
+Documentation=file:///usr/lib/marwanos/display/link-scrub
+
+[Path]
+PathExists=/run/user/1000/marwanos/plymouth-quit
+
+[Install]
+WantedBy=multi-user.target

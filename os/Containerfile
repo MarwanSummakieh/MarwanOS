@@ -776,6 +776,8 @@ RUN set -euxo pipefail; \
     chmod 0644 /usr/lib/systemd/system/marwanos-plymouth-hold.service; \
     chmod 0644 /usr/lib/systemd/system/marwanos-plymouth-quit.service; \
     chmod 0644 /usr/lib/systemd/system/marwanos-plymouth-quit.path; \
+    chmod 0644 /usr/lib/systemd/system/marwanos-link-scrub.service; \
+    chmod 0644 /usr/lib/systemd/system/marwanos-link-scrub.path; \
     chmod 0644 /usr/lib/systemd/system/marwanos-boot-success.service; \
     chmod 0644 /usr/lib/systemd/system/marwanos-boot-success.timer; \
     : "By name rather than via the find list, like the sshd drop-in: the"; \
@@ -789,6 +791,7 @@ RUN set -euxo pipefail; \
     chmod 0644 /usr/lib/systemd/system/marwanos-display-profile.service; \
     chmod 0755 /usr/lib/marwanos/display/panel-policy; \
     chmod 0755 /usr/lib/marwanos/display/profile; \
+    chmod 0755 /usr/lib/marwanos/display/link-scrub; \
     chmod 0644 /usr/lib/systemd/system/marwanos-window-profile.service; \
     chmod 0755 /usr/lib/marwanos/window/profile; \
     chmod 0644 /usr/lib/systemd/system/marwanos-devmode-sudo.service; \
@@ -947,6 +950,17 @@ RUN set -euxo pipefail; \
         /usr/lib/systemd/system/multi-user.target.wants/marwanos-plymouth-hold.service; \
     ln -sf ../marwanos-plymouth-quit.path \
         /usr/lib/systemd/system/multi-user.target.wants/marwanos-plymouth-quit.path; \
+    : "THE LINK SCRUB rides the same ready flag, one unit further on. It is"; \
+    : "a workaround for the display artifact docs/flicker-nvidia-610.md"; \
+    : "spent four days cornering: a freshly-trained link scans gamescope's"; \
+    : "10-bit block-linear framebuffer wrong until a legacy 8-bit modeset"; \
+    : "settles it, and plymouth is the only thing in this image that does"; \
+    : "one on demand. Enabled by ship, defeatable per machine with"; \
+    : "/var/marwanos/no-link-scrub, and it costs a visible session restart"; \
+    : "a few seconds after the shell first appears -- all three of which"; \
+    : "are argued in the unit and script headers rather than here."; \
+    ln -sf ../marwanos-link-scrub.path \
+        /usr/lib/systemd/system/multi-user.target.wants/marwanos-link-scrub.path; \
     : "The devmode sudo rule's installer. Enabled UNCONDITIONALLY and gated"; \
     : "inside the script instead, because the boot that matters most is the"; \
     : "one where the flag has just been REMOVED -- a unit conditioned on the"; \
@@ -1213,6 +1227,32 @@ RUN set -euxo pipefail; \
     : "both files because nothing at runtime checks the seam."; \
     grep -q 'plymouth-quit' /usr/lib/marwanos/session/marwanos-session; \
     command -v plymouth; \
+    : "THE LINK SCRUB, asserted at the three places it can silently become"; \
+    : "a no-op or a boot loop. One: it is wired at all, and it watches the"; \
+    : "SAME flag as the quit path -- a scrub triggered by anything earlier"; \
+    : "than gamescope's ready handshake would do its plymouth modeset"; \
+    : "before the compositor's own, which is the order boot already does"; \
+    : "and which does not heal anything."; \
+    test -L /usr/lib/systemd/system/multi-user.target.wants/marwanos-link-scrub.path; \
+    test -x /usr/lib/marwanos/display/link-scrub; \
+    grep -q '^PathExists=/run/user/1000/marwanos/plymouth-quit$' \
+        /usr/lib/systemd/system/marwanos-link-scrub.path; \
+    : "Two: BOTH once-per-boot guards are present. The service restarts"; \
+    : "greetd, the next session touches the flag again, and a triggered"; \
+    : "unit that is inactive when its path condition holds fires again --"; \
+    : "so RemainAfterExit stops the success case and the /run stamp stops"; \
+    : "the failure case. Losing either one is an appliance that splashes"; \
+    : "in a loop with no console to stop it from."; \
+    grep -q '^RemainAfterExit=yes$' /usr/lib/systemd/system/marwanos-link-scrub.service; \
+    grep -q '^STAMP=/run/marwanos/link-scrub.done$' /usr/lib/marwanos/display/link-scrub; \
+    : "Three: the escape hatch is real and is under /var. A workaround for"; \
+    : "an unexplained fault must be removable without a build, and /etc"; \
+    : "is three-way merged on upgrade so a switch left there would outlive"; \
+    : "the image that needed it, invisibly."; \
+    grep -q '^ConditionPathExists=!/var/marwanos/no-link-scrub$' \
+        /usr/lib/systemd/system/marwanos-link-scrub.service; \
+    grep -q '^d /var/marwanos ' /usr/lib/tmpfiles.d/50-marwanos.conf \
+        || { echo "no /var/marwanos tmpfiles entry: the scrub's off-switch has no directory to live in"; exit 1; }; \
     : "GRUB'S SILENT MENU, asserted at its three load-bearing points."; \
     : "One: bootupd still assembles grub.cfg the way this fix assumes --"; \
     : "a pre.cfg that hardcodes the visible menu/1s fallback, then"; \
