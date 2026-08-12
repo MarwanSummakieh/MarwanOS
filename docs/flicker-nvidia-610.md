@@ -151,16 +151,66 @@ via a direct BLS edit and became moot for tonight once the link-state
 mechanism was found, but it is the right first lever if the 10-bit/colorop
 path needs to be split from the link-training half).
 
-### Found in passing, and it is a real image bug
+### Found in passing, and it was NOT a real image bug — corrected 2026-08-12
 
-The current `:latest` (the post-revert image the bench now boots) is
-**internally mismatched**: kernel modules are 610.43.03, but the userspace is
-610.57.04 (`/usr/lib64/libnvidia-ml.so.610.57.04`, and the flatpak GL
-extension is `nvidia-610-57-04`). The revert moved the akmods sidecar digest
-back and did not move the userspace packages with it. Rendering and NVML
-demonstrably work anyway on the GSP path, but every conclusion about "the
-610.43.03 driver" on this boot is really about that mixed pair, and the
-Containerfile should either weld the two or assert they match.
+**What this section said, kept because being wrong in public is the point of
+this file:** that the current `:latest` (the post-revert image) was *internally
+mismatched* — kernel modules 610.43.03 beside 610.57.04 userspace
+(`/usr/lib64/libnvidia-ml.so.610.57.04`, flatpak GL extension
+`nvidia-610-57-04`) — that the revert had moved the akmods sidecar digest back
+without moving the userspace packages with it, and that every conclusion about
+"the 610.43.03 driver" was therefore really about a mixed pair.
+
+**No shipped image is mixed. Every artifact was inspected directly on
+2026-08-12 and each one is self-consistent:**
+
+- **GHCR `:latest` (`sha256:78ee8727…`)** — which is the bench's *rollback*
+  deployment, not its booted one — is **610.43.03 throughout**: the rpmdb read
+  with `rpm --dbpath` against
+  `/ostree/deploy/default/deploy/3bf1e336….0/usr/share/rpm`, `modinfo -F
+  version` on the baked `nvidia.ko.xz` inside that same deployment, and
+  `libnvidia-ml.so.610.43.03` present on its disk. There is no `.610.57.04`
+  library in it.
+- **The bench's booted, pinned deployment (`43.20260811.1`,
+  `sha256:383d90b3…`)** is the *pre-revert* image and is **610.57.04
+  throughout**.
+- **Both cached ostree image refs** (`ostree/1/1/0` and `ostree/1/1/1`) are
+  likewise each internally consistent.
+
+So the mismatch was a **runtime observation made across two deployments**, not
+image content: the kmod version was read from one deployment and the userspace
+filename from the other, and the pair was reported as though it came from one
+image. The bench was booted and pinned on 610.57.04 the whole time it was
+believed to be running the reverted 610.43.03 image — which is a real trap and
+worth remembering, but it is a bookkeeping trap on the bench, not a defect in
+anything that was built.
+
+**What the correction gives back:** the caveat this section attached to the
+driver comparison is withdrawn. Each deployment is a consistent stack, so the
+610.43.03-vs-610.57.04 trials above compared two whole driver branches and not
+a mixed pair against a clean one. The confound that *does* remain is the old
+one and is unrelated: the kernel moved with the driver (7.1.5-101 ↔ 7.1.8-100),
+because an akmods kmod is built against one exact kernel.
+
+**What it cost, and what was built so it cannot cost that again:** an evening
+of image forensics to answer a question the build should have answered.
+`os/Containerfile` now **welds the kmod to the userspace at build time**, in
+the same `RUN` that already asserted one driver version across the rpm
+transaction:
+
+- `kmod-nvidia` joined that one-version `rpm -q` assert. Its `VERSION` field is
+  the driver version, and it was the one driver package the test did not reach
+  — a sidecar shipping a kmod from one branch beside userspace from another
+  would have built green.
+- A second check compares the **artifacts** rather than the rpm metadata:
+  `modinfo -F version` on the baked `nvidia.ko*` must equal
+  `nvidia-driver-libs`'s rpm version, and `libnvidia-ml.so.<ver>` and
+  `libnvidia-glcore.so.<ver>` must exist at that exact version. That catches a
+  module disagreeing with its own package, or one arriving by some future
+  non-rpm path, at build time instead of on the bench.
+
+That change lives in worktree `elastic-vaughan-17505c` on branch
+`claude/elastic-vaughan-17505c` and is **uncommitted as of 2026-08-12**.
 
 Every trial's mode was verified from the journal (`drm: selecting mode ...` and
 the shell's own `screen 0: ... refresh ...`) before its verdict was recorded, so
