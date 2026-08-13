@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Game Launcher</title>
+  <link rel="stylesheet" href="/styles.css" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎮</text></svg>" />
+</head>
+<body>
+  <!-- Login gate (shown only when an access token is configured) -->
+  <div id="login-overlay" class="overlay hidden">
+    <form id="login-form" class="login-card">
+      <h1>🎮 Game Launcher</h1>
+      <p class="muted">This launcher is protected. Enter your access token.</p>
+      <input type="password" id="login-token" placeholder="Access token" autocomplete="current-password" />
+      <button type="submit" class="btn btn-primary">Unlock</button>
+      <p id="login-error" class="error hidden"></p>
+    </form>
+  </div>
+
+  <header class="topbar">
+    <div class="brand">🎮 <span>Game Launcher</span></div>
+    <div class="search-wrap">
+      <input id="search" type="search" placeholder="Search your library…" autocomplete="off" />
+      <div id="suggest" class="suggest hidden"></div>
+    </div>
+    <nav class="tabs">
+      <button class="tab active" data-view="library">Library</button>
+      <button class="tab" data-view="installed">Installed</button>
+      <button class="tab" data-view="history">History</button>
+      <button class="tab" data-view="settings">Settings</button>
+    </nav>
+    <div class="topbar-actions">
+      <span id="bottle-status" class="pill" title="Bottles status">…</span>
+      <button id="add-game" class="btn btn-primary">+ Add game</button>
+    </div>
+  </header>
+
+  <main>
+    <!-- Filters -->
+    <section id="filters" class="filters">
+      <select id="filter-genre"><option value="">All genres</option></select>
+      <select id="filter-year"><option value="">All years</option></select>
+      <select id="filter-state">
+        <option value="">All</option>
+        <option value="installed">Installed</option>
+        <option value="not-installed">Not installed</option>
+      </select>
+      <button id="refresh-btn" class="btn btn-ghost" title="Reload library">⟳ Refresh</button>
+    </section>
+
+    <!-- Library / Installed grid -->
+    <section id="grid" class="grid"></section>
+    <p id="empty" class="empty hidden"></p>
+
+    <!-- History -->
+    <section id="history-view" class="hidden">
+      <table class="history-table">
+        <thead><tr><th>When</th><th>Game</th><th>Action</th><th>Status</th><th>Detail</th></tr></thead>
+        <tbody id="history-body"></tbody>
+      </table>
+    </section>
+
+    <!-- Settings -->
+    <section id="settings-view" class="settings hidden">
+      <h2>Settings</h2>
+      <form id="settings-form" class="settings-form"></form>
+      <div class="settings-actions">
+        <button id="settings-save" class="btn btn-primary">Save settings</button>
+        <button id="export-btn" class="btn btn-ghost" type="button">Export library</button>
+        <label class="btn btn-ghost import-label">Import library
+          <input id="import-file" type="file" accept="application/json" hidden />
+        </label>
+      </div>
+    </section>
+  </main>
+
+  <!-- Add / edit game modal -->
+  <div id="game-modal" class="overlay hidden">
+    <div class="modal">
+      <h2 id="modal-title">Add game</h2>
+      <label>Title <input id="f-title" type="text" placeholder="Game title" /></label>
+      <label>Installer file
+        <div class="file-row">
+          <input id="f-installer" type="text" placeholder="/path/to/setup.exe" />
+          <button id="browse-btn" class="btn btn-ghost" type="button">Browse…</button>
+        </div>
+      </label>
+      <label>Cover image URL <input id="f-image" type="text" placeholder="https://… (optional)" /></label>
+      <div class="two-col">
+        <label>Genre <input id="f-genre" type="text" placeholder="e.g. RPG" /></label>
+        <label>Year <input id="f-year" type="number" placeholder="2023" /></label>
+      </div>
+      <label>Description <textarea id="f-desc" rows="3" placeholder="Optional"></textarea></label>
+      <div class="modal-actions">
+        <button id="game-cancel" class="btn btn-ghost" type="button">Cancel</button>
+        <button id="game-save" class="btn btn-primary" type="button">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- File browser modal -->
+  <div id="browse-modal" class="overlay hidden">
+    <div class="modal">
+      <h2>Choose installer</h2>
+      <p id="browse-cwd" class="muted mono"></p>
+      <div id="browse-list" class="browse-list"></div>
+      <div class="modal-actions">
+        <button id="browse-close" class="btn btn-ghost" type="button">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast host -->
+  <div id="toasts" class="toasts"></div>
+
+  <script src="/app.js"></script>
+</body>
+</html>
