@@ -1158,8 +1158,10 @@ RUN set -euxo pipefail; \
     : "systemd enables a template without an [Install] alias per app --"; \
     : "the link name is what %i resolves from, and the target is the"; \
     : "template itself. Adding an app is one more line here."; \
-    ln -sf ../marwanos-flatpak-install@.service \
-        "/usr/lib/systemd/system/multi-user.target.wants/marwanos-flatpak-install@com.valvesoftware.Steam.service"; \
+    : "NO APP INSTALL UNITS AT ALL, which is a first for this image and is"; \
+    : "deliberate. Steam was the last one and it came out on 2026-08-13"; \
+    : "(\"without steam I do not want to install steam anymore\"). The template"; \
+    : "and shipped-apps both stay: adding an app is one line in each."; \
     : "THERE IS NO BROWSER INSTALL UNIT ANY MORE, and that is the point"; \
     : "rather than an omission. Two lived here in four days -- Zen, then"; \
     : "org.chromium.Chromium in kiosk mode -- and both were the same"; \
@@ -1387,7 +1389,12 @@ RUN set -euxo pipefail; \
     : "spelling hid exactly that: it provably matched 'kodi' in the comments"; \
     : "and the build stayed green, because set -e ignores !-pipelines."; \
     test -s /usr/lib/marwanos/shipped-apps; \
-    grep -q '^com\.valvesoftware\.Steam$' /usr/lib/marwanos/shipped-apps; \
+    : "STEAM IS NOT IN IT, asserted the same way kodi and zen are below. The"; \
+    : "positive assertion that used to be here (grep for the id) is gone with"; \
+    : "the app; this replaces it so a merge or a copy-paste cannot quietly"; \
+    : "reinstate an app the owner asked to be rid of."; \
+    ! grep -q '^com\.valvesoftware\.Steam$' /usr/lib/marwanos/shipped-apps \
+        || { echo "Steam's id is back in shipped-apps"; exit 1; }; \
     : "|| exit because set -e ignores !-pipelines -- see the firefox removal."; \
     ! grep -q '^tv\.kodi\.Kodi$' /usr/lib/marwanos/shipped-apps \
         || { echo "kodi's id is back in shipped-apps"; exit 1; }; \
@@ -1404,7 +1411,11 @@ RUN set -euxo pipefail; \
     : "And the same for the window row, which has the same silent-failure"; \
     : "mode: every press accepted, nothing consumed, nothing changed."; \
     test -L /usr/lib/systemd/system/multi-user.target.wants/marwanos-window-profile.service; \
-    test -L "/usr/lib/systemd/system/multi-user.target.wants/marwanos-flatpak-install@com.valvesoftware.Steam.service"; \
+    : "AND NO INSTALL UNIT FOR IT EITHER. A negated test, because the enable"; \
+    : "symlink is the thing that would actually put Steam on a fresh machine --"; \
+    : "shipped-apps alone installs nothing."; \
+    test ! -e "/usr/lib/systemd/system/multi-user.target.wants/marwanos-flatpak-install@com.valvesoftware.Steam.service" \
+        || { echo "the Steam install unit is enabled again"; exit 1; }; \
     test ! -e "/usr/lib/systemd/system/multi-user.target.wants/marwanos-flatpak-install@tv.kodi.Kodi.service"; \
     test ! -e "/usr/lib/systemd/system/multi-user.target.wants/marwanos-flatpak-install@app.zen_browser.zen.service"; \
     test ! -e "/usr/lib/systemd/system/multi-user.target.wants/marwanos-flatpak-install@org.chromium.Chromium.service"; \

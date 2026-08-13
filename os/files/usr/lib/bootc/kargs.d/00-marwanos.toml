@@ -12,33 +12,6 @@
 kargs = [
     # Required for any Wayland compositor on NVIDIA, gamescope included.
     "nvidia-drm.modeset=1",
-    # THE TEARING, aimed at the half of it that was actually measured.
-    #
-    # The bench work closed the causal loop on 2026-08-12: a freshly-trained
-    # link shimmers under gamescope and is clean under plymouth on the SAME
-    # link, and the measured difference is the scanout. plymouth scans XR24
-    # 8-bit LINEAR with no colorops; gamescope scans XB30 10-bit BLOCK-LINEAR
-    # through nvidia-drm color_pipeline PQ-125 EOTF colorop pairs that stay
-    # active EVEN WITH GAMESCOPE_COLOR_MANAGEMENT_DISABLE=1. Memory clock,
-    # temperature, transport, driver version, shell, page flips and the
-    # composition flag were each eliminated in both directions -- six blind
-    # trials for composition alone -- so the display profiles cannot reach this
-    # and neither can another gamescope flag.
-    #
-    # NVIDIA added this parameter for exactly this class of bug: it disables
-    # DRM color pipeline support as a workaround for compositors that mishandle
-    # pipelines containing NON-BYPASSABLE colorops, which is the shape measured
-    # here. It arrived in 610.43.02 and this image pins 610.57.04, so it exists.
-    #
-    # UNPROVEN, and it must be checked on the target rather than believed: a
-    # machine-local karg edit outlives every upgrade, so a bench that has ever
-    # had its kargs touched by hand may ignore this file entirely. Verify with
-    # `cat /proc/cmdline`, NOT by reading this toml, and repair with
-    # `rpm-ostree kargs --append=nvidia_drm.color_pipeline=0` if it is absent.
-    # If the shimmer survives with this genuinely on the command line, the
-    # 10-bit/block-linear half is the remaining suspect and the colorop half is
-    # eliminated -- which is worth as much as a fix.
-    "nvidia_drm.color_pipeline=0",
     # Gives the NVIDIA driver a real framebuffer console, so early boot draws on
     # the actual display instead of going dark until the compositor starts.
     "nvidia_drm.fbdev=1",

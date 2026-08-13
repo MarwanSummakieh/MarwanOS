@@ -59,7 +59,19 @@
 # this same engine.) One line here and one in the display_name table bring
 # any browser back.
 #
+# AND STEAM IS OUT TOO, on the owner's 2026-08-13 instruction: "without steam I
+# do not want to install steam anymore". It sat here as the one shipped app
+# until this stick was cut. The short history, since the headstones above earn
+# theirs: this project wrote its own Steam client, deleted it in favour of
+# Valve's Big Picture, and then found Big Picture was a one-way door -- it takes
+# the Guide button, its own Shut Down does nothing without SteamOS's session
+# manager, and this image has no console login to escape to.
+#
+# THE FILE IS NOW EMPTY OF IDS AND THAT IS A VALID STATE, not a mistake to
+# repair. flatpak-install is driven by the enable symlinks in the Containerfile,
+# one per id, and there are none; nothing reads this file expecting a minimum.
+# One line here and one symlink there bring an app back.
+#
 # Lines starting with # and blank lines are ignored. Ids only -- no globs, no
 # comments on the same line as an id. Matching everywhere is exact string
 # equality, so a stray space here is an app that silently stops existing.
-com.valvesoftware.Steam
