@@ -803,6 +803,41 @@ RUN --mount=type=cache,dst=/var/cache/libdnf5,sharing=locked \
         mesa-libgbm expat; \
     dnf clean all
 
+
+# STEAM, IN THE IMAGE, AND THE FIRST THIRD-PARTY REPOSITORY THIS FILE HAS EVER
+# CARRIED. See docs/adr/0011-steam-baked-in-not-sandboxed.md; the M1 package
+# block above says none should be added "without an ADR saying why", and that
+# is the ADR.
+#
+# WHY NOT THE FLATPAK, which is how it arrived until today. The sandbox cost
+# this project four separate things and none of them were Steam's fault:
+# `flatpak run` strips the host environment, so every variable gamescope
+# publishes had to be re-stated with --env=; greetd leaves sessions in xdm_t,
+# which cannot host bwrap's mount setup, so every flatpak died in seconds on a
+# restarted session; a library folder needs its PARENT granted to the sandbox
+# (Valve issue #10487), which is the only reason Games/SteamLibrary is nested;
+# and 32-bit support needed a Compat.i386 extension managed by hand.
+#
+# WHAT THIS DOES NOT FIX, written here so nobody reads this block as permission
+# to make Steam the machine again: gamescope's embedded mode has exactly ONE
+# main-application slot, keyed to STEAM_GAME=769 -- Valve's own value, claimed
+# unconditionally by their client. Native or sandboxed it contends with the
+# shell identically. Steam Input still takes the Guide button, and Big Picture's
+# own Shut Down still does nothing without SteamOS's session manager.
+#
+# THE RPM IS A BOOTSTRAP, NOT THE CLIENT. Steam self-updates into ~/.steam on
+# first run whatever version ships here, so this pins how Steam ARRIVES and
+# never what it becomes. That is a real limit on reproducibility and it is the
+# same one every Steam install has.
+RUN --mount=type=cache,dst=/var/cache/libdnf5,sharing=locked \
+    set -euxo pipefail; \
+    : "Pinned to the running Fedora release rather than a literal, so a base"; \
+    : "bump cannot leave this pointing at the previous release's repo."; \
+    dnf -y install \
+        "https://mirrors.rpmfusion.org/nonfree/fedora/rpmfusion-nonfree-release-$(rpm -E %fedora).noarch.rpm"; \
+    dnf -y install steam; \
+    dnf clean all
+
 # Proven present, one at a time, the same way the Godot shell's dlopen list is.
 # A grep of ldconfig is the cheapest possible check and it is the difference
 # between a build that fails here and a television that says the browser is
@@ -1388,6 +1423,30 @@ RUN set -euxo pipefail; \
     : "headstone prose that records why the id is absent. The old bare-'!'"; \
     : "spelling hid exactly that: it provably matched 'kodi' in the comments"; \
     : "and the build stayed green, because set -e ignores !-pipelines."; \
+    : "STEAM IS IN THE IMAGE (ADR 0011), asserted as a RUNNABLE BINARY rather"; \
+    : "than as a package name: a dnf transaction that resolved and left nothing"; \
+    : "executable is the failure this defends against, and it looks identical"; \
+    : "to success in a build log."; \
+    test -x /usr/bin/steam; \
+    : "AND RPM FUSION BROUGHT NOTHING BUT STEAM. This is the first third-party"; \
+    : "repository in the image and the ADR's promise is that it stays a"; \
+    : "single-purpose one. Without this, a later install could silently resolve"; \
+    : "against nonfree and nobody would have decided that."; \
+    : ""; \
+    : "NO BACKTICKS IN THESE COMMENT LINES, and this one earned the warning."; \
+    : "The first spelling wrote a shell command in backticks inside the prose"; \
+    : "above -- and : does not quote its arguments, so the substitution RAN. It"; \
+    : "showed up in the build log as a bare argument error from a command"; \
+    : "nobody meant to call. Harmless here only because : always succeeds."; \
+    : ""; \
+    : "The release package is EXPECTED: it is the repo definition itself, not a"; \
+    : "payload, and it is the one thing that must come from the repo it"; \
+    : "defines. Allowed by exact name so a second nonfree package still fails."; \
+    rf="$(rpm -qa --qf '%{NAME}|%{VENDOR}\n' | grep -i 'rpmfusion' | cut -d'|' -f1 \
+        | grep -v '^steam' | grep -v '^rpmfusion-nonfree-release$' || true)"; \
+    [ -z "$rf" ] || { echo "RPM Fusion supplied more than steam: $rf"; exit 1; }; \
+    : "AND IT IS NOT A FLATPAK ANY MORE. Both halves of the old delivery path"; \
+    : "asserted absent, because leaving either would install a SECOND Steam."; \
     test -s /usr/lib/marwanos/shipped-apps; \
     : "STEAM IS NOT IN IT, asserted the same way kodi and zen are below. The"; \
     : "positive assertion that used to be here (grep for the id) is gone with"; \
