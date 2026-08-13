@@ -490,12 +490,29 @@ readonly PROFILE_REFRESH_FAST=100
 # Under /var and no default file baked, for PROFILE_FILE's reason verbatim.
 readonly WINDOW_PROFILE_FILE="/var/marwanos/window.profile"
 
-# NO BACKGROUND CLIENT, on the owner's 2026-08-12 instruction ("remove steam
-# completely") -- see the no-bg-steam entry above for what the day measured
-# and what the word costs (a first launch that waits out a cold client, and
-# nothing else: appscan reads manifests off disk and the shell draws its own
-# library).
-readonly WINDOW_DEFAULT="no-bg-steam"
+# BIG PICTURE IS THE MACHINE NOW, on the owner's 2026-08-13 instruction ("just
+# implement normal steam ... it runs only in big picture mode"). That reverses
+# the 2026-08-12 default of no-bg-steam, which existed because a -silent client
+# mapped a login window gamescope then focused -- a fight this appliance lost
+# every session. It is not a fight any more: the client is SUPPOSED to hold the
+# screen, so the thing it was competing with is gone.
+#
+# steam-split rather than steam-aware, and -e is the load-bearing half. Under -e
+# gamescope takes a window's appID from the STEAM_GAME atom, which is what makes
+# Steam's own window authoritative (STEAM_GAME=769) and games first-class focus
+# candidates. Without it every window is its own app and Big Picture behaves
+# like any other client. --xwayland-count 2 is the other half and buys per-game
+# X isolation -- keyboard and pointer grabs stop leaking between a game and the
+# UI, the widely-reported "input is wrong in game mode" symptom. Valve ships
+# exactly this pair.
+#
+# KNOWN CONSEQUENCE, written down rather than discovered later: under -e any
+# window WITHOUT a STEAM_GAME atom that Steam's reaper did not launch is
+# excluded from focus entirely. The shell is such a window. It can therefore
+# only ever be an external overlay here, never the focused app -- which is the
+# design, but it means the shell gets no keyboard or pointer from the
+# compositor and must read the pad from evdev itself. It already does.
+readonly WINDOW_DEFAULT="steam-split"
 
 # Where a rejected window profile lands, and the same word as the default:
 # no-bg-steam is `plain` minus one launch -- the gamescope argument list is
@@ -771,6 +788,46 @@ steam_installed() {
     flatpak info --system "$STEAM_FLATPAK_ID" >/dev/null 2>&1
 }
 
+
+## The name of gamescope's SECOND X server, or nothing.
+##
+## WHY THIS IS A SOCKET WALK AND NOT A HANDSHAKE FIELD. The comment further down
+## used to say the ready-fd "gains an X display in the middle" under
+## --xwayland-count 2. It does not. gamescope writes that pipe in exactly one
+## place and it is always two tokens:
+##
+##     dprintf( readyPipeFD, "%s %s\n",
+##              root_ctx->xwayland_server->get_nested_display_name(),
+##              wlserver_get_wl_display_name() );
+##
+## -- identical in master, 3.16.23 and 3.14.2. The second server's name is only
+## ever published by gamescope setenv()ing STEAM_GAME_DISPLAY_0 into its OWN
+## environment, which is no use to a session that starts the client separately.
+## /proc/<pid>/environ does not help either: it shows the exec-time stack, not
+## anything setenv() did afterwards.
+##
+## So the sockets are the only evidence available. Xwayland binds
+## /tmp/.X11-unix/X<n> for each server; the primary is whatever $DISPLAY names,
+## and on this machine gamescope creates exactly two, so "the one that is not
+## the primary" is unambiguous. If that ever stops being true this returns the
+## lowest other, which is server 1 by creation order.
+second_x_display() {
+    local primary="${DISPLAY#:}"
+    primary="${primary%%.*}"
+    local sock="" n=""
+    for sock in /tmp/.X11-unix/X[0-9]*; do
+        [ -e "$sock" ] || continue
+        n="${sock##*/X}"
+        case "$n" in
+            ''|*[!0-9]*) continue ;;
+        esac
+        [ "$n" = "$primary" ] && continue
+        printf ':%s' "$n"
+        return 0
+    done
+    return 0
+}
+
 # ---------------------------------------------------------------------------
 # THE SERVICE SEAM, and it needs no root at all.
 #
@@ -1024,7 +1081,44 @@ supervise_steam() {
         # than inherited -- the difference between a lever and a coincidence.
         _steam_wsi=1
         [ "$WINDOW_PROFILE" = "no-wsi" ] && _steam_wsi=0
-        flatpak run --env=ENABLE_GAMESCOPE_WSI="$_steam_wsi" "$STEAM_FLATPAK_ID" -silent > "$_steam_out" 2>&1 &
+
+        # BIG PICTURE, NOT -silent, AND THE SANDBOX IS WHY THIS IS FIVE LINES.
+        #
+        # -gamepadui is the current spelling; -tenfoot named the OLD Big Picture
+        # and -bigpicture now lands on the same UI. Valve's own launcher passes
+        # `-steamos3 -steampal -steamdeck` alongside it and ChimeraOS copies
+        # that, but NONE of those three is documented anywhere and -steamdeck
+        # plausibly tells the client it is on Deck hardware -- a battery gauge
+        # and a suspend model this machine does not have. So: the one flag whose
+        # effect is known, and the others left for somebody who can measure
+        # what they do.
+        #
+        # THE ENV VARS CANNOT BE INHERITED HERE, and that is the trap. gamescope
+        # sets STEAM_MULTIPLE_XWAYLANDS and STEAM_GAME_DISPLAY_0 with setenv() in
+        # ITS OWN process, which reaches the client only in the sessions that run
+        # `gamescope -- steam`. This session deliberately starts gamescope with
+        # no child (see start_gamescope: a client inside the supervision loop
+        # takes the screen down on every crash), and flatpak strips the host
+        # environment besides. So both have to be stated with --env= or the
+        # second X server is paid for and never used.
+        _steam_multi_xwayland=0
+        _steam_game_display=""
+        if [ "$WINDOW_PROFILE" = "steam-split" ]; then
+            _steam_multi_xwayland=1
+            _steam_game_display="$(second_x_display)"
+            if [ -z "$_steam_game_display" ]; then
+                # Not fatal: Steam falls back to one server, which is the
+                # steam-aware behaviour. Said out loud because the symptom
+                # otherwise is "input sometimes leaks between game and UI".
+                warn "could not find the second X server; per-game isolation is off"
+                _steam_multi_xwayland=0
+            fi
+        fi
+        flatpak run \
+            --env=ENABLE_GAMESCOPE_WSI="$_steam_wsi" \
+            --env=STEAM_MULTIPLE_XWAYLANDS="$_steam_multi_xwayland" \
+            --env=STEAM_GAME_DISPLAY_0="$_steam_game_display" \
+            "$STEAM_FLATPAK_ID" -gamepadui > "$_steam_out" 2>&1 &
         _steam_pid=$!
         _steam_started="$(uptime_seconds)"
         service_state steam running

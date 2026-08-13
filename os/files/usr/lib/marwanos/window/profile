@@ -79,12 +79,15 @@ PROFILES=(no-bg-steam no-wsi steam-split loose steam-aware yield plain)
 # this file still has to start, and this service still has to answer "what is it
 # set to" on a machine where the session has never run.
 #
-# `no-bg-steam` since 2026-08-12, on the owner's instruction that Valve's
-# client never runs unasked: this appliance ships its own Steam client, and
-# the day's fresh install showed `plain` warming a signed-OUT Valve client
-# whose login window gamescope then focused. The session's WINDOW_DEFAULT
-# block carries the full story; the two words are kept identical by hand.
-DEFAULT=no-bg-steam
+# `steam-split` since 2026-08-13. It was `no-bg-steam` for a day, on the rule
+# that Valve's client never runs unasked -- because this appliance shipped its
+# own Steam client and a warmed Valve client fought it for the screen. That
+# client was deleted (1ae1a26) and Big Picture is the machine now, so the
+# client is MEANT to hold the screen and there is nothing left to fight.
+# steam-split is `-e` plus `--xwayland-count 2`, the pair Valve itself ships.
+# The session's WINDOW_DEFAULT block carries the full story; the two words are
+# kept identical by hand.
+DEFAULT=steam-split
 
 POLL=0.5
 
