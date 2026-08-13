@@ -2,59 +2,53 @@ extends Control
 
 ## The home screen -- everything the appliance shows when nothing is launched.
 ##
-## A console-style home: the selected entry's own artwork as the FULL-BLEED
-## background, behind a top status bar, the selected entry's title, and a
-## horizontal rail of cards with one enlarged selection. It replaced a 4x3 grid,
-## and the reason is navigational rather than cosmetic.
+## WHAT IS LEFT OF IT, and the absence is the current state of the project
+## rather than a bug. This file was 2,037 lines; the rail of cards, the
+## full-bleed hero artwork behind them and the details sheet they opened were
+## about 1,100 of those, and ADR 0012 removed all three along with the library
+## they presented. What remains is the chrome that was never Steam-shaped: the
+## top bar, the clock and status corner, the process pill, the in-game overlay,
+## the launch handlers and the input routing between them.
 ##
-## THE BACKGROUND IS THE SELECTION. Moving the cursor repaints the entire
-## surface with that entry's picture, not a strip of it and not an accent tint --
-## the Playnite and PS5 shape, and the thing that makes a screen of cards read as
-## a library. See _build_art_layer for the stack and why every layer in it is
-## there; the accent wash stays underneath as the base and as the whole answer
-## for an entry that ships no picture. A grid has two axes, so "what does right do at the end of a row"
-## has no answer a person can predict, and the previous version needed an
-## explicit twelve-entry neighbour table to make it defensible. A rail has one
-## axis: left and right are the only moves, the ends are hard stops, and there is
-## nothing left to tabulate.
+## THE RAIL IS COMING BACK, FED DIFFERENTLY. The old one read a catalogue that
+## knew about Steam and nothing else. Its replacement reads the same seam it
+## always did -- appscan writes /run/marwanos/apps.tsv, installed.gd polls it --
+## but with more scanners behind it: Steam's own manifests, umu for standalone
+## Windows games, the store CLIs, a ROM scan. Nothing in this file needs to know
+## which of those an entry came from, which is the entire point of putting the
+## seam there.
 ##
-## THREE ROWS, TWO OF THEM FOCUSABLE. Top is the bar (hidden until Up asks for
-## it), middle is the selected entry's title block, bottom is the rail. The
-## middle row is prose about whatever the cursor is on and never takes focus,
-## so the vertical axis is exactly two stops: Up from a card reveals the bar,
-## Down from the bar goes back to the cards, PAST the title block. Both moves
-## are explicit and consumed -- see _handle_bar_reveal and _handle_bar_return.
+## WHAT THE PLACEHOLDER HAS TO PRESERVE. Two invariants outlived the rail and
+## are load-bearing while there is nothing to show:
 ##
-## THE SELECTION IS ANCHORED, NOT THE STRIP. The selected card sits at a fixed x
-## and the rail slides underneath it. That is the property that stops the eye
-## re-finding the cursor after every press, and it is why _scroll_to_selected
-## moves the strip rather than moving a highlight.
+##   - Something is always focused. A gamepad UI with no focus owner does not
+##     move, and reads as a crashed machine. See _ensure_focus.
+##   - The bar cannot be hidden into a dead end. It is the only focusable
+##     surface right now, so _hide_bar refuses while the rail is empty and
+##     _ready reveals it at boot.
+##
+## THREE ROWS, ONE OF THEM FOCUSABLE. Top is the bar, middle is the placeholder,
+## bottom is the hint row. Up and Down between them are explicit and consumed --
+## see _handle_bar_reveal and _handle_bar_return, both of which already handled
+## the empty-rail case and so needed no change.
 ##
 ## The whole layout is built in code rather than in a .tscn. Two reasons, both
 ## specific to this repo: a scene file is authored by a GUI tool that rewrites it
 ## on its own schedule (which is how CRLF and unreviewable diffs get into a repo
-## that has spent real days on both), and Phase 1 M2 replaces this catalogue with
-## a live list from marwand that has to be built at runtime anyway.
+## that has spent real days on both), and the list it renders has to be built at
+## runtime anyway.
 
 const TvTheme = preload("res://src/tv_theme.gd")
-const Catalogue = preload("res://src/catalogue.gd")
-const Tile = preload("res://src/tile.gd")
 const IconButton = preload("res://src/icon_button.gd")
 const AppOverlay = preload("res://src/app_overlay.gd")
 const ListMenu = preload("res://src/list_menu.gd")
-const DetailsPanel = preload("res://src/details_panel.gd")
 const ErrorScreen = preload("res://src/error_screen.gd")
 const ProcessPill = preload("res://src/process_pill.gd")
 const ProcessMenu = preload("res://src/process_menu.gd")
 const StatusCorner = preload("res://src/status_corner.gd")
 
-## Same prefix, same meaning as tile.gd's: an entry whose id starts with it is a
-## Steam library game rather than an application, which is what makes it the one
-## kind of entry with a background of its own.
-const STEAM_PREFIX := "steam."
-
 ## How long after Down carried focus off the bar a card refuses to open its
-## details panel -- see _on_details_requested. Comfortably past
+## details panel. Comfortably past
 ## FocusRepeat.INITIAL_DELAY (0.40 s), because the press this is defending
 ## against is exactly the one that has been held that long; short enough that
 ## a deliberate second press, aimed at a card the person can now see, still
@@ -62,20 +56,11 @@ const STEAM_PREFIX := "steam."
 const BAR_RETURN_GRACE_MSEC := 550
 
 var _hero: ColorRect = null
-## The key-art layer and its two stacked pictures. See _build_art_layer.
-var _art_layer: Control = null
-var _art_back: TextureRect = null
-var _art_front: TextureRect = null
-var _title: Label = null
-var _subtitle: Label = null
-var _rail_viewport: Control = null
-var _rail: HBoxContainer = null
 
-## The three things the details panel covers: the selected entry's title block,
-## the rail itself, and the hint row under it. Held so they can be HIDDEN while
-## the panel is up rather than painted over -- the sheet is transparent now, so
-## "covered" is no longer a thing a rectangle can do. See
-## _set_lower_deck_visible.
+## The rows the details panel used to cover, hidden together rather than painted
+## over -- see _set_lower_deck_visible. `_title_block` holds the placeholder
+## now; `_rail_row` stays declared and null until something builds a rail, and
+## the loop that hides them skips nulls.
 var _title_block: Control = null
 var _rail_row: Control = null
 var _hint_row: Control = null
@@ -97,18 +82,13 @@ var _app_alert_timer: Timer = null
 var _open_hint: Control = null
 var _options_hint: Control = null
 var _overlay: AppOverlay = null
-var _card_menu: ListMenu = null
-## The details panel, and the card it was opened from. The card is kept because
-## the panel's Play button asks that card to act (see Tile.activate) rather than
-## reaching into the launch seam on its own.
-var _details: DetailsPanel = null
-var _details_tile: Control = null
-## A gameart change that arrived while the details panel was open, replayed
-## when it closes -- see _on_gameart_changed for why the panel outranks art.
-var _gameart_pending := false
-## The rail entry the cursor is on, kept because the card menu is opened from
-## input handling rather than from the card itself.
-var _selected_entry: Dictionary = {}
+## The details panel. ALWAYS NULL TODAY -- details_panel.gd went with the rail,
+## and nothing opens one. Typed as Control rather than as the deleted class, and
+## kept rather than removed, because three guards read it to mean "a sheet is
+## covering the lower deck": _bar_input_live, _unhandled_input and the B
+## handler. Whatever renders the sources will set it again, and until then the
+## guards are correct for free.
+var _details: Control = null
 ## The bar's focusable cluster, in the order they sit. Kept as one array as
 ## well as four members because every wiring loop below wants "all of them" --
 ## and a fifth icon arriving should not be a fifth line in four places.
@@ -118,7 +98,6 @@ var _bar_buttons: Array = []
 ## used to share that corner -- see process_pill.gd.
 var _process_pill: ProcessPill = null
 var _process_menu: ProcessMenu = null
-var _files_button: IconButton = null
 var _gear_button: IconButton = null
 var _power_button: IconButton = null
 ## The wifi glyph and the clock, made one focusable control: A on it opens the
@@ -126,29 +105,18 @@ var _power_button: IconButton = null
 ## rather than gaining a sibling, and what used to drop from here instead.
 var _status_corner: StatusCorner = null
 
+## The rail's cards. PERMANENTLY EMPTY until something builds a rail, and that
+## emptiness is load-bearing rather than incidental: five guards below already
+## asked "is the rail empty" and did the right thing when it was -- the bar
+## refuses to hide, Up does not consume, B does not strand the pad. They were
+## written for a machine with no applications installed and they are correct,
+## unchanged, for a shell with no rail at all. Filling this array is most of
+## what bringing the library back means here.
 var _tiles: Array = []
+
+## Where focus was when a fullscreen surface took the screen, so closing it
+## puts the ring back on the icon it was opened from. See _hand_screen_over.
 var _last_focused: Control = null
-var _rail_tween: Tween = null
-var _hero_tween: Tween = null
-var _art_tween: Tween = null
-
-## The debounce between "the selection moved" and "load that picture", and the
-## path it is waiting to load. See TvTheme.HERO_ART_DEBOUNCE_SECONDS.
-var _art_timer: Timer = null
-var _art_pending_path := ""
-## Whether the pending picture is to be softened. A portrait or a logo is, a
-## game's hero background is not -- see _on_card_selected.
-var _art_pending_soften := true
-## What is actually on the screen, so re-selecting the same card is a no-op
-## rather than a crossfade from a picture to itself.
-var _art_shown_path := ""
-
-## path -> ImageTexture of already-softened backdrops, with the insertion order
-## kept alongside so the oldest can be dropped at the cap. A Dictionary has no
-## ordering to evict by, and the alternative -- letting it grow -- is a leak on
-## a machine that never reboots.
-var _art_cache: Dictionary = {}
-var _art_cache_order: Array = []
 
 
 func _ready() -> void:
@@ -165,9 +133,6 @@ func _ready() -> void:
 		return
 
 	_build()
-	_populate()
-	_wire_focus_neighbours()
-	_refresh_empty_state()
 
 	Launcher.launch_started.connect(_on_launch_started)
 	Launcher.launch_finished.connect(_on_launch_finished)
@@ -175,8 +140,6 @@ func _ready() -> void:
 	Settings.settings_closed.connect(_on_surface_closed)
 	Power.power_opened.connect(_on_surface_opened)
 	Power.power_closed.connect(_on_surface_closed)
-	Files.files_opened.connect(_on_surface_opened)
-	Files.files_closed.connect(_on_surface_closed)
 	# Info is a peer surface now rather than a page inside settings, so the rail
 	# hides and returns for it through the same pair every other surface uses.
 	# That is also what puts focus back on the status corner it was opened from:
@@ -186,15 +149,12 @@ func _ready() -> void:
 	PlayerOne.player_one_present.connect(_on_player_one_present)
 	PlayerOne.player_one_absent.connect(_on_player_one_absent)
 	SystemStatus.network_changed.connect(_on_network_changed)
-	Installed.apps_changed.connect(_on_apps_changed)
-	# ARTWORK ARRIVING IS A RAIL REBUILD, through the same door an install is.
-	# A card's picture is chosen when the card is built (tile._art_candidates),
-	# so a cache that warms after boot only reaches the screen if the cards are
-	# built again -- and doing that through _on_apps_changed rather than through
-	# a second, artwork-shaped path is what stops the two rebuilds racing each
-	# other for the focused card. See _on_gameart_changed.
-	GameArt.changed.connect(_on_gameart_changed)
-	Apps.state_changed.connect(_on_apps_state_changed)
+	# Installed.apps_changed, GameArt.changed and Apps.state_changed all landed
+	# here and all rebuilt the rail. Nothing draws a library right now, so there
+	# is nothing for them to rebuild -- they are reconnected by whatever renders
+	# the sources, not restored here as handlers that would run against an empty
+	# screen. Installed itself is untouched and still polling; only this screen
+	# has stopped listening.
 	_refresh_status()
 	# SystemStatus polled once in its own _ready, which ran before this one, so
 	# this is the current answer rather than a default -- the first frame the
@@ -211,39 +171,20 @@ func _ready() -> void:
 
 	_start_clock()
 
+	# THE BAR STARTS UP WHILE THERE IS NO LIBRARY, and it is the same reasoning
+	# as the no-controller case above rather than a new rule: the bar is hidden
+	# because the rail is the thing worth looking at, and there is no rail. A
+	# hidden bar plus a placeholder with no focusable children is a screen a pad
+	# cannot move at all -- the dead-gamepad-UI failure _ensure_focus exists to
+	# prevent, arrived at from the other direction.
+	if _bar_row != null and not _bar_row.visible:
+		_reveal_bar(false)
+
 	# Nothing navigates until something is focused: the viewport's directional
 	# navigation starts from the current focus owner, and with none there is no
 	# origin to move from. This is the single most common way a gamepad UI ships
 	# looking dead.
 	_ensure_focus()
-
-	_log_rail_geometry()
-
-
-## Says where the rail actually ended up, for the same reason Kiosk logs the
-## window and screen geometry: this appliance has no console, so a layout that
-## lands in the wrong place is otherwise a thing you can only photograph.
-##
-## The two numbers that matter are the rail band, which should span the whole
-## output because the strip is full-bleed, and the selected card's left edge,
-## which should sit on SAFE_MARGIN_X. They are different numbers on purpose --
-## conflating them is exactly the bug this logging was added alongside, where the
-## strip was clipped to the safe area and cards were cut off at an invisible
-## interior line.
-func _log_rail_geometry() -> void:
-	# Deferred: containers have not laid out on the frame they are built, so
-	# every rect read here would be zero.
-	await get_tree().process_frame
-	if not is_instance_valid(_rail_viewport) or _tiles.is_empty():
-		return
-
-	var band := _rail_viewport.get_global_rect()
-	ShellLog.info("rail band: x %.0f..%.0f (width %.0f), height %.0f"
-		% [band.position.x, band.end.x, band.size.x, band.size.y])
-
-	var first: Control = _tiles[0]
-	ShellLog.info("first card rests at x %.0f (safe margin is %d)"
-		% [first.get_global_rect().position.x, TvTheme.SAFE_MARGIN_X])
 
 
 # ---------------------------------------------------------------------------
@@ -269,8 +210,10 @@ func _build() -> void:
 	_hero.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(_hero)
 
-	# The selected entry's own picture, over the wash and under everything else.
-	_build_art_layer()
+	# The hero art layer went with the rail: a picture of the selected entry
+	# needs a selected entry, and there is no library to select from until the
+	# sources land. The wash above stays, so the screen is a deliberate colour
+	# rather than an accident.
 
 	# Darkens the lower part of the surface so the title and rail keep their
 	# contrast whatever the accent is. Anchored to the bottom and given a
@@ -336,107 +279,53 @@ func _build() -> void:
 	spacer.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	column.add_child(spacer)
 
-	# Kept as fields, not just added, because the details panel hides all three
-	# while it is up -- see _set_lower_deck_visible.
-	_title_block = _inset(_build_title_block())
+	# THE RAIL IS NOT HERE YET, and this is what stands where it will stand.
+	#
+	# The old rail, its cards, its hero art and its details sheet were the
+	# presentation of a library that was Steam-shaped and built twice. Both
+	# copies are gone (ADR 0012), and the sources that replace them -- Steam's
+	# own manifests, umu for standalone Windows games, the store CLIs, a ROM
+	# scan -- feed the SAME seam the rail already read from: appscan writes
+	# apps.tsv, installed.gd reads it. So this placeholder is the only piece of
+	# the home screen that has to be thrown away when they arrive.
+	#
+	# It says what is true rather than "no games found", which on a machine that
+	# has games installed would be a lie about the machine instead of a fact
+	# about the shell.
+	_title_block = _inset(_build_home_placeholder())
 	column.add_child(_title_block)
-	_rail_row = _build_rail()
-	column.add_child(_rail_row)
 	_hint_row = _inset(_build_hints())
 	column.add_child(_hint_row)
 
 
-## THE WHOLE BACKGROUND IS THE SELECTED ENTRY'S ART, which is the difference
-## between a library and a menu -- Playnite and the PS5 both repaint the entire
-## surface as the cursor moves, and an accent wash alone never reads as "this
-## screen is about that thing".
+## The stand-in home screen: two lines, no focusable children.
 ##
-## Four children, in the order they paint, and every one of them is load-bearing:
-##
-##   _art_back    the picture currently up
-##   _art_front   the picture fading in over it, alpha 0 at rest
-##   a flat scrim TvTheme.HERO_ART_SCRIM over both, so text has a floor to stand
-##                on whatever the art is
-##   a top band   the mirror of the bottom gradient, for the top bar
-##
-## Two rects rather than one because a crossfade needs both frames alive at once;
-## _settle_front collapses them back to one as soon as the fade lands, so the
-## resting cost is one texture.
-##
-## ANCHORED TO THE FULL CONTROL RECT, NOT TO 1920x1080. The design surface is
-## 1920 wide and canvas_items scales it, but project.godot's stretch is
-## aspect=expand, which hands a wider panel the extra width instead of black
-## bars -- so on the 3440x1440 ultrawide this Control is ~2580 units across, and
-## a layer sized to BASE_WIDTH would leave a strip of bare wash down one side.
-## PRESET_FULL_RECT is the only correct answer, and it is why no number in here
-## is a width.
-##
-## The whole layer is transparent when there is no art, so an entry without a
-## picture costs nothing and shows the wash exactly as it always did -- INCLUDING
-## the scrim and the top band, which are children and go with it. A scrim that
-## stayed up over the wash would darken a screen that has nothing needing to be
-## darkened.
-func _build_art_layer() -> void:
-	_art_layer = Control.new()
-	_art_layer.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	_art_layer.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_art_layer.modulate.a = 0.0
-	add_child(_art_layer)
+## No focus owner here is deliberate and is why _ensure_focus now aims at the
+## bar. A screen whose only focusable things are on a hidden bar would be a dead
+## screen if the bar stayed hidden, so _ready reveals it when there is nothing
+## else to look at -- the same door the no-controller alert uses.
+func _build_home_placeholder() -> Control:
+	var block := VBoxContainer.new()
+	block.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	block.add_theme_constant_override("separation", 4)
 
-	_art_back = _build_art_rect()
-	_art_layer.add_child(_art_back)
+	var headline := Label.new()
+	headline.text = "Library"
+	headline.add_theme_font_size_override("font_size", TvTheme.SIZE_HERO_TITLE)
+	headline.add_theme_color_override("font_color", TvTheme.TEXT_PRIMARY)
+	headline.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	block.add_child(headline)
 
-	_art_front = _build_art_rect()
-	_art_front.modulate.a = 0.0
-	_art_layer.add_child(_art_front)
+	var line := Label.new()
+	line.text = "Being rebuilt to read every source, not just Steam. Press Up for the bar."
+	line.add_theme_font_size_override("font_size", TvTheme.SIZE_BODY)
+	line.add_theme_color_override("font_color", TvTheme.TEXT_SECONDARY)
+	line.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	block.add_child(line)
 
-	var scrim := ColorRect.new()
-	scrim.color = TvTheme.hero_scrim_color()
-	scrim.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	scrim.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_art_layer.add_child(scrim)
-
-	var top_band := TextureRect.new()
-	top_band.texture = TvTheme.hero_top_gradient()
-	top_band.stretch_mode = TextureRect.STRETCH_SCALE
-	# Full rect first and then one anchor moved, rather than PRESET_TOP_WIDE:
-	# set_anchors_and_offsets_preset is the form that zeroes the offsets, and a
-	# preset that only moves anchors leaves whatever offsets the node was built
-	# with to be interpreted against the new ones.
-	top_band.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	top_band.anchor_bottom = TvTheme.HERO_ART_TOP_FRACTION
-	top_band.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_art_layer.add_child(top_band)
+	return block
 
 
-## One of the two stacked pictures.
-##
-## KEEP_ASPECT_COVERED is the cover fit: the image is scaled until it fills the
-## rect on both axes and the overflow is cropped by the draw itself, so nothing
-## is ever stretched out of shape -- which a 600x900 portrait across a 2580-wide
-## panel very visibly would be. EXPAND_IGNORE_SIZE is what lets the rect be
-## whatever the anchors say instead of at least as large as its texture; it
-## matters in the other direction too, since these textures are deliberately
-## tiny (see TvTheme.HERO_ART_BLUR_DIVISOR).
-##
-## TEXTURE_FILTER_LINEAR is stated rather than inherited, because it IS the
-## blur. A backdrop resized down to 50 px and then drawn with nearest-neighbour
-## filtering is not a soft picture, it is a grid of enormous squares -- so the
-## one property the whole softening trick depends on does not get to be a
-## project-settings default that someone changes for an unrelated reason.
-func _build_art_rect() -> TextureRect:
-	var rect := TextureRect.new()
-	rect.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-	rect.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
-	rect.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
-	rect.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	return rect
-
-
-## Wraps a row in the horizontal TV-safe inset.
-##
-## Everything that is text or carries a focus ring goes through this. The rail
 ## deliberately does not -- see the comment in _build().
 func _inset(control: Control) -> Control:
 	var margin := MarginContainer.new()
@@ -526,9 +415,13 @@ func _build_topbar() -> Control:
 	# have. A bar icon that cannot work is worse than a missing one on a
 	# television with no console to say why it did nothing.
 	#
-	# The rail's empty-state fallback moved to Files with it -- see _ensure_focus.
-	# Somewhere to land is the load-bearing part, not which icon it is.
-	_files_button = _bar_button("folder", "Files", Files.open)
+	# THERE IS NO FILES BUTTON EITHER, and it went for a plainer reason than the
+	# store did: a console has no file manager. The eight modules behind it were
+	# the single largest thing in this shell that was not aimed at playing a
+	# game, and ADR 0012 removed them.
+	#
+	# The empty-state focus fallback used to land here. It lands on the gear
+	# now -- somewhere to land is the load-bearing part, not which icon it is.
 	_gear_button = _bar_button("gear", "Settings", Settings.open)
 	# The power menu, asked for by name: off, restart, sleep, next to the
 	# others.
@@ -592,61 +485,6 @@ func _bar_gap() -> Control:
 	return gap
 
 
-func _build_title_block() -> Control:
-	var block := VBoxContainer.new()
-	block.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	block.add_theme_constant_override("separation", 4)
-
-	_title = Label.new()
-	_title.add_theme_font_size_override("font_size", TvTheme.SIZE_HERO_TITLE)
-	_title.add_theme_color_override("font_color", TvTheme.TEXT_PRIMARY)
-	# Ellipsis rather than wrapping: a title that grows a second line shoves the
-	# rail down, and the rail's vertical position is supposed to be a constant.
-	_title.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
-	_title.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	block.add_child(_title)
-
-	_subtitle = Label.new()
-	_subtitle.add_theme_font_size_override("font_size", TvTheme.SIZE_BODY)
-	_subtitle.add_theme_color_override("font_color", TvTheme.TEXT_SECONDARY)
-	_subtitle.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
-	_subtitle.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	block.add_child(_subtitle)
-
-	return block
-
-
-func _build_rail() -> Control:
-	# A fixed-height window onto a strip that is wider than the screen, spanning
-	# the FULL width of the output rather than the safe area. clip_contents is
-	# what makes a card vanish as it crosses the screen edge instead of drawing
-	# past it; without it the strip is simply a very wide row. Because this
-	# viewport now reaches the physical edges, that clip happens where the panel
-	# ends, which is the only place a cut is invisible.
-	_rail_viewport = Control.new()
-	_rail_viewport.custom_minimum_size = Vector2(0, TvTheme.CARD_FOCUSED_SIZE)
-	_rail_viewport.clip_contents = true
-	_rail_viewport.mouse_filter = Control.MOUSE_FILTER_IGNORE
-
-	_rail = HBoxContainer.new()
-	_rail.add_theme_constant_override("separation", TvTheme.CARD_GAP)
-	_rail.alignment = BoxContainer.ALIGNMENT_BEGIN
-	_rail.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	# Vertically centred in the window so a card growing from CARD_SIZE to
-	# CARD_FOCUSED_SIZE opens in both directions rather than pushing downwards.
-	_rail.set_anchors_preset(Control.PRESET_LEFT_WIDE)
-	_rail.grow_vertical = Control.GROW_DIRECTION_BOTH
-	# Start where the first selection rests, so the opening frame is already
-	# right. _scroll_to_selected tweens the strip to this same x when the first
-	# card takes focus; starting at the destination makes that opening tween a
-	# hold rather than a slide in from the screen edge -- a flinch on the very
-	# first frame the appliance ever shows.
-	_rail.position.x = TvTheme.SAFE_MARGIN_X
-	_rail_viewport.add_child(_rail)
-
-	return _rail_viewport
-
-
 func _build_hints() -> Control:
 	var hints := HBoxContainer.new()
 	hints.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -666,109 +504,6 @@ func _build_hints() -> Control:
 	return hints
 
 
-## Builds the rail from what is installed, plus what this image ships and is
-## not.
-##
-## No shell furniture and no placeholders: the settings card became the top
-## bar's gear and the twelve placeholder entries are deleted (ADR 0006, third
-## and fourth amendments). The `available` cards appended here are NOT a return
-## of those -- a placeholder named an application that did not exist anywhere,
-## and these name applications the image ships and can fetch on a button press.
-## They exist because removal exists: without them, uninstalling Kodi was a
-## one-way door, since the stores screen only ever offered stores back.
-##
-## Installed first, available after. The rail is a library, and something you
-## own outranks something you could have.
-func _populate() -> void:
-	# One thing, one home (ADR 0006): a store's application lives on the
-	# stores screen and must not also be a rail card -- installed, pending or
-	# available, which is why the filter sits below where all three kinds meet.
-	# Filtered HERE rather than omitted by the scanner: apps.tsv is the truth
-	# about the machine, and the stores screen answers "is Steam actually
-	# here" and finds its real icon from that same list, which it cannot do if
-	# the scanner pretends Steam does not exist.
-	var store_ids: Array = Catalogue.store_app_ids()
-
-	var known_ids: Array = []
-	for entry in Installed.apps:
-		known_ids.append(str(entry.get("id", "")))
-
-	# THE RAIL IS APPLICATIONS ONLY. The Files card used to ride in front of the
-	# installed list; the file manager is a top-bar icon now, next to the gear
-	# and the power button, so a card for it here would be the same surface with
-	# two homes. See _build_topbar.
-	var entries: Array = Installed.apps.duplicate()
-	entries.append_array(Catalogue.available(known_ids))
-
-	for entry in entries:
-		if store_ids.has(str(entry.get("id", ""))):
-			continue
-		var tile := Tile.new()
-		# duplicate() so a tile can never write back into the list the seam
-		# hands out -- Installed rebuilds that list on every rescan, and a tile
-		# holding a reference into it would be reading a dictionary that the
-		# next scan replaced underneath it.
-		tile.setup(entry.duplicate())
-		tile.selected.connect(_on_card_selected)
-		# Bound rather than looked up from the focus owner when it fires: the
-		# panel's Play button asks THIS card to act, and "whatever has focus" is
-		# a different thing the moment anything else grabs it.
-		tile.details_requested.connect(_on_details_requested.bind(tile))
-		_rail.add_child(tile)
-		_tiles.append(tile)
-
-	# Logged HERE rather than in _ready, so a rail rebuilt by a rescan says so
-	# too. It used to be logged once at startup, which meant the journal of a
-	# machine where an install had landed still described the rail as it was at
-	# boot -- and this line is the shell's primary "the rail exists and has
-	# this much on it" assertion, both for a person reading journalctl and for
-	# the Xvfb harness.
-	ShellLog.info("home rail ready with %d cards" % _tiles.size())
-
-	# FIRST-RUN SETUP, offered once the rail behind it exists.
-	#
-	# AFTER the rail rather than before it, and deferred rather than called
-	# straight from here, for the same reason every other surface in this shell
-	# is opened deferred: Setup.open() adds a screen to the tree and grabs
-	# focus, and doing that while this function is still building the thing
-	# underneath means focus lands on a node whose neighbours are not wired yet.
-	# The person sees the setup screen either way; what changes is whether B
-	# returns them to a working rail or to a half-built one.
-	#
-	# needed() answers false when HOME is empty, so the Xvfb harness and a desk
-	# run never see this -- a first-run screen that appeared in every automated
-	# run would be a screen every test had to learn to dismiss.
-	if Setup.needed():
-		Setup.open.call_deferred()
-
-
-## The rail keeps its one-axis argument -- left and right between cards, hard
-## stops at the ends, no wrapping (a selection that teleports across the rail
-## when you lean on the stick reads as a glitch). The ONE move off that axis --
-## up, from any card, lands on the store icon, the PS5 shape -- survives the
-## bar hiding (#12), but it is _handle_bar_reveal's move now rather than a row
-## in this table: a neighbour path cannot reveal a hidden control, so within
-## the table every card's up is a hard stop.
-##
-## DOWN FROM THE BAR IS EXPLICIT NOW TOO (_handle_bar_return), for a different
-## reason: the press had to be consumed before it could reach the arriving
-## card and open its details panel. The buttons' down-neighbour is still set
-## here and still kept on the selected card by _scroll_to_selected -- it is
-## what that function READS, so the round trip up-and-down still lands where
-## the person left rather than at the rail's start, and B in the bar resolves
-## its way home through the same field. The card taking focus is what re-hides
-## the bar (see _on_card_selected).
-##
-## Everything is still an explicit table someone can read. Down from a card and
-## up from the bar stay pointed at self, so Control's geometric search can
-## never wander into the hint row.
-## The processes pill appears and disappears with what is installed, so its
-## membership of the bar's focus chain has to move with it. Called on every
-## installed-apps change: the pill has already refreshed itself off the same
-## signal by the time this runs, so `visible` is current.
-##
-## Re-wiring rather than reordering by hand, because the neighbour table is
-## derived from _bar_buttons and two ways of deciding the order is how the two
 ## end up disagreeing.
 func _on_pill_membership_changed(_apps: Array) -> void:
 	if _process_pill == null:
@@ -785,439 +520,55 @@ func _on_pill_membership_changed(_apps: Array) -> void:
 		% ("joined" if _process_pill.visible else "left"))
 
 
+## The bar's focus chain: one axis, hard stops at both ends, nothing above and
+## nothing below.
+##
+## This is the second half of the old _wire_focus_neighbours. The first half
+## wired the rail's cards and pointed the bar's `down` at the first of them;
+## with no cards, `down` points at the button itself. Pointed at SELF rather
+## than left unset, deliberately -- an unset neighbour lets Control's geometric
+## search wander off and find the hint row, which is not focusable and produces
+## a press that goes nowhere.
 func _wire_focus_neighbours() -> void:
-	var count := _tiles.size()
+	var count := _bar_buttons.size()
 	for index in count:
-		var tile: Control = _tiles[index]
-		var left := index - 1 if index > 0 else index
-		var right := index + 1 if index + 1 < count else index
-
-		tile.focus_neighbor_left = tile.get_path_to(_tiles[left])
-		tile.focus_neighbor_right = tile.get_path_to(_tiles[right])
-		# SELF, NOT THE STORE BUTTON ANY MORE. Up from a card still lands on
-		# the store -- that is _handle_bar_reveal's job now, because the bar
-		# hides (#12) and a neighbour path into a hidden control is a press
-		# Godot drops with a warning. The table keeps the hard stop so the
-		# geometric search can never wander; the one move off this axis lives
-		# in _input, where it can also make the bar exist first.
-		tile.focus_neighbor_top = tile.get_path_to(tile)
-		tile.focus_neighbor_bottom = tile.get_path_to(tile)
-
-	# The bar is the rail's argument on its own row: one axis, hard stops at both
-	# ends, up pointed at self so nothing above it can be found geometrically.
-	var bar_count := _bar_buttons.size()
-	for index in bar_count:
 		var button: Control = _bar_buttons[index]
 		var previous := index - 1 if index > 0 else index
-		var next := index + 1 if index + 1 < bar_count else index
+		var next := index + 1 if index + 1 < count else index
 
 		button.focus_neighbor_left = button.get_path_to(_bar_buttons[previous])
 		button.focus_neighbor_right = button.get_path_to(_bar_buttons[next])
 		button.focus_neighbor_top = button.get_path_to(button)
-		# Nothing below the bar on an empty rail. Pointed at self rather than
-		# left unset, so Control's geometric search cannot find the hint row.
-		var below: Control = _tiles[0] if count > 0 else button
-		button.focus_neighbor_bottom = button.get_path_to(below)
+		button.focus_neighbor_bottom = button.get_path_to(button)
 
 
-# ---------------------------------------------------------------------------
-# Selection
-# ---------------------------------------------------------------------------
-
-func _on_card_selected(entry: Dictionary) -> void:
-	# Remembered for the card menu, which is opened from _unhandled_input and
-	# therefore has no card to ask.
-	_selected_entry = entry
-	# A card taking focus is the rail saying "the person is back down here",
-	# whichever route they took -- Down off a bar icon, B in the bar, a surface
-	# closing onto a remembered card -- so it is the single place the bar
-	# re-hides (#12). NOT when the bar is up for an alert the person never
-	# asked about: scrolling the rail must not dismiss a failure line that
-	# exists precisely to be seen from the rail.
-	if _bar_row != null and _bar_row.visible and not _bar_revealed_for_alert:
-		_hide_bar()
-	# OPTIONS IS ONLY OFFERED WHERE IT DOES SOMETHING. The menu's one entry is
-	# Uninstall, and an application that is not on the machine cannot be
-	# removed -- so on an available card the hint would advertise a button
-	# whose press is correctly ignored, which is the exact shape of "broken
-	# input" on a machine with no other feedback. A Steam game's card hides it
-	# too -- removal belongs to Steam itself.
-	if _options_hint != null:
-		_options_hint.visible = str(entry.get("state", "")) == "installed" \
-			and not str(entry.get("id", "")).begins_with("steam.")
-	_title.text = str(entry.get("title", ""))
-	_subtitle.text = str(entry.get("subtitle", ""))
-	_fade_hero_to(TvTheme.accent(str(entry.get("accent", ""))))
-	# The wash changes NOW and the picture changes in a moment: the accent is a
-	# colour already in hand, and the picture is a file on disk. Splitting them
-	# is what makes a fast scroll cost one decode instead of ten -- see
-	# _request_hero_art.
-	#
-	# A GAME'S HERO ART IS SHOWN SHARP, and it is the only picture on this screen
-	# that is. Everything else the rail can hand the background is a logo or a box
-	# shot -- a picture of a THING, at the wrong shape for a wall, which is why it
-	# is resized down to a smear (see TvTheme.HERO_ART_BLUR_DIVISOR). A Steam hero
-	# is not that: it is a wide, deliberately empty-in-the-middle image that Steam
-	# itself draws edge to edge behind its own library, drawn by the people who
-	# made the game to be a background. Softening one would be throwing away the
-	# only artwork the machine ever gets that was designed for this exact job.
-	#
-	# The scrim and both gradients stay exactly as they are over it -- see
-	# TvTheme.HERO_ART_SCRIM, which is derived from the worst-case LUMINANCE the
-	# background can have and therefore says nothing about sharpness.
-	var id := str(entry.get("id", ""))
-	var hero := GameArt.hero_for(id) if id.begins_with(STEAM_PREFIX) else ""
-	if hero.is_empty():
-		_request_hero_art(str(entry.get("icon", "")), true)
-	else:
-		_request_hero_art(hero, false)
-	_scroll_to_selected()
-
-
-## Cross-fades the wash rather than cutting to it. A hard cut on every press is
-## the single most fatiguing thing a full-screen colour change can do, and the
-## rail is meant to be held down.
-func _fade_hero_to(accent: Color) -> void:
-	var target := Color(
-		accent.r * TvTheme.HERO_DIM + TvTheme.BACKGROUND.r * (1.0 - TvTheme.HERO_DIM),
-		accent.g * TvTheme.HERO_DIM + TvTheme.BACKGROUND.g * (1.0 - TvTheme.HERO_DIM),
-		accent.b * TvTheme.HERO_DIM + TvTheme.BACKGROUND.b * (1.0 - TvTheme.HERO_DIM),
-		1.0)
-
-	if _hero_tween != null and _hero_tween.is_valid():
-		_hero_tween.kill()
-	_hero_tween = create_tween()
-	_hero_tween.set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
-	_hero_tween.tween_property(_hero, "color", target, TvTheme.RAIL_TWEEN_SECONDS)
-
-
-# ---------------------------------------------------------------------------
-# The hero art
-# ---------------------------------------------------------------------------
-
-## Asks for a picture, eventually.
+## Put focus somewhere, or the pad moves nothing.
 ##
-## THE DEBOUNCE IS THE WHOLE FUNCTION. Holding right across ten cards emits ten
-## selections in about a second; every one of them lands here, and every one of
-## them restarts the same one-shot timer, so nine of them never touch the disk.
-## Only the card the thumb settles on is loaded and only one fade is ever in
-## flight. The alternative was measured in the shape of the problem rather than
-## on a stopwatch: a Steam portrait is a JPEG decode on a CPU renderer, and ten
-## of them queued behind ten crossfades is a rail that stops answering the pad
-## while it catches up -- the exact failure the rail's anchored selection exists
-## to avoid.
+## THE BAR IS THE ONLY CANDIDATE NOW. This used to prefer the rail and fall back
+## to the bar on an empty machine; the fallback is the whole function today, and
+## _ready reveals the bar before calling it so the focus lands on something a
+## person can actually see. A focus ring on a hidden control is worse than none:
+## the pad moves, nothing on screen changes, and the machine reads as crashed.
 ##
-## An empty path is a real request, not a skipped one: it is how a card with no
-## picture takes the screen BACK from the last card that had one.
-##
-## `soften` rides along with the path rather than being decided at load time,
-## because it is a property of what the picture IS FOR -- a background versus a
-## logo standing in for one -- and only the selection handler knows that. See
-## _on_card_selected and _backdrop_texture.
-func _request_hero_art(path: String, soften: bool) -> void:
-	_art_pending_path = path
-	_art_pending_soften = soften
-
-	if _art_timer == null:
-		_art_timer = Timer.new()
-		_art_timer.one_shot = true
-		_art_timer.timeout.connect(_on_art_settled)
-		add_child(_art_timer)
-
-	# start() on a running one-shot restarts it, which is the debounce.
-	_art_timer.start(TvTheme.HERO_ART_DEBOUNCE_SECONDS)
-
-
-func _on_art_settled() -> void:
-	var path := _art_pending_path
-
-	if path.is_empty():
-		# Said out loud rather than done silently, because on this machine the
-		# journal is the only place to tell "that entry ships no artwork" apart
-		# from "the loader fell over".
-		ShellLog.info("hero art: none, wash only")
-		_art_shown_path = ""
-		_clear_hero_art()
-		return
-
-	if path == _art_shown_path:
-		ShellLog.info("hero art: %s (already up)" % path)
-		return
-
-	var texture := _backdrop_texture(path, _art_pending_soften)
-	if texture == null:
-		# Same policy as the card's own icon: a picture that will not decode is
-		# not worth a black screen, and the wash underneath is a complete answer.
-		ShellLog.warn("hero art: %s would not decode; wash only" % path)
-		_art_shown_path = ""
-		_clear_hero_art()
-		return
-
-	_art_shown_path = path
-	_show_hero_art(texture)
-
-
-## Crossfades to a picture.
-##
-## The two rects and the layer's own alpha do two different jobs and both are
-## needed. Fading _art_front in handles picture-to-picture. Fading the LAYER in
-## handles wash-to-picture, where there is no outgoing frame to cross from
-## because the outgoing frame is the accent wash sitting underneath. They run in
-## parallel so an interrupted fade-out -- selection moving back onto a card with
-## art while the layer is still on its way down -- is recovered by the same
-## tween that does the crossfade, rather than leaving the art stranded at 40%.
-##
-## The in-flight tween is killed first, always. Ten queued fades would each be
-## drawing a full-screen texture, and the last one to finish would win by luck
-## rather than by being the current selection.
-func _show_hero_art(texture: ImageTexture) -> void:
-	_settle_front()
-	_kill_art_tween()
-
-	_art_tween = create_tween()
-	_art_tween.set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
-	_art_tween.set_parallel(true)
-
-	if _art_back.texture == null:
-		_art_back.texture = texture
-	else:
-		_art_front.texture = texture
-		_art_front.modulate.a = 0.0
-		_art_tween.tween_property(
-			_art_front, "modulate:a", 1.0, TvTheme.HERO_ART_FADE_SECONDS)
-
-	_art_tween.tween_property(
-		_art_layer, "modulate:a", 1.0, TvTheme.HERO_ART_FADE_SECONDS)
-	_art_tween.chain().tween_callback(_settle_front)
-
-
-## Fades the art off, leaving the wash.
-func _clear_hero_art() -> void:
-	if _art_back.texture == null and _art_front.texture == null:
-		return
-
-	_kill_art_tween()
-	_art_tween = create_tween()
-	_art_tween.set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
-	_art_tween.tween_property(
-		_art_layer, "modulate:a", 0.0, TvTheme.HERO_ART_FADE_SECONDS)
-	_art_tween.tween_callback(_drop_art)
-
-
-## Collapses the two pictures back to one, so the resting state is always a
-## single texture and the next crossfade has a clean frame to cross FROM.
-##
-## Called at the end of a fade, where the front is fully opaque and simply
-## becomes the back -- and called again at the START of the next one, which is
-## the case that matters: a fade cut short by a faster thumb leaves the front
-## half shown, and the half-shown picture is what the person is looking at. Past
-## the midpoint it is promoted, before it, dropped. Either way the front is empty
-## afterwards, which is the invariant _show_hero_art relies on.
-func _settle_front() -> void:
-	if _art_front.texture == null:
-		return
-	if _art_front.modulate.a >= 0.5:
-		_art_back.texture = _art_front.texture
-	_art_front.texture = null
-	_art_front.modulate.a = 0.0
-
-
-func _drop_art() -> void:
-	_art_back.texture = null
-	_art_front.texture = null
-	_art_front.modulate.a = 0.0
-
-
-func _kill_art_tween() -> void:
-	if _art_tween != null and _art_tween.is_valid():
-		_art_tween.kill()
-	_art_tween = null
-
-
-## An entry's icon file, decoded once and softened into a backdrop.
-##
-## CACHED BY PATH, because the rail is walked back and forth: left, right and
-## left again over three cards would otherwise be three decodes of the same
-## JPEG, and revisiting a card is the single most common thing anyone does here.
-## The cache holds the SOFTENED texture rather than the source image, so a hit
-## costs a dictionary lookup and nothing else -- no resize, no upload.
-##
-## The decode itself is tile.gd's loader, unchanged and not reimplemented: it is
-## where PNG, JPG and the SVG two-pass were all paid for, and a second copy of
-## that reasoning would drift the first time one of them learned something.
-##
-## THE SOFTENING IS A RESIZE, and that is the entire trick -- see
-## TvTheme.HERO_ART_BLUR_DIVISOR for why a blur is not affordable here and why
-## an icon is taken further down than a portrait.
-##
-## `soften` false is the game-hero case and skips all of that: the file is
-## decoded and uploaded as it is. It costs more texture memory than a 50 px
-## smear and nothing per frame, which is the budget that matters here -- the
-## cache is capped either way.
-func _backdrop_texture(path: String, soften: bool) -> ImageTexture:
-	# KEYED ON THE TREATMENT AS WELL AS THE PATH. Nothing today can ask for one
-	# file both ways -- heroes and portraits are different files -- but a cache
-	# that answered a sharp request with a softened texture would be a bug whose
-	# only symptom is a blurry background, which is precisely the thing this
-	# change exists to remove and would be read as "the feature did not land".
-	var key := "%s|%s" % [path, "soft" if soften else "sharp"]
-	if _art_cache.has(key):
-		ShellLog.info("hero art: %s (cached)" % path)
-		return _art_cache[key]
-
-	var image := Tile.load_icon_image(path)
-	if image == null:
-		return null
-
-	var width := image.get_width()
-	var height := image.get_height()
-	if width <= 0 or height <= 0:
-		return null
-
-	if not soften:
-		var sharp := ImageTexture.create_from_image(image)
-		_remember_backdrop(key, sharp)
-		ShellLog.info("hero art: %s (%dx%d, unblurred background)" % [path, width, height])
-		return sharp
-
-	# A logo is square-ish; key art is not. The test is on the pixels rather than
-	# on the entry's id, because "steam.<appid>" is only today's source of
-	# portraits and the next one will not announce itself in the id.
-	var squareish := absf(1.0 - float(width) / float(height)) <= TvTheme.HERO_ART_SQUARE_TOLERANCE
-	var divisor := TvTheme.HERO_ART_BLUR_DIVISOR_SQUARE if squareish \
-		else TvTheme.HERO_ART_BLUR_DIVISOR
-
-	var small_w := maxi(TvTheme.HERO_ART_BLUR_MIN, width / divisor)
-	var small_h := maxi(TvTheme.HERO_ART_BLUR_MIN,
-		int(round(float(small_w) * float(height) / float(width))))
-	image.resize(small_w, small_h, Image.INTERPOLATE_BILINEAR)
-
-	var texture := ImageTexture.create_from_image(image)
-	_remember_backdrop(key, texture)
-
-	ShellLog.info("hero art: %s (%dx%d softened to %dx%d)"
-		% [path, width, height, small_w, small_h])
-	return texture
-
-
-## The cache insert and the eviction that goes with it, in one place because the
-## two must not drift: an insert that forgot the order list would be a dictionary
-## that grows forever on a machine that never reboots.
-func _remember_backdrop(key: String, texture: ImageTexture) -> void:
-	_art_cache[key] = texture
-	_art_cache_order.append(key)
-	while _art_cache_order.size() > TvTheme.HERO_ART_CACHE_MAX:
-		_art_cache.erase(_art_cache_order.pop_front())
-
-
-## Slides the strip so the selected card's left edge rests on the TV-safe margin.
-## See the class header: the selection is what stays put.
-##
-## SAFE_MARGIN_X, not zero, and that is what keeps the selection inside the safe
-## area now that the strip itself spans the full output. The viewport's left edge
-## is the screen's left edge; resting the selection there would push the focus
-## ring into the region a TV is allowed to overscan away.
-##
-## THE RESTING X IS ARITHMETIC, NOT MEASURED. When focus moves, the card that
-## just lost it is still tweening back down from CARD_FOCUSED_SIZE, so for the
-## whole RAIL_TWEEN_SECONDS the HBoxContainer's layout is in flight and any
-## position read off it -- this frame, next frame -- is a snapshot of a rail
-## that is still changing shape. Reading one frame in measured every card with a
-## shrinking neighbour on its left 140 px too far right, and the rail overshot
-## until the selection sat clipped at the screen edge. The settled layout needs
-## no measuring at all: once the tweens finish, every card left of the selection
-## is back at CARD_SIZE, so card N's left edge inside the strip is
-## N * (CARD_SIZE + CARD_GAP) -- known before the animation starts, which also
-## lets the rail slide and the card grow in the same frame instead of a frame
-## apart.
-func _scroll_to_selected() -> void:
-	if not is_instance_valid(_rail):
-		return
-
-	var index := _tiles.find(get_viewport().gui_get_focus_owner())
-	if index == -1:
-		return
-
-	var target_x := float(TvTheme.SAFE_MARGIN_X - index * (TvTheme.CARD_SIZE + TvTheme.CARD_GAP))
-
-	if _rail_tween != null and _rail_tween.is_valid():
-		_rail_tween.kill()
-	_rail_tween = create_tween()
-	_rail_tween.set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
-	_rail_tween.tween_property(_rail, "position:x", target_x, TvTheme.RAIL_TWEEN_SECONDS)
-
-	# Keep the bar's way back pointed at the selection, so up-then-down is a
-	# round trip rather than a teleport to the rail's start.
-	var selected: Control = _tiles[index]
-	for button in _bar_buttons:
-		button.focus_neighbor_bottom = button.get_path_to(selected)
-
-
+## _last_focused FIRST, and it is why _hand_screen_over bothers to record it:
+## closing Settings should return the ring to the gear it was opened from, not
+## to whatever happens to be leftmost. Validity is checked rather than assumed
+## -- the remembered control may have been freed while the covering screen was
+## up, which is exactly what happened to the rail's cards on every rebuild.
 func _ensure_focus() -> void:
 	if get_viewport().gui_get_focus_owner() != null:
 		return
-	if is_instance_valid(_last_focused):
-		# The remembered place can be a bar icon -- a surface opened from the
-		# bar remembers the icon that opened it -- and the bar may have hidden
-		# meanwhile (an alert reveal expiring while the surface was up). The
-		# person's place outranks the hide: bring the bar back so the grab has
-		# somewhere to land, rather than silently dropping them onto the rail.
-		if _bar_buttons.has(_last_focused) and _bar_row != null and not _bar_row.visible:
-			_reveal_bar(false)
+	if is_instance_valid(_last_focused) and _last_focused.visible \
+			and _last_focused.is_inside_tree():
 		_last_focused.grab_focus()
-	elif not _tiles.is_empty():
-		var first: Control = _tiles[0]
-		first.grab_focus()
-	elif _files_button != null:
-		# An empty rail is the normal state of a fresh machine, and it must not
-		# be a dead end: with no card to focus, a bar icon is the only focusable
-		# thing left. This was the store icon until the store was removed; Files
-		# takes the role because it is the next button along and is always
-		# present. The bar has to exist to be landed on, so the hide (#12)
-		# yields here -- and _hide_bar refuses to fire while the rail is empty,
-		# which keeps the two rules from fighting.
-		_reveal_bar(false)
-		_files_button.grab_focus()
+		return
+	for button in _bar_buttons:
+		if is_instance_valid(button) and button.visible:
+			button.grab_focus()
+			return
+	ShellLog.warn("nothing focusable on the home screen; the pad will not move")
 
 
-## The rail's two moods: a library, or a machine with nothing on it yet.
-##
-## The empty state is not an error screen and deliberately does not look like
-## one. A fresh stick has nothing installed, which is a correct and expected
-## condition -- so the title block says what is true and points at the way out,
-## and the hint row stops promising an A press that has no card to land on.
-## NEARLY UNREACHABLE NOW, and deliberately kept. Since _populate appends a card
-## for every shipped application that is not installed, a fresh stick shows
-## three "press A to download it" cards rather than this -- which is a better
-## first screen than an empty rail pointing at a store that only has Steam in
-## it. The branch survives for the one case that still produces nothing:
-## Catalogue.AVAILABLE_APPS being emptied, which Phase 1 will do when marwand
-## takes over the shipped set and may briefly serve nothing.
-func _refresh_empty_state() -> void:
-	var empty := _tiles.is_empty()
-
-	if empty:
-		_title.text = "No apps installed"
-		_subtitle.text = "Open the Store above to install something"
-		_fade_hero_to(TvTheme.ACCENT_FALLBACK)
-		# Nothing selected means nothing to show a picture OF, and the last card
-		# to be removed must not leave its backdrop behind on a screen that now
-		# says the machine is empty.
-		_request_hero_art("", true)
-
-	if _open_hint != null:
-		_open_hint.visible = not empty
-	if _options_hint != null:
-		_options_hint.visible = not empty
-
-
-# ---------------------------------------------------------------------------
-# Status, clock, launch
-# ---------------------------------------------------------------------------
-
-## Ticks every 30 s (so the displayed minute is never more than half a minute
-## stale), on a Timer rather than in _process: the clock shows hours and minutes,
-## and redrawing it sixty times a second would be sixty thousand pointless string
 ## builds an hour on a machine that is rendering nothing else.
 func _start_clock() -> void:
 	var timer := Timer.new()
@@ -1318,80 +669,6 @@ func _on_player_one_absent() -> void:
 const APP_ALERT_SECONDS := 20.0
 
 
-## An install or removal reported something worth interrupting for.
-##
-## ONLY FAILURES SURFACE HERE. Progress does not: the rail already shows a
-## pending card for an arriving application and simply drops the card for a
-## removed one, so a top-bar line narrating the happy path would be a third
-## account of something already on screen twice.
-func _on_apps_state_changed(state: String, app: String, detail: String) -> void:
-	if _app_alert == null:
-		return
-
-	if state != "failed" and state != "refused":
-		_app_alert.visible = false
-		_app_alert.text = ""
-		if _app_alert_timer != null:
-			_app_alert_timer.stop()
-		# The alert is what the bar came up for, and it just resolved.
-		_retire_alert_reveal()
-		return
-
-	# The application's TITLE, because "Steam" is what the person pressed a
-	# button about and "com.valvesoftware.Steam" is not a name to put on a
-	# television.
-	#
-	# TWO SOURCES, AND THE SECOND IS THE ONE THAT MATTERS. The installed seam
-	# knows the title of everything on the machine -- but the two failures worth
-	# reporting are an install that did not happen and a removal of something
-	# now gone, and in both the application is absent from that list precisely
-	# when its name is needed. So the catalogue answers second. The raw id is
-	# the last resort: ugly, and true.
-	var name := _title_for_app(app)
-
-	var said := detail if not detail.is_empty() else "Something went wrong"
-	_app_alert.text = "%s: %s" % [name, said] if not name.is_empty() else said
-	_app_alert.visible = true
-
-	if _app_alert_timer == null:
-		_app_alert_timer = Timer.new()
-		_app_alert_timer.one_shot = true
-		_app_alert_timer.timeout.connect(_on_app_alert_expired)
-		add_child(_app_alert_timer)
-	_app_alert_timer.start(APP_ALERT_SECONDS)
-
-	# THE ALERT LIVES IN A BAR THAT HIDES NOW (#12), and a failure line nobody
-	# can see is exactly the journal-only silence this label was built to end.
-	# So a failure brings the bar up on its own, unfocused -- the person's
-	# thumb stays where it was on the rail -- and the expiry below (or the
-	# state resolving above) takes it back down. If the person was already in
-	# the bar, the flag stays false and their reveal is theirs to keep.
-	if _bar_row != null and not _bar_row.visible:
-		_reveal_bar(false)
-		_bar_revealed_for_alert = true
-
-
-## A human name for an application id -- see _on_apps_state_changed for why the
-## installed seam alone is not enough.
-func _title_for_app(app: String) -> String:
-	if app.is_empty():
-		return ""
-	for entry in Installed.apps:
-		if str(entry.get("id", "")) == app:
-			return str(entry.get("title", app))
-	for store in Catalogue.stores():
-		if str(store.get("app_id", "")) == app:
-			return str(store.get("title", app))
-	# The shipped list is the one that actually answers for a failed install:
-	# the stores list holds only Steam, so without this an install of Kodi that
-	# failed reported itself as "tv.kodi.Kodi", which is what the Xvfb run
-	# showed on the TV.
-	for shipped in Catalogue.AVAILABLE_APPS:
-		if str(shipped.get("id", "")) == app:
-			return str(shipped.get("title", app))
-	return app
-
-
 func _on_app_alert_expired() -> void:
 	if _app_alert != null:
 		_app_alert.visible = false
@@ -1431,101 +708,6 @@ func _refresh_status() -> void:
 		_status.add_theme_color_override("font_color", TvTheme.TEXT_ALERT)
 
 
-## An install or a removal landed while the rail was on screen. Rebuilding is
-## the whole response: the rail is a rendering of the list, so the list
-## changing means it is redrawn rather than patched.
-##
-## FOCUS IS RE-ESTABLISHED BY IDENTITY, NOT BY INDEX. The tiles about to be
-## freed include the focused one, and the replacement list may be longer,
-## shorter or reordered -- so the card the person was on is looked up again by
-## its app id. Only when that app is genuinely gone does focus fall back to the
-## start of the rail. Keeping the index instead would silently move the
-## selection to a different app whenever one was installed ahead of it.
-func _on_apps_changed(_apps: Array) -> void:
-	# The panel is ABOUT one of the cards that is about to be freed, and after a
-	# rescan the entry behind it may not exist any more. Closing it is the honest
-	# response and the cheap one -- the list changing is rare (an install, a
-	# removal, a picture arriving), and a panel that survived would be describing
-	# a dictionary nothing on screen refers to.
-	_close_details()
-
-	var focused_id := ""
-	var owner := get_viewport().gui_get_focus_owner()
-	if owner != null and _tiles.has(owner):
-		focused_id = str(owner.entry.get("id", ""))
-
-	for tile in _tiles:
-		_rail.remove_child(tile)
-		tile.queue_free()
-	_tiles.clear()
-	# The remembered card is one of the tiles just freed; leaving it set would
-	# have _ensure_focus grab a freed node.
-	_last_focused = null
-
-	_populate()
-	_wire_focus_neighbours()
-	_refresh_empty_state()
-
-	# Only touch focus if the rail is the surface on screen. A rescan while the
-	# stores screen is up must not pull focus out from under it.
-	if not visible:
-		return
-
-	# Nor may it pull focus off the TOP BAR. An install landing while someone
-	# is sitting on the store or gear icon -- which is exactly where they are
-	# after closing the stores screen, and exactly when an install is likely to
-	# finish -- must not yank the selection down into the rail mid-press.
-	# `focused_id` is empty precisely when focus was not on a card, so it is
-	# also the test for "leave it alone".
-	if focused_id.is_empty():
-		if get_viewport().gui_get_focus_owner() == null:
-			_ensure_focus()
-		return
-
-	var restored: Control = null
-	for tile in _tiles:
-		if str(tile.entry.get("id", "")) == focused_id:
-			restored = tile
-			break
-	if restored == null and not _tiles.is_empty():
-		restored = _tiles[0]
-
-	if restored != null:
-		restored.grab_focus()
-	else:
-		# The rail emptied out from under the selection -- the last app was
-		# removed. _ensure_focus sends focus up to the store icon, which is
-		# where someone with nothing installed needs to be anyway.
-		_ensure_focus()
-
-
-## A game's artwork landed (or changed, or went away).
-##
-## THE SAME REBUILD, ON PURPOSE. A card chooses its picture when it is built, so
-## the only way new art reaches the screen is to build the cards again -- and
-## _on_apps_changed is already the function that does that correctly: it frees
-## the strip, repopulates it, rewires the neighbour table and puts focus back on
-## the app the person was on BY ID. A second rebuild path would be a second copy
-## of that focus restoration, and the two would drift the first time one of them
-## learned something. The list it is handed is the current installed list rather
-## than a new one, because nothing about what is installed has changed -- only
-## what it looks like.
-##
-## DEFERRED WHILE THE DETAILS PANEL IS UP, and review is why: the designed
-## traffic here is one tsv change per game as Steam's cache warms, minutes
-## apart, and _on_apps_changed's first act is closing the panel -- so a
-## warming cache was yanking the sheet out from under the person reading it,
-## to redraw a card they were not looking at. Better art can wait the length
-## of a description; the flag replays the rebuild the moment the panel goes.
-func _on_gameart_changed() -> void:
-	if _details != null:
-		_gameart_pending = true
-		return
-	_on_apps_changed(Installed.apps)
-
-
-## The glyph and its rules live in the status corner now; this stays as the
-## seam's listener because the corner is furniture this node built, not an
 ## autoload that can subscribe for itself.
 func _on_network_changed(state: String) -> void:
 	if _status_corner != null:
@@ -1640,21 +822,28 @@ func _handle_bar_return(event: InputEvent) -> void:
 func _bar_input_live() -> bool:
 	if not visible or _bar_row == null:
 		return false
-	return _details == null and _process_menu == null
+	return _process_menu == null
 
 
-## Show the bar. With `take_focus`, also land on the store icon -- the same
-## place up-from-the-rail has always gone -- and the reveal stops being about
-## any alert that triggered it: the person is in the bar now, and it stays
-## until they leave.
+## Show the bar. With `take_focus`, also land on the first button on it, and the
+## reveal stops being about any alert that triggered it: the person is in the
+## bar now, and it stays until they leave.
+##
+## THE FIRST BUTTON, not a named one. This aimed at the store icon, then at
+## Files when the store went, and both are gone -- so it asks _bar_buttons what
+## is actually there rather than naming a third icon that will also be deleted.
+## The list is in bar order and the processes pill inserts itself at its front,
+## so "first" is the leftmost thing on screen either way.
 func _reveal_bar(take_focus: bool) -> void:
 	if not _bar_row.visible:
 		_bar_row.visible = true
 		ShellLog.info("top bar revealed")
 	if take_focus:
 		_bar_revealed_for_alert = false
-		if _files_button != null:
-			_files_button.grab_focus()
+		for button in _bar_buttons:
+			if is_instance_valid(button) and button.visible:
+				button.grab_focus()
+				return
 
 
 ## Hide the bar again -- unless the rail is empty, in which case the bar is
@@ -1738,123 +927,6 @@ func _close_overlay() -> void:
 ## The details panel
 ## ---------------------------------------------------------------------------
 
-## DOWN on a focused card, which was a dead axis until now -- see Tile._gui_input
-## for why the press is caught on the card and not here.
-##
-## THE PANEL IS ADDITIVE, NOT A GATE. A on a card still launches it directly and
-## nothing about that press changed; the panel is the second, slower route for
-## the person who wants to know what a thing is before starting it, and it is
-## where a game's description finally has somewhere to be. Anyone who never
-## presses down sees exactly the shell they saw before.
-##
-## Guarded the way the card menu is, and for the same reason: each of these is a
-## state in which the panel would be about something that is not on the screen.
-func _on_details_requested(tile: Control) -> void:
-	if _details != null:
-		# A second press is the hold-repeat (FocusRepeat sends eight a second) or
-		# a bounced button, not a request for two panels.
-		return
-	# THE DOWN THAT LEFT THE BAR DOES NOT ALSO OPEN A PANEL. _handle_bar_return
-	# consumes the press that makes the move, so a single press can never reach
-	# here -- but a Down HELD across the move repeats (FocusRepeat, eight a
-	# second after INITIAL_DELAY), and the first repeat lands on a card that has
-	# only just taken focus. That is the owner's report: down from the bar
-	# showing the info instead of the cards. A window rather than a flag
-	# because the repeat's synthetic press carries its own release, so there is
-	# no held-state this could read instead; BAR_RETURN_GRACE_MSEC is sized off
-	# the same INITIAL_DELAY the repeat waits.
-	if _left_bar_msec >= 0 \
-			and Time.get_ticks_msec() - _left_bar_msec < BAR_RETURN_GRACE_MSEC:
-		ShellLog.info("details ignored: still the Down that came back from the top bar")
-		return
-	if Settings.is_open() or Power.is_open() or Files.is_open() \
-			or Info.is_open() or Launcher.is_busy():
-		return
-	if not is_instance_valid(tile) or not _tiles.has(tile):
-		return
-
-	_details_tile = tile
-	_details = DetailsPanel.new()
-	_details.entry = tile.entry
-	_details.play_requested.connect(_on_details_play)
-	_details.closed.connect(_on_details_closed)
-	# A CHILD OF THIS SURFACE, unlike the card menu and the app overlay, which are
-	# children of the tree root. Those two cover the shell; this one is part of
-	# it -- the whole screen stays the selected game's background, and the panel's
-	# words go over the bottom of it. Last child, so it paints over everything
-	# else here.
-	add_child(_details)
-
-	# AFTER add_child, and the order is load-bearing. The panel grabs focus in
-	# its own _ready, which runs during that call; hiding the rail first would
-	# take the focus off the card while nothing else was ready to hold it, and a
-	# viewport with no focused control is a pad that does nothing.
-	_set_lower_deck_visible(false)
-
-
-## Play: exactly the press the card already answers, asked of the card itself.
-##
-## The panel closes FIRST. The launch seam hides this whole surface a moment
-## later (_hand_screen_over), and a panel still in the tree at that point would
-## be what focus was remembered on -- so the rail would come back with the
-## cursor on a button belonging to a screen the person had left.
-func _on_details_play() -> void:
-	var tile := _details_tile
-	_close_details()
-	if is_instance_valid(tile):
-		tile.activate()
-
-
-func _on_details_closed() -> void:
-	_close_details.call_deferred()
-
-
-## The panel's single teardown. Focus goes back to the card it was opened from,
-## by identity: the rail never lost its shape while the panel was up, so the card
-## is still there and is where the person was.
-func _close_details() -> void:
-	if _details == null:
-		return
-	var panel := _details
-	var tile := _details_tile
-	_details = null
-	_details_tile = null
-	panel.get_parent().remove_child(panel)
-	panel.queue_free()
-	# BEFORE the focus restore below, which grabs focus on a card in the rail:
-	# Godot will not focus a control inside a hidden parent, so restoring the
-	# rail after the grab would leave the pad pointing at nothing.
-	_set_lower_deck_visible(true)
-	# The artwork rebuild the open panel deferred -- see _on_gameart_changed.
-	# After the teardown so the rebuild's focus restore is the last word.
-	if _gameart_pending:
-		_gameart_pending = false
-		_on_apps_changed.call_deferred(Installed.apps)
-	# Only when the rail is what is on screen. A launch started from the panel
-	# hides this surface between the two, and grabbing focus into a hidden
-	# control would strand it there.
-	if visible and is_instance_valid(tile) and _tiles.has(tile):
-		tile.grab_focus()
-
-
-## Show or hide the three controls the details panel occupies the space of.
-##
-## THIS USED TO BE A COLOUR. The panel's sheet was an opaque slab, and the rail,
-## the title block and the hint row stayed in the tree underneath it doing
-## nothing but being painted over. That worked exactly as long as the slab was
-## opaque; the sheet is transparent now (TvTheme.details_sheet_box), so the
-## hiding has to be said out loud, and saying it out loud is better anyway --
-## a control that is invisible is also unfocusable, which is a guarantee no
-## amount of z-order ever gave.
-##
-## THE TOP BAR IS DELIBERATELY NOT IN THE LIST. The clock, the network state and
-## the store, files, settings and power buttons are true whatever screen is up,
-## and the panel does not reach that far up the surface. The art layer stays too
-## -- it is the thing the panel is about.
-##
-## Hiding a child of a VBoxContainer takes it out of the layout entirely, so the
-## separation around it collapses with it and nothing below shifts; the spacer
-## above simply grows. Guarded per node because this runs during teardown, when
 ## a rebuild may have freed one of them.
 func _set_lower_deck_visible(shown: bool) -> void:
 	for node in [_title_block, _rail_row, _hint_row]:
@@ -1874,7 +946,7 @@ func _set_lower_deck_visible(shown: bool) -> void:
 func _open_process_menu() -> void:
 	if _process_menu != null or _details != null:
 		return
-	if Settings.is_open() or Power.is_open() or Files.is_open() \
+	if Settings.is_open() or Power.is_open() \
 			or Info.is_open() or Launcher.is_busy():
 		return
 
@@ -1907,88 +979,6 @@ func _close_process_menu() -> void:
 		_process_pill.grab_focus()
 
 
-## The options menu for the selected card. Guarded rather than always available,
-## and every guard is a state in which the menu would be about the wrong thing.
-func _open_card_menu() -> void:
-	if _details != null:
-		# The panel owns the screen and the pad while it is up. OPTIONS is about
-		# the SELECTED CARD, and the selected card is behind a panel.
-		return
-	if _card_menu != null:
-		# A second press while it is up is a bounced button, not a request for
-		# two -- the same rule the other surfaces enforce.
-		return
-	if Settings.is_open() or Power.is_open() or Files.is_open() \
-			or Info.is_open() or Launcher.is_busy():
-		# The rail is not what is on screen, so the selected card is not what the
-		# person is looking at.
-		return
-	if _selected_entry.is_empty():
-		ShellLog.info("OPTIONS at the rail with nothing selected; nothing to offer")
-		return
-	if str(_selected_entry.get("state", "")) != "installed":
-		# A card for an application that is still downloading has nothing to
-		# uninstall, and offering it would race the installer for the same
-		# flatpak. The installer's own states say what is happening instead.
-		ShellLog.info("OPTIONS on a card that is not installed yet; nothing to offer")
-		return
-	if str(_selected_entry.get("id", "")).begins_with("steam."):
-		# A Steam game's install lives inside Steam's own library, and appctl
-		# would rightly refuse its id. Removing one is Steam's job -- the menu
-		# not opening is more honest than a menu whose one entry is refused.
-		ShellLog.info("OPTIONS on a Steam game; removal belongs to Steam itself")
-		return
-	if Apps.is_busy():
-		ShellLog.info("OPTIONS while another install or removal is in flight; ignoring")
-		return
-
-	# The shared options panel (list_menu.gd), TOLD what to offer rather than
-	# knowing: the items and the note are Apps' -- one definition serving this
-	# menu and the store page's identical one -- and the choice comes back as an
-	# id for _on_card_menu_chosen to act on.
-	_card_menu = ListMenu.new()
-	_card_menu.title_text = str(_selected_entry.get("title", ""))
-	_card_menu.items = Apps.OPTIONS_ITEMS
-	_card_menu.note_text = Apps.OPTIONS_NOTE
-	_card_menu.chosen.connect(_on_card_menu_chosen)
-	_card_menu.closed.connect(_on_card_menu_closed, CONNECT_ONE_SHOT)
-	# Focus is saved and restored the way the other surfaces do it: the rail is
-	# still in the tree underneath, so without this the card loses its ring when
-	# the menu closes.
-	_hand_screen_over()
-	get_tree().root.add_child(_card_menu)
-
-
-## The one item the menu offers today. The desktop-entry id is what appctl
-## matches against its allow-list, and it is the rail entry's own id --
-## marwanos-appscan built that record from the .desktop file's basename.
-##
-## NOTHING WAITS FOR THE REMOVAL. The request is written and returns; appctl
-## does the work, and the installed seam notices the application is gone within
-## a poll, at which point the rail rebuilds without it. Blocking here would mean
-## a menu sitting over a rail that has already changed underneath it.
-func _on_card_menu_chosen(id: String) -> void:
-	match id:
-		"uninstall":
-			Apps.request_uninstall(str(_selected_entry.get("id", "")))
-		_:
-			ShellLog.error("card menu item \"%s\" has no action" % id)
-
-
-func _on_card_menu_closed() -> void:
-	_close_card_menu.call_deferred()
-
-
-func _close_card_menu() -> void:
-	if _card_menu == null:
-		return
-	var menu := _card_menu
-	_card_menu = null
-	menu.get_parent().remove_child(menu)
-	menu.queue_free()
-	_take_screen_back()
-
-
 func _unhandled_input(event: InputEvent) -> void:
 	# WHILE THE PANEL IS UP, THE RAIL IS NOT LISTENING. The panel is a later
 	# child and so is offered unhandled input first, and it consumes B -- but
@@ -1998,15 +988,11 @@ func _unhandled_input(event: InputEvent) -> void:
 	if _details != null:
 		return
 
-	# OPTIONS OPENS THE CARD'S OPTIONS. It is checked before B because it is the
-	# only way to remove an application on a machine with no terminal, and it is
-	# on the pad's own OPTIONS button rather than on a long-press of A because a
-	# hold that means something different from a press is exactly the
-	# interaction a person on a sofa discovers by accident and cannot undo.
-	if InputMap.has_action("ui_shell_options") and event.is_action_pressed("ui_shell_options"):
-		get_viewport().set_input_as_handled()
-		_open_card_menu()
-		return
+	# OPTIONS HAS NOTHING TO OPEN. It opened the focused card's menu -- rename,
+	# remove, properties -- and there are no cards. The action is deliberately
+	# left unbound rather than swallowed here: an OPTIONS press that is silently
+	# consumed is indistinguishable from one that opened an empty menu, and the
+	# menu it opened (list_menu.gd) is kept for whatever renders the sources.
 
 	if not event.is_action_pressed("ui_cancel"):
 		return

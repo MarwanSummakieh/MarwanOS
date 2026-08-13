@@ -163,6 +163,29 @@ STEAM_LIBCACHE="$STEAM_DATA/appcache/librarycache"
 # and Steam does not follow symlinks in a library path.
 STEAM_APPS_DIRS="/var/home/player/Games/SteamLibrary/steamapps $STEAM_DATA/steamapps"
 
+# THE ONE PLACE THIS FLAG IS SPELLED, and ADR 0012 asks for that explicitly.
+#
+# Every launch this scanner writes that involves Valve's client goes through
+# this variable, so the experiment the ADR names -- can a game start without
+# Big Picture appearing -- is a change to this line and nothing else.
+#
+# WHY IT IS NOT EMPTY TODAY. All three alternatives have been tried and each
+# failed differently: a cold client with only a URL comes up in DESKTOP mode
+# (a mouse UI on a machine whose only pointer is a thumbstick, left running
+# behind the game); a warm background client makes the screen blank and then
+# flicker (the owner, 2026-08-11); and so -gamepadui is what ships. It is the
+# lock-in this project is trying to escape, and it is also the only one of the
+# three that works, which is why it stays until the fourth option below is
+# measured rather than argued about.
+#
+# THE FOURTH OPTION, untested: `-silent` together with the URL, so a cold client
+# resolves the launch without presenting a UI at all. `-silent` is known to
+# still map windows here and that conflict was never fixed, so it may only
+# shrink the problem. Try it by setting this to `-silent` and launching a game
+# from a cold boot; the failure mode to watch for is Steam's desktop window
+# appearing behind the game, which is the first row of the table above.
+STEAM_UI_FLAG="-gamepadui"
+
 # Where marwanos-steam lands artwork it fetched from the network, shared
 # with the shipped applications' Flathub icons. Read-only from here: this
 # scanner never downloads anything (the shell is not the only renderer in this
@@ -308,7 +331,7 @@ exec_line() {
         # Not a name match on the title: the flatpak id is the stable identity,
         # and a title is whatever Valve's desktop file says this week.
         if [ "$flatpak_id" = "com.valvesoftware.Steam" ]; then
-            printf 'flatpak run %s -gamepadui' "$flatpak_id"
+            printf 'flatpak run %s %s' "$flatpak_id" "$STEAM_UI_FLAG"
             return 0
         fi
         printf 'flatpak run %s' "$flatpak_id"
@@ -694,7 +717,7 @@ scan_steam() {
         # anywhere downstream.
         exec_cmd=""
         if [ "$state" = "installed" ]; then
-            exec_cmd="flatpak run com.valvesoftware.Steam -gamepadui steam://rungameid/$appid"
+            exec_cmd="flatpak run com.valvesoftware.Steam $STEAM_UI_FLAG steam://rungameid/$appid"
         fi
 
         # STRAIGHT AT THE FLATPAK AS A steam:// URL, because Valve's client is

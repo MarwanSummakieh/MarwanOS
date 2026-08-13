@@ -141,3 +141,46 @@ static func label(name: String, size: int, color: Color) -> Label:
 	icon.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	return icon
+
+
+## How large an SVG is rasterised before anything scales it down. A card icon
+## drawn from a 32 px raster and then enlarged is the one artefact a three-metre
+## viewing distance makes obvious, so the raster is generous and the scaling is
+## always downward.
+const ICON_RASTER_PX := 512
+
+
+## An Image from a file on disk, rasterising SVG at a size worth scaling down
+## from. Returns null if the file cannot be read or decoded.
+##
+## This lived on tile.gd, which is gone with the rest of the old home rail. It
+## was never about cards: it is the only place in the shell that knows SVG needs
+## measuring before it is rasterised, and every future source of artwork -- a
+## store's logo, an emulator's system icon -- wants the same answer. So it moves
+## here, to the file that already owns "turn a name into something drawable",
+## rather than moving with the presentation that happened to host it.
+static func load_icon_image(path: String) -> Image:
+	if path.get_extension().to_lower() != "svg":
+		return Image.load_from_file(path)
+
+	var bytes := FileAccess.get_file_as_bytes(path)
+	if bytes.is_empty():
+		return null
+
+	# Measure first: load_svg_from_buffer takes a SCALE, not a target size, so
+	# the natural dimensions have to be known before a useful scale exists.
+	var probe := Image.new()
+	if probe.load_svg_from_buffer(bytes, 1.0) != OK:
+		return null
+	var longest := maxi(probe.get_width(), probe.get_height())
+	if longest <= 0:
+		return null
+	if longest >= ICON_RASTER_PX:
+		return probe
+
+	var full := Image.new()
+	if full.load_svg_from_buffer(bytes, float(ICON_RASTER_PX) / float(longest)) != OK:
+		# The measured pass already succeeded, so something small is better than
+		# a card with no logo on it.
+		return probe
+	return full

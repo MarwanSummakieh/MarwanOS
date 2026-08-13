@@ -149,7 +149,7 @@ if [ -z "${MARWANOS_SESSION_CONTEXT:-}" ]; then
             fi
             printf '<3>%s: %s\n' "$TAG" "this session is stuck in SELinux domain xdm_t and runcon could not leave it" >&2
             printf '<3>%s: %s\n' "$TAG" "every flatpak will fail in seconds: bwrap's mount setup is denied to xdm_t (journalctl | grep denied)" >&2
-            printf '<3>%s: %s\n' "$TAG" "Steam and every game will not start until this is fixed; the shell and mowser are unaffected" >&2
+            printf '<3>%s: %s\n' "$TAG" "Steam and every game will not start until this is fixed; the shell itself is unaffected" >&2
             ;;
     esac
 fi

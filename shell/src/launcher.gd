@@ -54,7 +54,19 @@ signal minimized(entry: Dictionary)
 const LaunchPlaceholder = preload("res://src/launch_placeholder.gd")
 const LaunchSplash = preload("res://src/launch_splash.gd")
 const PadKeys = preload("res://src/pad_keys.gd")
-const Catalogue = preload("res://src/catalogue.gd")
+## Which launched applications get the pad-to-keyboard bridge, by entry id.
+##
+## EMPTY, AND THE SEAM IS KEPT ANYWAY. This lived in catalogue.gd and had one
+## entry left -- the terminal -- which went with the rest of the non-console
+## surfaces. Its other dialect, "pointer", died earlier with the foreign-client
+## browser. So today nothing asks for the bridge and pad_keys.gd is unreached.
+##
+## It stays because the next source to arrive is the one that needs it: an
+## emulator's own menus are keyboard-driven, and a Windows game run outside
+## Steam has no Steam Input translating a controller for it. Re-deriving this
+## mechanism then would cost more than the two lines it costs now. See
+## pad_keys.gd for the dialects themselves.
+const PAD_KEY_APPS := {}
 
 var _current: Dictionary = {}
 
@@ -429,7 +441,7 @@ func _app_is_up() -> void:
 	# on screen to type into. Which is also why a desk run never gets one -- the
 	# watchdog only answers ELSEWHERE where gamescope exists, and that is the only
 	# place XTEST injection lands where a person can see what it did.
-	var mode := Catalogue.pad_key_mode(str(_current.get("id", "")))
+	var mode := str(PAD_KEY_APPS.get(str(_current.get("id", "")), ""))
 	if _pad_keys == null and not mode.is_empty():
 		_pad_keys = PadKeys.new()
 		_pad_keys.mode = mode

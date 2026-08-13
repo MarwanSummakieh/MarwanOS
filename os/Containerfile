@@ -68,22 +68,6 @@ ARG GODOT_RELEASE="stable"
 ARG GODOT_EDITOR_SHA512="4ccdab7a48eeccbe8819a2fc1f6262f8d72065d98601bcb3743fcbd7ebd39f373758a788ee3293a05ec5b2c48538266c437404312e372225cd2df273945a2de9"
 ARG GODOT_TEMPLATES_SHA512="afcc83d8d3d298038f19c58744a0d660fa75dd4baa33cb55d1011bb2565a2a8c2381728924564cb909e37c205a23f21b521b23bd057993afd43ae4da0b2f9d47"
 
-# MOWSER'S ENGINE: the CEF binary distribution, pinned exactly as Godot is and
-# for the same reason -- this is 306 MB of somebody else's compiler output that
-# ends up inside the thing the owner runs, and "latest stable" is not a version.
-#
-# The '+' characters are part of the upstream filename and have to be
-# percent-encoded in the URL; see the download below, which is the one place
-# that transformation happens.
-#
-# THE SHA-512 IS OURS, COMPUTED ON A DOWNLOAD WHOSE PUBLISHED SHA-1 WE CHECKED.
-# The CEF build index publishes SHA-1 only, which is not a hash to pin a
-# quarter-gigabyte of engine on in 2026. So the flow is: fetch once, verify the
-# published SHA-1 (that is what upstream attests), then record the SHA-512 of
-# the verified bytes here. Every build after that checks the stronger one.
-ARG CEF_VERSION="151.3.16+gbe1e15d+chromium-151.0.7922.109"
-ARG CEF_SHA512="6e57a5ebdd80ee5f2fdaaa168ebe19551b5c459b0170bacac2a14a2e79a4ce0cdab419c72188454c1cb7a35f7c723cbc60313b95004c312f4880cd1433a6aa42"
-
 FROM ${AKMODS_IMAGE}:${AKMODS_TAG}@${AKMODS_DIGEST} AS akmods
 
 
@@ -190,189 +174,6 @@ RUN --mount=type=cache,dst=/godot-dl,sharing=locked \
 
 
 # ---------------------------------------------------------------------------
-# MOWSER: the appliance's browser, which is Chromium's engine and this
-# project's code, with no browser UI in between. See mowser/src/mowser.h for
-# the whole argument; this stage is only how it gets built.
-#
-# WHY THE ENGINE IS EMBEDDED RATHER THAN INSTALLED. The three browsers this
-# image has shipped tell the story: Zen (a browser nobody could drive with a
-# pad), then Chromium in kiosk mode (the same UI, hidden rather than absent --
-# somebody else's application one changed default away from a window this
-# machine cannot dismiss), and now this. The owner asked for "my own custom
-# made chromium that is only the engine inside my launcher"; an embedded engine
-# is the only one of the three where the browser's behaviour is this repo's to
-# decide.
-FROM ${BASE_IMAGE}:${BASE_TAG}@${BASE_DIGEST} AS mowser-build
-
-ARG CEF_VERSION
-ARG CEF_SHA512
-
-# g++ and make build mowser; cmake builds CEF's own C++ wrapper; scons builds
-# godot-cpp. Four build systems for two outputs is not a design, it is what
-# happens when three upstreams each chose one -- and all of it stays in this
-# discarded stage.
-RUN --mount=type=cache,dst=/var/cache/libdnf5,sharing=locked \
-    set -euxo pipefail; \
-    dnf -y install gcc-c++ make cmake python3 scons git binutils; \
-    dnf clean all
-
-# The engine's own binary, verified before a single byte of it is unpacked.
-RUN --mount=type=cache,dst=/cef-dl,sharing=locked \
-    set -euxo pipefail; \
-    tarball="cef_binary_${CEF_VERSION}_linux64_minimal.tar.bz2"; \
-    : "The '+' in the version is legal in a filename and not in a URL path,"; \
-    : "so it is percent-encoded here and nowhere else."; \
-    url_name="$(printf '%s' "$tarball" | sed 's/+/%2B/g')"; \
-    if ! printf '%s  %s\n' "$CEF_SHA512" "/cef-dl/$tarball" | sha512sum -c --status - 2>/dev/null; then \
-        rm -f "/cef-dl/$tarball"; \
-        curl -fsSL --retry 3 -o "/cef-dl/$tarball" \
-            "https://cef-builds.spotifycdn.com/${url_name}"; \
-        printf '%s  %s\n' "$CEF_SHA512" "/cef-dl/$tarball" | sha512sum -c -; \
-    fi; \
-    mkdir -p /build/cef; \
-    tar -xjf "/cef-dl/$tarball" -C /build/cef --strip-components=1; \
-    test -f /build/cef/Release/libcef.so; \
-    test -f /build/cef/include/cef_version.h
-
-# The GDExtension API, from the engine that will actually load the extension.
-#
-# THERE IS NO godot-cpp BRANCH FOR THIS ENGINE -- upstream's release branches
-# stop at 4.5 and this image runs 4.7.1 -- so the binding cannot be pinned by
-# version tag the way everything else here is. Dumping the API from the pinned
-# binary is better than a tag would have been anyway: the binding matches the
-# engine BY CONSTRUCTION rather than by somebody remembering to bump two
-# numbers together. Same argument the flatpak extension branches get.
-COPY --from=godot-sdk /godot/bin/godot /build/godot
-RUN set -euxo pipefail; \
-    : "A WRITABLE HOME, and it is not optional even for a dump that writes"; \
-    : "its two files into the current directory. Godot creates its user data"; \
-    : "directory before it does anything else, and aborts (SIGABRT, exit 134)"; \
-    : "if it cannot -- so this stage, which does NOT inherit godot-sdk's XDG"; \
-    : "environment because it starts from the base image, otherwise fails on"; \
-    : "a path under /root that has nothing to do with what was asked for."; \
-    install -d /build/godot-home; \
-    export HOME=/build/godot-home; \
-    export XDG_DATA_HOME=/build/godot-home/data; \
-    export XDG_CONFIG_HOME=/build/godot-home/config; \
-    export XDG_CACHE_HOME=/build/godot-home/cache; \
-    cd /build; \
-    ./godot --headless --dump-extension-api --dump-gdextension-interface; \
-    test -s /build/extension_api.json; \
-    test -s /build/gdextension_interface.h; \
-    grep -q '"version_major": 4' /build/extension_api.json; \
-    grep -q '"version_minor": 7' /build/extension_api.json
-
-# godot-cpp, generated from the dump above.
-RUN set -euxo pipefail; \
-    git clone https://github.com/godotengine/godot-cpp /build/godot-cpp; \
-    cd /build/godot-cpp; \
-    : "Recorded rather than pinned to a commit: there is no godot-cpp release"; \
-    : "that matches this engine, so the reproducibility that matters is the"; \
-    : "API dump above -- the bindings are GENERATED from it, and a generator"; \
-    : "that produced different bindings for the same API would fail the"; \
-    : "shell's export, which runs immediately after."; \
-    git rev-parse HEAD > /build/godot-cpp-commit.txt; \
-    cat /build/godot-cpp-commit.txt; \
-    cp /build/gdextension_interface.h /build/godot-cpp/gdextension/gdextension_interface.h; \
-    : "NOT PIPED. A pipeline reports its LAST command's status, so a scons"; \
-    : "failure behind a pipe into tail is invisible and surfaces ten minutes"; \
-    : "later as a link error naming a file nobody wrote."; \
-    : ""; \
-    : "TWO CHARACTERS ARE FORBIDDEN IN THESE : \"prose\" LINES, and both cost a"; \
-    : "build to learn: a backtick is command substitution (a syntax error"; \
-    : "printed from a COMMENT, on every build), and an unescaped dollar is a"; \
-    : "variable expansion that set -u turns into a fatal unbound-variable"; \
-    : "error. Escape the dollar, spell the backtick out."; \
-    scons platform=linux target=template_release arch=x86_64 \
-        custom_api_file=/build/extension_api.json generate_bindings=yes \
-        -j"$(nproc)" > /build/godot-cpp.log 2>&1 \
-        || { echo "godot-cpp failed:"; tail -40 /build/godot-cpp.log; exit 1; }; \
-    ls /build/godot-cpp/bin/libgodot-cpp*.a
-
-# CEF's C++ wrapper, which the distribution ships as SOURCE rather than as a
-# library precisely so it is compiled with the same compiler and flags as the
-# code calling it. Only the wrapper target: the distribution's sample apps
-# want GTK and are not built.
-RUN set -euxo pipefail; \
-    mkdir -p /build/cef/build; \
-    cd /build/cef/build; \
-    cmake -DCMAKE_BUILD_TYPE=Release .. > /build/cef-cmake.log 2>&1 \
-        || { tail -30 /build/cef-cmake.log; exit 1; }; \
-    make -j"$(nproc)" libcef_dll_wrapper > /build/cef-make.log 2>&1 \
-        || { tail -40 /build/cef-make.log; exit 1; }; \
-    test -f /build/cef/build/libcef_dll_wrapper/libcef_dll_wrapper.a
-
-COPY mowser/ /build/mowser/
-
-RUN set -euxo pipefail; \
-    cd /build/mowser; \
-    make CEF_ROOT=/build/cef GODOT_CPP=/build/godot-cpp OUT=/build/out; \
-    test -s /build/out/libmowser.so; \
-    test -s /build/out/mowser-helper; \
-    : "The extension and the helper must both find libcef.so BESIDE"; \
-    : "themselves. Without RUNPATH=\$ORIGIN the extension fails to load with a"; \
-    : "message that names libcef.so and no path, on a machine with no console."; \
-    objdump -p /build/out/libmowser.so | grep -q 'RUNPATH.*ORIGIN'; \
-    objdump -p /build/out/mowser-helper | grep -q 'RUNPATH.*ORIGIN'
-
-# THE PAYLOAD, ASSEMBLED AND CUT DOWN TO WHAT RUNS.
-#
-# libcef.so arrives at 1.4 GB because it carries full debug symbols. Stripped
-# it is 256 MB, and the whole payload below -- engine, V8 snapshot, resource
-# packs, ICU tables, one locale, the sandbox helper -- is about 290 MB. For
-# scale, this image DELETED Firefox at 344 MB for being the largest thing in it
-# that nothing used. The browser that replaced it weighs less than it did, and
-# everything on this machine that shows a web page goes through it.
-#
-# ONE LOCALE. The distribution ships 220 locale packs at 49 MB; the shell is
-# English and nothing selects between them, so shipping the other 219 would be
-# 48 MB of strings no code path can reach. This is the line to change on the
-# day the shell speaks anything else.
-# A FLAT DIRECTORY, AND THE TIDIER SHAPE IS THE ONE THAT CRASHES.
-#
-# The first version of this put the .pak files, icudtl.dat and locales/ under a
-# resources/ subdirectory and pointed CefSettings::resources_dir_path at it,
-# which reads better and is wrong. Chromium locates its ICU data relative to
-# the MODULE -- libcef.so's own directory -- and passes the resulting file
-# descriptor down to the renderer it forks. Get that wrong and the browser
-# process comes up, the renderer does not, and the whole thing aborts with
-#
-#   ERROR:base/i18n/icu_util.cc:232] Invalid file descriptor to ICU data received.
-#
-# which on this appliance was the SHELL dying the moment somebody pressed Buy
-# -- a black television, because the browser is inside the shell's process.
-#
-# So the layout is CEF's own sample layout: everything in one directory beside
-# libcef.so. locales/ stays a subdirectory because that is where CEF looks for
-# it (locales_dir_path), and it is the only thing that gets one.
-RUN set -euxo pipefail; \
-    install -d /payload/locales; \
-    install -m 0755 /build/cef/Release/libcef.so /payload/libcef.so; \
-    strip --strip-unneeded /payload/libcef.so; \
-    install -m 0644 /build/cef/Release/v8_context_snapshot.bin /payload/; \
-    : "chrome-sandbox is installed by the FINAL stage, not here: it needs to"; \
-    : "be SUID root and a mode set in a discarded stage is a mode nobody"; \
-    : "keeps. Carried across as an ordinary file."; \
-    install -m 0755 /build/cef/Release/chrome-sandbox /payload/chrome-sandbox; \
-    install -m 0644 /build/cef/Resources/icudtl.dat /payload/; \
-    install -m 0644 /build/cef/Resources/resources.pak /payload/; \
-    install -m 0644 /build/cef/Resources/chrome_100_percent.pak /payload/; \
-    install -m 0644 /build/cef/Resources/chrome_200_percent.pak /payload/; \
-    install -m 0644 /build/cef/Resources/locales/en-US.pak /payload/locales/; \
-    install -m 0755 /build/out/mowser-helper /payload/mowser-helper; \
-    install -m 0755 /build/out/libmowser.so /payload/libmowser.so; \
-    : "The size is asserted in BOTH directions. Too big means the strip"; \
-    : "silently did nothing -- a 1.4 GB library would not fit beside the OS on"; \
-    : "a 15.4 GiB root and the failure would be a stick that will not install."; \
-    : "Too small means the strip ate something it should not have, which is a"; \
-    : "library that loads and then cannot resolve its own symbols."; \
-    size_mb="$(du -sm /payload | cut -f1)"; \
-    echo "mowser payload: ${size_mb} MB"; \
-    test "$size_mb" -lt 400 || { echo "the mowser payload is too large -- did the strip run?"; exit 1; }; \
-    test "$size_mb" -gt 150 || { echo "the mowser payload is too small -- something did not get installed"; exit 1; }
-
-
-# ---------------------------------------------------------------------------
 # M3's shell, exported here and nowhere else. Resumes from godot-sdk so the
 # editor, the templates and their checksums are not downloaded twice.
 FROM godot-sdk AS shell-export
@@ -383,22 +184,6 @@ FROM godot-sdk AS shell-export
 # reaches the final stage's dnf or dracut layers at all.
 COPY shell/ /build/shell/
 
-# MOWSER'S EXTENSION, STAGED INTO THE PROJECT BEFORE THE EXPORT, because the
-# exporter will not run without it.
-#
-# Godot does not merely record the .gdextension's library path -- it OPENS the
-# file and copies it next to the exported binary, and an unreadable path fails
-# the export outright ("Failed to copy shared object"). So the library has to
-# be inside the project here, even though the copy Godot makes is the one that
-# actually runs. See shell/bin/mowser.gdextension for the whole shape.
-#
-# Godot ALSO tries to dlopen it during the export and logs "Can't open dynamic
-# library ... libcef.so" when it cannot, because the engine is not in this
-# stage. That is a warning and not a failure, and it is harmless here:
-# browser_screen.gd reaches MowserView through ClassDB by name rather than as a
-# static type -- which it has to do anyway, to survive an image whose payload
-# did not land -- so no script needs the class to exist in order to compile.
-COPY --from=mowser-build /payload/libmowser.so /build/shell/bin/libmowser.so
 
 # Everything the export depends on, checked before the export runs, so a problem
 # names its own cause instead of surfacing later as a missing or half-working
@@ -479,16 +264,14 @@ RUN --network=none set -euxo pipefail; \
     test ! -e /build/out/marwanos-shell.pck; \
     install -D -m 0755 /build/out/marwanos-shell.x86_64 \
         /out/usr/lib/marwanos/shell/marwanos-shell; \
-    : "THE EXTENSION TRAVELS WITH THE BINARY, because that is where Godot"; \
-    : "looks for it: the exporter puts a GDExtension library beside the"; \
-    : "executable rather than in the pack (a pack member cannot be dlopen'd),"; \
-    : "so the shell resolves res://bin/libmowser.so to its own directory at"; \
-    : "runtime. Asserted rather than assumed -- if a future Godot stopped"; \
-    : "emitting this copy, the symptom would be a browser screen politely"; \
-    : "saying the engine is not installed, on an image that contains it."; \
-    test -s /build/out/libmowser.so; \
-    install -D -m 0755 /build/out/libmowser.so \
-        /out/usr/lib/marwanos/shell/libmowser.so
+    : "NO GDEXTENSION TRAVELS WITH THE BINARY ANY MORE. mowser was the only"; \
+    : "one, and ADR 0012 removed it along with the browser screen it drew"; \
+    : "into -- a console has no browser. If an extension is ever added back,"; \
+    : "it has to be installed beside the executable rather than packed: the"; \
+    : "exporter puts GDExtension libraries next to the binary because a pack"; \
+    : "member cannot be dlopen'd."; \
+    ! test -e /build/out/libmowser.so \
+        || { echo "libmowser.so is back in the export -- mowser was deleted"; exit 1; }
 
 
 FROM ${BASE_IMAGE}:${BASE_TAG}@${BASE_DIGEST}
@@ -780,29 +563,6 @@ RUN --mount=type=cache,dst=/var/cache/libdnf5,sharing=locked \
     ! test -f /usr/share/applications/org.mozilla.firefox.desktop \
         || { echo "firefox's desktop entry survived its removal"; exit 1; }
 
-# ---------------------------------------------------------------------------
-# MOWSER, INSTALLED. The engine, its resources, the helper, and the extension
-# the shell loads -- all under one directory, because libcef.so is one
-# application's engine rather than a system library and putting it in
-# /usr/lib64 would offer 256 MB of Chromium to everything else on the machine.
-# The binaries carry RUNPATH=$ORIGIN so they find it here (asserted in
-# mowser-build).
-COPY --from=mowser-build /payload/ /usr/lib/marwanos/mowser/
-
-# THE LIBRARIES libcef.so ITSELF NEEDS, and this list is MEASURED rather than
-# guessed: it is objdump's DT_NEEDED output for the exact libcef.so above,
-# minus what the base image already carries. Chromium needs NSS to validate a
-# certificate, which is to say a checkout will not load without it -- and the
-# failure mode for any of these missing is the extension failing to dlopen,
-# which on this machine is a browser screen that says the engine is not
-# installed. Better to fail the build.
-RUN --mount=type=cache,dst=/var/cache/libdnf5,sharing=locked \
-    set -euxo pipefail; \
-    dnf -y install nss nspr atk at-spi2-atk at-spi2-core cairo pango \
-        cups-libs alsa-lib libXcomposite libXdamage libXfixes libxcb \
-        mesa-libgbm expat; \
-    dnf clean all
-
 
 # STEAM, IN THE IMAGE, AND THE FIRST THIRD-PARTY REPOSITORY THIS FILE HAS EVER
 # CARRIED. See docs/adr/0011-steam-baked-in-not-sandboxed.md; the M1 package
@@ -837,46 +597,6 @@ RUN --mount=type=cache,dst=/var/cache/libdnf5,sharing=locked \
         "https://mirrors.rpmfusion.org/nonfree/fedora/rpmfusion-nonfree-release-$(rpm -E %fedora).noarch.rpm"; \
     dnf -y install steam; \
     dnf clean all
-
-# Proven present, one at a time, the same way the Godot shell's dlopen list is.
-# A grep of ldconfig is the cheapest possible check and it is the difference
-# between a build that fails here and a television that says the browser is
-# missing for a reason nobody can see.
-RUN set -euxo pipefail; \
-    ldconfig -p > /tmp/ldcache.txt; \
-    for lib in libnss3.so libnspr4.so libnssutil3.so libsmime3.so \
-               libatk-1.0.so.0 libatk-bridge-2.0.so.0 libatspi.so.0 \
-               libcairo.so.2 libpango-1.0.so.0 libcups.so.2 libasound.so.2 \
-               libdbus-1.so.3 libexpat.so.1 libgbm.so.1 libxcb.so.1 \
-               libX11.so.6 libXcomposite.so.1 libXdamage.so.1 libXext.so.6 \
-               libXfixes.so.3 libXrandr.so.2 libxkbcommon.so.0 libudev.so.1 \
-               libglib-2.0.so.0 libgobject-2.0.so.0 libgio-2.0.so.0; do \
-        grep -q "$lib" /tmp/ldcache.txt \
-            || { echo "libcef.so needs $lib at runtime and it is not installed"; exit 1; }; \
-    done; \
-    rm -f /tmp/ldcache.txt
-
-# THE SANDBOX, AND IT IS THE ONE MODE IN THIS FILE THAT IS A SECURITY BOUNDARY.
-#
-# mowser renders arbitrary web content -- a Steam checkout, and whatever else
-# somebody navigates to -- inside the shell's own process tree. Chromium's
-# renderer sandbox is what stands between a hostile page and the session user's
-# home directory, and CefSettings.no_sandbox=false (see mowser_runtime.cpp)
-# asks for it. On Linux that needs this helper SUID root.
-#
-# --no-sandbox would be one line in the C++ and would make every one of these
-# concerns go away by removing the boundary. It is deliberately not taken.
-#
-# Set HERE and not in mowser-build for the reason the akmods modes are set
-# here: /usr is composefs-backed and read-only at runtime, so a mode has to be
-# right in the image, and a mode set in a stage that gets discarded is a mode
-# nobody keeps. Same class of build-time-only fix as gamescope's CAP_SYS_NICE
-# below.
-RUN set -euxo pipefail; \
-    chown root:root /usr/lib/marwanos/mowser/chrome-sandbox; \
-    chmod 4755 /usr/lib/marwanos/mowser/chrome-sandbox; \
-    test -u /usr/lib/marwanos/mowser/chrome-sandbox \
-        || { echo "chrome-sandbox is not SUID -- mowser would have to run unsandboxed"; exit 1; }
 
 # CAP_SYS_NICE on gamescope, and it is a measured fix rather than a precaution.
 #
@@ -1122,7 +842,6 @@ RUN set -euxo pipefail; \
          /usr/lib/systemd/journald.conf.d /usr/lib/systemd/system-preset \
          /usr/lib/systemd/logind.conf.d \
          /usr/share/plymouth/themes/marwanos \
-         -path /usr/lib/marwanos/mowser -prune -o \
          -type f -exec chmod 0644 {} +; \
     chmod 0644 /usr/lib/systemd/system/marwanos-panel.service; \
     chmod 0644 /usr/lib/systemd/system/marwanos-netcheck.service; \
@@ -1460,7 +1179,7 @@ RUN set -euxo pipefail; \
     ! grep -q '^app\.zen_browser\.zen$' /usr/lib/marwanos/shipped-apps \
         || { echo "zen's id is back in shipped-apps"; exit 1; }; \
     ! grep -q '^org\.chromium\.Chromium$' /usr/lib/marwanos/shipped-apps \
-        || { echo "the Chromium flatpak is back in shipped-apps -- mowser is the browser"; exit 1; }; \
+        || { echo "the Chromium flatpak is back in shipped-apps"; exit 1; }; \
     test -L /usr/lib/systemd/system/multi-user.target.wants/marwanos-panel.service; \
     : "Without this link nothing consumes the shell's profile requests, so"; \
     : "the Display row would accept every press and change nothing -- a"; \
@@ -1478,22 +1197,15 @@ RUN set -euxo pipefail; \
     test ! -e "/usr/lib/systemd/system/multi-user.target.wants/marwanos-flatpak-install@tv.kodi.Kodi.service"; \
     test ! -e "/usr/lib/systemd/system/multi-user.target.wants/marwanos-flatpak-install@app.zen_browser.zen.service"; \
     test ! -e "/usr/lib/systemd/system/multi-user.target.wants/marwanos-flatpak-install@org.chromium.Chromium.service"; \
-    : "MOWSER IS IN THE IMAGE, asserted as the four things it actually is:"; \
-    : "the engine, the extension the shell loads, the helper CEF re-executes"; \
-    : "for every renderer, and the resources without which a page renders"; \
-    : "blank. Any one missing is a browser screen that says the engine is"; \
-    : "not installed, on a machine with no console to ask why."; \
-    test -s /usr/lib/marwanos/mowser/libcef.so; \
-    test -s /usr/lib/marwanos/mowser/libmowser.so; \
-    test -x /usr/lib/marwanos/mowser/mowser-helper; \
-    : "Flat beside libcef.so, not under resources/ -- see the payload stage:"; \
-    : "the tidier layout aborts the shell with an ICU error the first time"; \
-    : "somebody opens a page."; \
-    test -s /usr/lib/marwanos/mowser/icudtl.dat; \
-    test -s /usr/lib/marwanos/mowser/resources.pak; \
-    test -s /usr/lib/marwanos/mowser/locales/en-US.pak; \
-    test -u /usr/lib/marwanos/mowser/chrome-sandbox \
-        || { echo "chrome-sandbox lost its SUID bit -- mowser would run unsandboxed"; exit 1; }; \
+    : "MOWSER IS NOT IN THE IMAGE, and this asserts the whole directory is"; \
+    : "gone rather than naming its former contents one at a time. It carried"; \
+    : "a 250 MB Chromium engine and the only SUID-root binary this image had"; \
+    : "(chrome-sandbox), so a payload that came back unnoticed would be both"; \
+    : "the largest and the most privileged thing here."; \
+    : ""; \
+    : "|| exit because set -e ignores !-pipelines -- see the firefox removal."; \
+    ! test -e /usr/lib/marwanos/mowser \
+        || { echo "the mowser payload is back -- a console has no browser"; exit 1; }; \
     test -L /usr/lib/systemd/system/multi-user.target.wants/marwanos-netcheck.service; \
     test -L /usr/lib/systemd/system/multi-user.target.wants/marwanos-appscan.service; \
     test -L /usr/lib/systemd/system/multi-user.target.wants/marwanos-wifi.service; \
@@ -1733,13 +1445,12 @@ RUN set -euxo pipefail; \
     : "THE EXTENSION TRAVELS WITH THE BINARY, asserted HERE rather than with"; \
     : "the rest of the mowser payload -- which is three hundred lines earlier"; \
     : "and, importantly, before the shell is copied into the image at all."; \
-    : "Godot's exporter puts a GDExtension library beside the executable"; \
-    : "(a pack member cannot be dlopen'd), so this is the copy the shell"; \
-    : "actually loads, and it arrives with the binary rather than with the"; \
-    : "engine. Asserted because if a future Godot stopped emitting it, the"; \
-    : "symptom would be a browser screen politely saying the engine is not"; \
-    : "installed, on an image that contains every byte of it."; \
-    test -s /usr/lib/marwanos/shell/libmowser.so; \
+    : "NO EXTENSION SHIPS BESIDE THE BINARY. mowser was the only GDExtension"; \
+    : "this image ever carried and ADR 0012 removed it with the browser."; \
+    : "Asserted as an ABSENCE, and with an explicit || exit because set -e"; \
+    : "ignores !-pipelines -- a bare negation here would pass on every build."; \
+    ! test -e /usr/lib/marwanos/shell/libmowser.so \
+        || { echo "libmowser.so is back beside the shell -- mowser was deleted"; exit 1; }; \
     : "THE SMOKE RUN, and it exists because of a bug that got all the way to a"; \
     : "verification round: 0o600 is not valid GDScript, so an autoload failed"; \
     : "to parse -- and NOTHING in this build noticed. The export packs a script"; \

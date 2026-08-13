@@ -41,7 +41,6 @@ const TvTheme = preload("res://src/tv_theme.gd")
 const ActionRow = preload("res://src/action_row.gd")
 const WifiScreen = preload("res://src/wifi_screen.gd")
 const UpdateScreen = preload("res://src/update_screen.gd")
-const Catalogue = preload("res://src/catalogue.gd")
 
 var _rows: Array = []
 var _scroll: ScrollContainer = null
@@ -54,9 +53,6 @@ var _wifi_row: ActionRow = null
 var _wifi_screen: WifiScreen = null
 var _updates_row: ActionRow = null
 var _update_screen: UpdateScreen = null
-## Built only on a devmode machine, and null everywhere else -- see the row's
-## comment in _ready. Every use is guarded, like the two screens above it.
-var _terminal_row: ActionRow = null
 
 
 func _ready() -> void:
@@ -190,27 +186,11 @@ func _ready() -> void:
 	list.add_child(_updates_row)
 	_rows.append(_updates_row)
 
-	# THE ROW THAT IS NOT THERE ON A SHIPPED MACHINE, and the only row on this
-	# screen whose EXISTENCE is conditional rather than its value.
-	#
-	# A "Terminal -- not available" row would be the wrong kind of honest. Every
-	# other read-only row on this screen answers a question somebody has; this
-	# one would advertise a door and then refuse to open it, on a machine whose
-	# entire thesis is that the door is not there. Absent is the truth. On a
-	# devmode machine the flag is set and the row appears, which is the same
-	# switch sshd and the tty2 getty are on -- see catalogue.gd's terminal block
-	# and ADR 0009.
-	#
-	# LAST, and by a wider margin than Updates earned. Updates is here rather
-	# than mid-list because it can restart the machine; this one hands over the
-	# whole machine, so it sits below the row somebody's thumb might overshoot
-	# onto, not above it.
-	if Catalogue.devmode():
-		_terminal_row = ActionRow.new()
-		_terminal_row.setup("Terminal", "Opens a shell -- press A")
-		_terminal_row.activated.connect(_on_terminal_row_pressed)
-		list.add_child(_terminal_row)
-		_rows.append(_terminal_row)
+	# THE TERMINAL ROW IS GONE, and not because devmode is. A shell prompt is
+	# not a console surface, and it was the last row on this screen that opened
+	# one. The devmode switch itself is untouched -- sshd and the tty2 getty are
+	# still on it, and ssh is now the whole of the escape hatch, which is the
+	# honest place for it: reachable from another machine, never from the sofa.
 
 	# The spacer that used to take the slack here is gone: the scroll container
 	# above is the expanding child now, which is what keeps the hint row pinned
@@ -428,26 +408,6 @@ func _on_updates_row_pressed() -> void:
 	ShellLog.info("update screen opened from settings")
 
 
-## Open the terminal. The one row on this screen that goes through the LAUNCH
-## seam rather than a settings seam, and it uses it exactly as the rail and the
-## stores screen do: build an entry, hand it to Launcher, and let the seam own
-## everything after that -- the splash, the pad bridge, the app menu's Type and
-## Close, and putting this screen back when it exits.
-##
-## The busy guard is the stores screen's: a second press while something is
-## already up is a bounced button. Launcher.launch refuses anyway; saying so in
-## the journal is what makes an unexpectedly missing terminal readable later.
-func _on_terminal_row_pressed() -> void:
-	if Launcher.is_busy():
-		ShellLog.info("terminal row: something is already running; ignoring")
-		return
-	# A failure to spawn is the launch seam's to report and to recover from --
-	# it logs "could not start" and hands the screen straight back, which on a
-	# machine where /usr/lib/marwanos/terminal is missing or the wrapper refuses
-	# (no devmode flag on the ROOT side) is the whole failure path.
-	Launcher.launch(Catalogue.terminal_entry())
-
-
 ## Off the screen for as long as something is running on it. See the connect in
 ## _ready for why this hides rather than going deaf.
 func _on_launch_started(_entry: Dictionary) -> void:
@@ -472,11 +432,14 @@ func _on_launch_finished(_entry: Dictionary) -> void:
 	# Nothing is focused after a hide, and a settings screen with no focus owner
 	# is a settings screen the pad cannot move -- the rail's _ensure_focus
 	# lesson, in the one place on this screen where focus can be lost without a
-	# button having been pressed. Back onto the row that started it, which is
-	# where the person who just closed a terminal is looking.
-	if _terminal_row != null:
-		_terminal_row.grab_focus()
-	elif not _rows.is_empty():
+	# button having been pressed.
+	#
+	# The first row, unconditionally. This used to prefer the terminal row when
+	# one existed, because the terminal was the only thing this screen launched
+	# and so the only thing it could be returning FROM. With that row gone the
+	# preference has nothing left to prefer, and the Steam install row is the
+	# one remaining launcher on this screen -- which sits at the top anyway.
+	if not _rows.is_empty():
 		var first: Control = _rows[0]
 		first.grab_focus()
 

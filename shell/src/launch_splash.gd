@@ -36,7 +36,7 @@ extends Control
 ## and clear this instead of the pid-watch spike. The drawing does not change.
 
 const TvTheme = preload("res://src/tv_theme.gd")
-const Tile = preload("res://src/tile.gd")
+const Icons = preload("res://src/icons.gd")
 
 ## Set by Launcher before the node enters the tree.
 var entry: Dictionary = {}
@@ -138,7 +138,7 @@ func _build_icon() -> void:
 	if path.is_empty():
 		return
 
-	var image := Tile.load_icon_image(path)
+	var image := Icons.load_icon_image(path)
 	if image == null:
 		ShellLog.warn("could not load icon %s for the launch splash" % path)
 		return

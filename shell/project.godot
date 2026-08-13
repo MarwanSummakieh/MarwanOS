@@ -46,7 +46,6 @@ FocusRepeat="*res://src/focus_repeat.gd"
 SystemStatus="*res://src/system_status.gd"
 Installed="*res://src/installed.gd"
 Services="*res://src/services.gd"
-GameArt="*res://src/gameart.gd"
 Apps="*res://src/apps.gd"
 Wifi="*res://src/wifi.gd"
 Updates="*res://src/updates.gd"
@@ -56,10 +55,9 @@ Media="*res://src/media.gd"
 Launcher="*res://src/launcher.gd"
 Settings="*res://src/settings.gd"
 Power="*res://src/power.gd"
-Files="*res://src/files.gd"
 Info="*res://src/info.gd"
-; Last, and the order matters: setup.gd's open() guards against Launcher,
-; Settings, Power, Files and Info, so all five must already exist when it loads.
+; Last, and the order matters: setup.gd's open() guards against Settings, Power
+; and Info, so all three must already exist when it loads.
 Setup="*res://src/setup.gd"
 
 [display]

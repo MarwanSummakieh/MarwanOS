@@ -25,7 +25,7 @@ func open() -> void:
 		return
 	if Launcher.is_busy():
 		return
-	if Settings.is_open() or Files.is_open() or Info.is_open():
+	if Settings.is_open() or Info.is_open():
 		# Peers, not layers -- same rule the other two enforce against each
 		# other and now against this one.
 		return
