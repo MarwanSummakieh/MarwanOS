@@ -58,6 +58,9 @@ Settings="*res://src/settings.gd"
 Power="*res://src/power.gd"
 Files="*res://src/files.gd"
 Info="*res://src/info.gd"
+; Last, and the order matters: setup.gd's open() guards against Launcher,
+; Settings, Power, Files and Info, so all five must already exist when it loads.
+Setup="*res://src/setup.gd"
 
 [display]
 

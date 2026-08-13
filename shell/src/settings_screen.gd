@@ -49,6 +49,7 @@ var _scroll: ScrollContainer = null
 ## ActionRow, and GDScript resolves signal access against the static type --
 ## a SettingsRow-typed variable would fail to parse on `.activated.connect`.
 var _display_row: ActionRow = null
+var _steam_row: ActionRow = null
 var _wifi_row: ActionRow = null
 var _wifi_screen: WifiScreen = null
 var _updates_row: ActionRow = null
@@ -160,6 +161,20 @@ func _ready() -> void:
 	# /usr/lib/marwanos/window/profile: it still assembles gamescope's argv, and
 	# the default is no-bg-steam. What is gone is the invitation to change it
 	# from the couch. Bringing the row back is one block here.
+
+	# THE OTHER HALF OF FIRST-RUN SETUP: "if users don't want it then they should
+	# be able to sign in again after the OS is installed". This is that way back.
+	#
+	# It LAUNCHES Steam rather than reopening the setup screen, and the reason is
+	# the peer guard: Setup.open() refuses while Settings is open, exactly as
+	# Files and Power refuse each other, so a row that called it would do nothing
+	# at all. Launching is also the honest verb -- signing in happens in Steam's
+	# own UI either way, and this row's whole job is to get somebody there.
+	_steam_row = ActionRow.new()
+	_steam_row.setup("Steam", "Sign in or switch account -- press A", "steam")
+	_steam_row.activated.connect(_on_steam_row_pressed)
+	list.add_child(_steam_row)
+	_rows.append(_steam_row)
 
 	_wifi_row = ActionRow.new()
 	_wifi_row.setup("Wi-Fi", _wifi_value())
@@ -353,6 +368,21 @@ func _on_display_row_pressed() -> void:
 	if _display_row != null:
 		_display_row.set_value(_display_profile_value())
 	ShellLog.info("display row: cycled to \"%s\"" % want)
+
+
+## Open Steam so somebody can sign in, or sign in as somebody else.
+##
+## THIS SCREEN DOES NOT CLOSE ITSELF. Launcher.launch emits launch_started, and
+## shell_root already hides every open surface on that signal -- closing here as
+## well would be a second path doing the same job, which is how the two ended up
+## disagreeing the last time this shell had one.
+##
+## The entry is Setup.STEAM_ENTRY rather than a literal, so the shell names
+## Steam's command in exactly one place. It is a plain `steam` on PATH now, not
+## a flatpak id -- see ADR 0011.
+func _on_steam_row_pressed() -> void:
+	ShellLog.info("settings: opening Steam to sign in")
+	Launcher.launch(Setup.STEAM_ENTRY)
 
 
 func _on_display_state_changed(_state: String, _profile: String) -> void:

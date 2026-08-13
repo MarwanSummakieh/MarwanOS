@@ -725,6 +725,22 @@ func _populate() -> void:
 	# the Xvfb harness.
 	ShellLog.info("home rail ready with %d cards" % _tiles.size())
 
+	# FIRST-RUN SETUP, offered once the rail behind it exists.
+	#
+	# AFTER the rail rather than before it, and deferred rather than called
+	# straight from here, for the same reason every other surface in this shell
+	# is opened deferred: Setup.open() adds a screen to the tree and grabs
+	# focus, and doing that while this function is still building the thing
+	# underneath means focus lands on a node whose neighbours are not wired yet.
+	# The person sees the setup screen either way; what changes is whether B
+	# returns them to a working rail or to a half-built one.
+	#
+	# needed() answers false when HOME is empty, so the Xvfb harness and a desk
+	# run never see this -- a first-run screen that appeared in every automated
+	# run would be a screen every test had to learn to dismiss.
+	if Setup.needed():
+		Setup.open.call_deferred()
+
 
 ## The rail keeps its one-axis argument -- left and right between cards, hard
 ## stops at the ends, no wrapping (a selection that teleports across the rail
