@@ -84,76 +84,7 @@ ARG GODOT_TEMPLATES_SHA512="afcc83d8d3d298038f19c58744a0d660fa75dd4baa33cb55d101
 ARG CEF_VERSION="151.3.16+gbe1e15d+chromium-151.0.7922.109"
 ARG CEF_SHA512="6e57a5ebdd80ee5f2fdaaa168ebe19551b5c459b0170bacac2a14a2e79a4ce0cdab419c72188454c1cb7a35f7c723cbc60313b95004c312f4880cd1433a6aa42"
 
-# The depot downloader -- how a game the account owns actually arrives on this
-# machine. See docs/adr/0010-our-own-steam-client.md.
-#
-# UPSTREAM PUBLISHES NO CHECKSUM AT ALL for this release: the GitHub API's
-# `digest` field is null (the release predates the feature) and there is no
-# sidecar hash file. So the pin here is one this repo computed itself, on
-# 2026-08-12, over the bytes GitHub served that day -- which is trust-on-first-
-# use and is worth naming as such rather than dressing up. What it buys is
-# everything after the first: no later build can be handed different bytes
-# under the same tag without failing here.
-#
-# The size is pinned alongside the hash as a cheap early tripwire -- a truncated
-# or redirected download fails on a `wc -c` before anything spends a minute
-# hashing 33 MB.
-ARG DEPOTDOWNLOADER_VERSION="3.4.0"
-ARG DEPOTDOWNLOADER_SIZE="33442357"
-ARG DEPOTDOWNLOADER_SHA512="f9ae7975438ec99e2f87f23511ca812b651564e2b1c4d8e55bc6b5ccca302259aea983811a859ed6b1dd8f5f665961af97faca70a0e7fe55f867ac3e64c1b2b8"
-
-
 FROM ${AKMODS_IMAGE}:${AKMODS_TAG}@${AKMODS_DIGEST} AS akmods
-
-
-# The depot downloader, fetched and verified in a stage of its own so the
-# unpacked zip and the tooling that opened it never reach the image.
-#
-# IT NEEDS NO .NET RUNTIME, which is the whole reason this is three lines rather
-# than a dotnet-sdk layer: upstream publishes a self-contained single-file ELF
-# with the runtime embedded (measured 2026-08-12 -- 79 MB, `Runtime: .NET 9.0.0`
-# on a host with no dotnet installed at all). It links glibc, libstdc++ and
-# libgcc and nothing else.
-FROM ${BASE_IMAGE}:${BASE_TAG}@${BASE_DIGEST} AS depotdownloader
-
-ARG DEPOTDOWNLOADER_VERSION
-ARG DEPOTDOWNLOADER_SIZE
-ARG DEPOTDOWNLOADER_SHA512
-
-RUN --mount=type=cache,dst=/dd-dl,sharing=locked \
-    set -euxo pipefail; \
-    zip="DepotDownloader-linux-x64.zip"; \
-    if ! printf '%s  %s\n' "$DEPOTDOWNLOADER_SHA512" "/dd-dl/$zip" | sha512sum -c --status - 2>/dev/null; then \
-        rm -f "/dd-dl/$zip"; \
-        curl -fsSL --retry 3 -o "/dd-dl/$zip" \
-            "https://github.com/SteamRE/DepotDownloader/releases/download/DepotDownloader_${DEPOTDOWNLOADER_VERSION}/${zip}"; \
-        : "Size first: a truncated or redirected fetch fails here in a"; \
-        : "millisecond instead of after hashing 33 MB."; \
-        actual="$(wc -c < "/dd-dl/$zip")"; \
-        if [ "$actual" != "$DEPOTDOWNLOADER_SIZE" ]; then \
-            echo "DepotDownloader zip is $actual bytes, expected $DEPOTDOWNLOADER_SIZE" >&2; \
-            exit 1; \
-        fi; \
-        printf '%s  %s\n' "$DEPOTDOWNLOADER_SHA512" "/dd-dl/$zip" | sha512sum -c -; \
-    fi; \
-    dnf -y install unzip; \
-    install -d /out; \
-    unzip -o -q "/dd-dl/$zip" -d /out; \
-    : "The zip holds exactly two members -- the binary and its licence -- and"; \
-    : "the licence travels WITH it into the image because GPL-shaped terms are"; \
-    : "not satisfied by a URL in a comment."; \
-    test -s /out/DepotDownloader; \
-    test -s /out/LICENSE; \
-    chmod 0755 /out/DepotDownloader; \
-    : "It is a PIE, not a script and not a wrapper. Asserted because a future"; \
-    : "release switching to a framework-dependent build would still unzip, still"; \
-    : "chmod, and then fail at runtime on a machine with no console to say that"; \
-    : "the missing thing is a .NET runtime nobody knew was needed."; \
-    magic="$(head -c 4 /out/DepotDownloader | od -An -tx1 | tr -d ' \n')"; \
-    if [ "$magic" != "7f454c46" ]; then \
-        echo "DepotDownloader is not an ELF binary (magic $magic)" >&2; \
-        exit 1; \
-    fi
 
 
 # M3's shell, exported here and nowhere else. No hand-exported binary is ever
@@ -779,7 +710,6 @@ RUN --mount=type=cache,dst=/var/cache/libdnf5,sharing=locked \
         gamescope \
         cage \
         xdotool \
-        qrencode \
         xterm \
         dejavu-sans-mono-fonts \
         sudo \
@@ -963,18 +893,6 @@ RUN set -euxo pipefail; \
 # nothing anywhere to say so. The repo root also needs a .containerignore --
 # .git alone is 7 MB and this context is read over drvfs from /mnt/c.
 COPY os/files/ /
-
-# The depot downloader, beside the scripts that drive it.
-#
-# THE PATH IS FROZEN AND THIS IS NOT A PREFERENCE. DepotDownloader keeps its
-# refresh token in .NET isolated storage, in a directory named from a hash of
-# the executable's own absolute path -- measured 2026-08-12: the same binary at
-# two paths gets two separate credential stores. Move this file in a later
-# image and every signed-in machine silently loses its token on upgrade, with
-# the only symptom being a download that stops and asks for a sign-in nobody
-# expected. If it ever has to move, it is a migration, not a rename.
-COPY --from=depotdownloader /out/DepotDownloader /usr/lib/marwanos/steam/DepotDownloader
-COPY --from=depotdownloader /out/LICENSE /usr/lib/marwanos/steam/DepotDownloader.LICENSE
 
 # The nvidia kmod is built against the base's kernel but the initramfs shipped
 # in the base predates it. Without this regen, plymouth has no NVIDIA driver to
@@ -1219,21 +1137,6 @@ RUN set -euxo pipefail; \
     chmod 0755 /usr/lib/marwanos/update; \
     chmod 0755 /usr/lib/marwanos/appctl; \
     chmod 0755 /usr/lib/marwanos/usbmount; \
-    : "The Steam client's three programs and its downloader. The DOWNLOADER is"; \
-    : "here for a different reason than the rest: the find above deliberately"; \
-    : "prunes only mowser, so a 79 MB ELF that arrived by COPY rather than"; \
-    : "through os/files was just normalised to 0644 along with the scripts."; \
-    : "Chmodding it back by name is the same treatment every script gets, and"; \
-    : "cheaper than a second prune path for one file."; \
-    chmod 0755 /usr/lib/marwanos/steam/steamd; \
-    chmod 0755 /usr/lib/marwanos/steam/steamdl; \
-    chmod 0755 /usr/lib/marwanos/steam/steamlaunch; \
-    chmod 0755 /usr/lib/marwanos/steam/protocodec; \
-    chmod 0755 /usr/lib/marwanos/steam/appinfo; \
-    chmod 0755 /usr/lib/marwanos/steam/appinfo; \
-    chmod 0755 /usr/lib/marwanos/steam/DepotDownloader; \
-    chmod 0644 /usr/lib/systemd/system/marwanos-steam.service; \
-    chmod 0644 /usr/lib/systemd/system/marwanos-steam-downloads.service; \
     : "shipped-apps is deliberately NOT in the 0755 list: it is data that"; \
     : "appctl reads, not a program, and the find above has already"; \
     : "normalised it to 0644."; \
@@ -1283,15 +1186,6 @@ RUN set -euxo pipefail; \
         /usr/lib/systemd/system/multi-user.target.wants/marwanos-update.service; \
     ln -sf ../marwanos-appctl.service \
         /usr/lib/systemd/system/multi-user.target.wants/marwanos-appctl.service; \
-    : "The Steam client's two halves. Both are request-driven rather than"; \
-    : "timed -- nothing here touches Valve's servers on a machine whose owner"; \
-    : "has not opened the screen -- and they are two units rather than one so"; \
-    : "that a Restart=always after a transient auth failure cannot also kill a"; \
-    : "download somebody has been watching fill for forty minutes."; \
-    ln -sf ../marwanos-steam.service \
-        /usr/lib/systemd/system/multi-user.target.wants/marwanos-steam.service; \
-    ln -sf ../marwanos-steam-downloads.service \
-        /usr/lib/systemd/system/multi-user.target.wants/marwanos-steam-downloads.service; \
     : "The display profile's privileged half: the only writer of"; \
     : "/var/marwanos/display.profile, which is how somebody with no"; \
     : "keyboard changes what gamescope is asked to do about a flickering"; \
@@ -1474,112 +1368,6 @@ RUN set -euxo pipefail; \
     test -x /usr/lib/marwanos/wifi; \
     test -x /usr/lib/marwanos/update; \
     test -x /usr/lib/marwanos/appctl; \
-    : "THE STEAM CLIENT, asserted as the five programs it actually is. Any one"; \
-    : "missing is a screen that accepts every press and answers with nothing,"; \
-    : "on a machine with no console to ask why."; \
-    test -x /usr/lib/marwanos/steam/steamd; \
-    test -x /usr/lib/marwanos/steam/steamdl; \
-    test -x /usr/lib/marwanos/steam/steamlaunch; \
-    test -x /usr/lib/marwanos/steam/protocodec; \
-    : "appinfo is what keeps a downloaded game downloaded: without the buildid"; \
-    : "it reads out of the client's own cache, every manifest we write claims"; \
-    : "build 0, the client decides the game is out of date and downloads the"; \
-    : "whole thing again. It shipped 0644 once -- the mode sweep above"; \
-    : "normalises everything under /usr/lib/marwanos that did not arrive as a"; \
-    : "binary -- which is a producer that exists, is asserted, and cannot be"; \
-    : "executed."; \
-    test -x /usr/lib/marwanos/steam/appinfo; \
-    : "THE APPINFO PRODUCER, whose absence is the quietest failure in this"; \
-    : "whole feature: everything still works. A game downloads, appears on the"; \
-    : "rail and launches -- and then Valve's client compares the manifest's"; \
-    : "buildid 0 against the branch's real one, decides the game is out of"; \
-    : "date, and downloads it AGAIN over the copy we just spent hours"; \
-    : "fetching. Nothing on screen says why the disk filled twice. It is the"; \
-    : "only thing on this machine that can read a buildid at all, so it is"; \
-    : "asserted like the downloader rather than like a nice-to-have."; \
-    test -x /usr/lib/marwanos/steam/appinfo; \
-    : "And that steamdl actually CALLS it. The file existing while nothing"; \
-    : "invokes it is exactly the state this build is fixing, and it passes"; \
-    : "every other check here."; \
-    : "-F, not a regex: the pattern carries a dollar sign, and a BRE that"; \
-    : "silently anchored it would be an assertion that passes on nothing."; \
-    grep -qF 'refresh_appinfo "$appid"' /usr/lib/marwanos/steam/steamdl \
-        || { echo "steamdl never refreshes the appinfo sidecar; installs would commit buildid 0"; exit 1; }; \
-    : "AND THE DOWNLOADER, AT THIS EXACT PATH. Its credential cache is keyed to"; \
-    : "a hash of its own absolute path, so this assertion is not really about"; \
-    : "the file existing -- it is about the path never changing. A build that"; \
-    : "moves it passes every other check here and silently signs out every"; \
-    : "machine that upgrades. See ADR 0010."; \
-    test -x /usr/lib/marwanos/steam/DepotDownloader; \
-    test -s /usr/lib/marwanos/steam/DepotDownloader.LICENSE; \
-    : "THE STEAMCLIENT AUDIENCE, asserted by RUNNING THE ENCODER rather than by"; \
-    : "grepping for it, and the first spelling of this check is why. It grepped"; \
-    : "steamd for PLATFORM_TYPE=1 -- a variable name that exists in no file in"; \
-    : "this tree, because the platform type is an argument to the codec, not a"; \
-    : "shell variable. Correctly written with || exit, it failed every build"; \
-    : "unconditionally. A grep can be wrong about where a value lives; the"; \
-    : "bytes on the wire cannot."; \
-    : ""; \
-    : "What is being defended: a QR session begun as WebBrowser mints a token"; \
-    : "Valve accepts for web calls and REFUSES at client logon, so the library"; \
-    : "would draw perfectly and every install would fall back to asking for a"; \
-    : "password nobody can type on a television. field 2 = 1 is SteamClient"; \
-    : "and field 4 = 'Client' is its website id; 1001 and 2206436c69656e74 are"; \
-    : "those two encodings. See ADR 0010."; \
-    beginreq="$(/usr/lib/marwanos/steam/protocodec begin-req | base64 -d | od -An -tx1 | tr -d ' \n')"; \
-    case "$beginreq" in \
-        *1001*) : "platform_type = SteamClient" ;; \
-        *) echo "the QR begin request is not platform_type 1 (SteamClient): $beginreq" >&2; exit 1 ;; \
-    esac; \
-    case "$beginreq" in \
-        *2206436c69656e74*) : "website_id = Client" ;; \
-        *) echo "the QR begin request does not carry website_id Client: $beginreq" >&2; exit 1 ;; \
-    esac; \
-    : "AND THE WEB AUDIENCE, the other half of the same rule, run the same way."; \
-    : "The two shapes fail in OPPOSITE directions, which is why one assertion"; \
-    : "cannot cover both: a client session mints a token the HTTPS token"; \
-    : "exchange refuses outright -- measured 2026-08-12, eresult 63, the call"; \
-    : "is CM-gated for client-platform tokens -- so a web phase begun as"; \
-    : "SteamClient leaves the shelf empty while downloads, logon and every"; \
-    : "check above stay green. field 2 = 2 is WebBrowser and field 4 = 'Store'"; \
-    : "is its website id; 1002 and 220553746f7265 are those two encodings."; \
-    beginwebreq="$(/usr/lib/marwanos/steam/protocodec begin-req web | base64 -d | od -An -tx1 | tr -d ' \n')"; \
-    case "$beginwebreq" in \
-        *1002*) : "platform_type = WebBrowser" ;; \
-        *) echo "the web QR begin request is not platform_type 2 (WebBrowser): $beginwebreq" >&2; exit 1 ;; \
-    esac; \
-    case "$beginwebreq" in \
-        *220553746f7265*) : "website_id = Store" ;; \
-        *) echo "the web QR begin request does not carry website_id Store: $beginwebreq" >&2; exit 1 ;; \
-    esac; \
-    : "THE TAB SPLIT, asserted because it has silently broken two features in"; \
-    : "this tree already. Tab is IFS WHITESPACE to the shell even when IFS holds"; \
-    : "nothing else, so a leading empty field is swallowed and every value after"; \
-    : "it shifts one place left -- which is how an approval's refresh token"; \
-    : "landed in the new-challenge variable and the owner's scan died as an"; \
-    : "unreadable token. Every script that parses a TSV carries the hand-walked"; \
-    : "splitter instead."; \
-    grep -q '^tsv_field()' /usr/lib/marwanos/steam/steamd; \
-    grep -q '^tsv_field()' /usr/lib/marwanos/steam/steamdl; \
-    : "THE NATIVE-LINUX RULE, grepped in the one file that decides it. A title"; \
-    : "is native Linux only if some config.launch.<n>.config.oslist says so;"; \
-    : "the store-level common.oslist is a coarser claim and answers yes for"; \
-    : "titles with no runnable Linux entry point at all. Reading the wrong one"; \
-    : "means -os linux, a depot with no launcher in it, and a game that cannot"; \
-    : "start after an hour of downloading. Anchored to the lookup itself, not"; \
-    : "to the prose that explains it, so the comment stays free to name both."; \
-    grep -qF '_sub(app, "config", "launch")' /usr/lib/marwanos/steam/appinfo \
-        || { echo "the appinfo producer does not read config.launch.<n>.config.oslist"; exit 1; }; \
-    : "Syntax, checked on the three scripts and the two Python helpers. Same"; \
-    : "class of check as the session's smoke run below and for the same reason:"; \
-    : "a syntax error in a request loop is a unit that fails to start, which on"; \
-    : "this appliance looks exactly like a feature that does nothing."; \
-    bash -n /usr/lib/marwanos/steam/steamd; \
-    bash -n /usr/lib/marwanos/steam/steamdl; \
-    bash -n /usr/lib/marwanos/steam/steamlaunch; \
-    python3 -m py_compile /usr/lib/marwanos/steam/protocodec; \
-    python3 -m py_compile /usr/lib/marwanos/steam/appinfo; \
-    rm -rf /usr/lib/marwanos/steam/__pycache__; \
     : "The shared allow-list. Missing or empty, appctl refuses every store"; \
     : "request -- failing silently on a machine with no console. The greps are the"; \
     : "exact-id check on the one id the file ships: matching everywhere is"; \
@@ -1642,8 +1430,6 @@ RUN set -euxo pipefail; \
     test -L /usr/lib/systemd/system/multi-user.target.wants/marwanos-update.service; \
     test -L /usr/lib/systemd/system/multi-user.target.wants/marwanos-appctl.service; \
     test -L /usr/lib/systemd/system/multi-user.target.wants/marwanos-media.service; \
-    test -L /usr/lib/systemd/system/multi-user.target.wants/marwanos-steam.service; \
-    test -L /usr/lib/systemd/system/multi-user.target.wants/marwanos-steam-downloads.service; \
     : "THE AUTOMOUNTER, asserted as the three pieces it actually is, because"; \
     : "any one of them missing produces the same symptom -- a stick that"; \
     : "attaches, enumerates and never appears in the Files screen -- on a"; \
@@ -1700,22 +1486,6 @@ RUN set -euxo pipefail; \
     : "answers; a base image without it would make the network indicator"; \
     : "permanently say offline while the machine sat happily connected."; \
     command -v curl; \
-    : "jq parses Valve's JSON for the in-shell Steam client's library and"; \
-    : "account answers. It arrives from the BASE IMAGE (jq-1.8.1 as of the"; \
-    : "pinned digest) rather than from any dnf line here, which is exactly"; \
-    : "why it is asserted: a base bump that dropped it would leave the"; \
-    : "library shelf permanently empty -- silently, at runtime, on a machine"; \
-    : "with no console to ask why."; \
-    command -v jq; \
-    : "The QR sign-in's limbs. qrencode draws the challenge the person's"; \
-    : "phone scans -- installed by this file's own dnf line, asserted because"; \
-    : "without it the sign-in panel is a wash where a QR should be. python3"; \
-    : "runs the protobuf codec Valve's auth endpoints require; it arrives"; \
-    : "from the BASE IMAGE like jq does, which is exactly why it is asserted"; \
-    : "-- a base bump that dropped it would turn every sign-in and library"; \
-    : "request into a permanent failure with no console to say so."; \
-    command -v qrencode; \
-    command -v python3; \
     : "runcon is how the session leaves greetd's xdm_t domain -- greetd fails"; \
     : "to apply pam_selinux's selected context, and under enforcing policy"; \
     : "xdm_t cannot host bwrap's mount setup, so every flatpak -- which since"; \
@@ -1850,11 +1620,6 @@ RUN set -euxo pipefail; \
     : "appears in a build, the grant has stopped being conditional."; \
     test ! -e /etc/sudoers.d/50-marwanos-devmode; \
     test -L /usr/lib/systemd/system/multi-user.target.wants/marwanos-devmode-sudo.service; \
-    : "jq is how the in-shell Steam client's root half parses Valve's JSON."; \
-    : "It comes from the base image rather than a dnf line here, which is"; \
-    : "exactly why it is asserted: a base bump that dropped it would leave"; \
-    : "the library shelf permanently empty, silently, at runtime."; \
-    command -v jq; \
     test -L /etc/systemd/system/ModemManager.service; \
     test -f /usr/lib/systemd/logind.conf.d/50-marwanos-lid.conf; \
     test -L /etc/systemd/system/getty@tty1.service; \

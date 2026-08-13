@@ -94,8 +94,10 @@ const SCRIM_ALPHA := 0.55
 var entry: Dictionary = {}
 
 var _rows: Array = []
-## The centred panel, kept so Type can hide it without taking the scrim -- or
-## the overlay itself -- down with it.
+## The left-edge panel's container, kept so Type can hide it without taking the
+## scrim -- or the overlay itself -- down with it. Typed as Control rather than
+## as the concrete container: this was a CenterContainer until the menu moved to
+## the left edge, and nothing here should have to change again if it moves back.
 var _menu: Control = null
 var _keyboard: Keyboard = null
 
@@ -124,15 +126,30 @@ func _build() -> void:
 	scrim.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(scrim)
 
-	# Centred both ways. A pause menu is the one surface in this shell that is
-	# not anchored to an edge: it belongs to the application underneath rather
-	# than to the shell's furniture, and the middle is where every console puts
-	# it.
-	var centre := CenterContainer.new()
-	centre.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	centre.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	add_child(centre)
-	_menu = centre
+	# ON THE LEFT EDGE, vertically centred -- asked for directly by the owner,
+	# and it replaces a CenterContainer that put this in the middle of the
+	# screen. The reasoning the middle had ("it belongs to the application
+	# underneath rather than to the shell's furniture") is not wrong, but a
+	# pause menu over a running game covers less of what you were looking at
+	# when it hugs an edge, and the left edge is where the focus starts.
+	#
+	# MarginContainer, not an anchored Panel: the margin is TvTheme.SAFE_MARGIN_X,
+	# the same television safe-area gutter every other screen in this shell
+	# uses. Anchoring hard to x=0 would put the panel's edge in the overscan
+	# region of a set that still has one, which is invisible on a monitor at the
+	# desk and clipped on the actual appliance.
+	#
+	# The container fills the screen and the SIZE flags below place the panel
+	# inside it -- SHRINK_BEGIN horizontally is what makes it hug the left
+	# rather than stretch, and SHRINK_CENTER vertically keeps the old vertical
+	# placement. Both are needed: a Container fits its child to the whole rect
+	# unless the child's size flags say otherwise.
+	var side := MarginContainer.new()
+	side.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	side.add_theme_constant_override("margin_left", TvTheme.SAFE_MARGIN_X)
+	side.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(side)
+	_menu = side
 
 	# PanelContainer, NOT Panel, and the Xvfb run is why this comment exists.
 	# Panel is not a Container: it takes its size from custom_minimum_size and
@@ -146,7 +163,11 @@ func _build() -> void:
 	panel.add_theme_stylebox_override("panel", TvTheme.card_idle_box())
 	panel.custom_minimum_size = Vector2(MENU_WIDTH, 0)
 	panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	centre.add_child(panel)
+	# See the container above: without these the MarginContainer would stretch
+	# this panel across the whole screen and "on the left" would be invisible.
+	panel.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+	panel.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	side.add_child(panel)
 
 	# No full-rect preset here any more: inside a PanelContainer the child is
 	# laid out by the container, and presetting anchors would fight it.

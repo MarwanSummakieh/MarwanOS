@@ -176,8 +176,11 @@ say "VERDICT"
 if [ "$rc" -eq 124 ] && [ "$elapsed" -ge "$SECONDS_TO_RUN" ]; then
     echo "  SURVIVED ${elapsed}s. Nested gamescope on a wlroots parent did NOT"
     echo "  reproduce the 33a28a4 coredump within this window."
-    echo "  NOT YET PROVEN: a real game (vkcube is a trivial client), input"
-    echo "  routing, and Steam's hidraw grab. This clears the blocker only."
+    echo "  NOT YET PROVEN: a real game (vkcube is a trivial client) and input"
+    echo "  routing. This clears the blocker only."
+    echo "  (An earlier draft said 'Steam's hidraw grab' here. That was wrong:"
+    echo "   Steam Input does not EVIOCGRAB, the physical evdev node keeps"
+    echo "   delivering, and this image ships no steam-devices udev rules.)"
 elif grep -qiE 'coredump|assert|abort|Segmentation' "$LOG/run.out"; then
     echo "  DIED at ${elapsed}s with an abort in the log -- the 33a28a4 failure"
     echo "  reproduces on a wlroots parent too. The topology is dead; do not"

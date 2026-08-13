@@ -24,23 +24,35 @@ signal stores_opened()
 ## Emitted when the screen is gone and the home rail should come back.
 signal stores_closed()
 
-## WHAT THIS SEAM OPENS IS NOT A STORE ANY MORE, and the seam kept its name on
-## purpose. ADR 0010 replaced the storefront with this repository's own Steam
-## client -- sign in by scanning a code, then the games the account already owns
-## -- so the screen behind the bag icon is steam_screen.gd. The signals stay
-## `stores_opened` and `stores_closed` because the HOME RAIL is what listens to
-## them and what they mean to it is unchanged: one fullscreen surface came up,
-## get out of the way; it went, come back. Renaming them would be a rename in
-## shell_root for a fact shell_root does not care about.
-const SteamScreen = preload("res://src/steam_screen.gd")
+## THIS SEAM NO LONGER OPENS A SCREEN AT ALL, and the name survives for the same
+## reason it survived the last change: the HOME RAIL is what listens to
+## `stores_opened`/`stores_closed`, and what they mean to it is unchanged --
+## something took the screen, get out of the way; it went, come back.
+##
+## The history in two lines. This was a storefront; then ADR 0010 replaced it
+## with this repository's own Steam client, and the bag icon opened
+## steam_screen.gd. On 2026-08-13 that client was deleted in favour of Valve's
+## own Big Picture, so there is no in-shell screen left to open -- the bag icon
+## now raises STEAM ITSELF, which the session keeps running.
+##
+## Handed to the Launcher rather than run here, deliberately: the launcher owns
+## the busy state, the splash, and the return-to-rail seam, and a second way to
+## put something on the screen is exactly the kind of parallel path this shell
+## has been bitten by before. Against a warm client `flatpak run` hands over and
+## exits in about a second, which the launcher's pid poll already handles.
+const STEAM_ENTRY := {
+	"id": "steam.bigpicture",
+	"title": "Steam",
+	"exec": ["flatpak", "run", "com.valvesoftware.Steam", "-gamepadui"],
+}
 
-# Typed as the script rather than as Control so `closed` resolves statically --
-# the same argument as Launcher's _placeholder.
-var _screen: SteamScreen = null
 
-
+## Never open, now that this launches rather than draws. Kept because the peer
+## surfaces (settings, power, files, info) each guard on every other one's
+## is_open(), and a seam that quietly stopped answering would turn those guards
+## into silent no-ops rather than a compile error.
 func is_open() -> bool:
-	return _screen != null
+	return false
 
 
 ## The only way the stores screen gets opened.
@@ -60,33 +72,9 @@ func open() -> void:
 
 	ShellLog.info("stores opened")
 
-	# Assigned BEFORE the emit and added to the tree AFTER it, for the seam's
-	# standard ordering: is_open() is true for every handler of stores_opened,
-	# and the home rail captures its focus owner before the screen's _ready
-	# grabs focus.
-	_screen = SteamScreen.new()
-	_screen.closed.connect(_on_closed, CONNECT_ONE_SHOT)
-
+	# Emitted before the launch so the home rail gets out of the way in the same
+	# frame, exactly as it did when this opened a screen. `stores_closed` is NOT
+	# emitted here and is not emitted later either: the launcher owns the return
+	# journey now and fires launch_finished, which shell_root already handles.
 	stores_opened.emit()
-	get_tree().root.add_child(_screen)
-
-
-func _on_closed() -> void:
-	# Deferred for the launcher's reason: the signal arrives from inside the
-	# screen's own input handling, and removing a node from the tree part-way
-	# through input propagation is asking for trouble.
-	_finish.call_deferred()
-
-
-func _finish() -> void:
-	var screen := _screen
-	_screen = null
-	if is_instance_valid(screen):
-		# remove_child first, queue_free second: queue_free is deferred to the
-		# end of the frame, so on its own it would leave the screen drawn over
-		# the home rail for the frame in which focus is being restored.
-		screen.get_parent().remove_child(screen)
-		screen.queue_free()
-
-	ShellLog.info("stores closed")
-	stores_closed.emit()
+	Launcher.launch(STEAM_ENTRY)

@@ -676,52 +676,27 @@ scan_steam() {
         # anywhere downstream.
         exec_cmd=""
         if [ "$state" = "installed" ]; then
-            exec_cmd="/usr/lib/marwanos/steam/steamlaunch $appid"
+            exec_cmd="flatpak run com.valvesoftware.Steam steam://rungameid/$appid"
         fi
 
-        # THROUGH steamlaunch RATHER THAN STRAIGHT AT THE FLATPAK, and the
-        # indirection is the whole point rather than a layer for its own sake.
-        # This line used to read `flatpak run com.valvesoftware.Steam -silent
-        # steam://rungameid/<appid>` -- which is still what happens for most
-        # games, and is what steamlaunch's first tier does. What it could not
-        # express is that a game has more than one way to start: a DRM-free
-        # native title needs no client at all, and a Windows one needs Proton.
-        # A scanner that walks manifests has no business deciding which; it
-        # names a program that decides, and that program is testable on its own
-        # (see steamlaunch's --explain and --dry-run).
+        # STRAIGHT AT THE FLATPAK AS A steam:// URL, because Valve's client is
+        # the whole user interface again. This line used to name steamlaunch, a
+        # program in this tree that chose between three launch tiers -- but that
+        # client was deleted on 2026-08-13 in favour of Steam's own Big Picture,
+        # and the tier logic, the QR sign-in and the depot downloader went with
+        # it. The session starts the client; this only ever hands it a URL.
         #
-        # Written while the alternative was live: the tiers existed for half a
-        # day as code nothing invoked, because this string still said flatpak.
-        # A launch path with no caller is not a feature, it is a file.
+        # NO -gamepadui AND NO -silent HERE, and both absences are deliberate.
+        # The session starts Big Picture and keeps it running, so by the time
+        # anything on the rail is pressed there IS a warm client: `flatpak run`
+        # hands the URL to it and exits. Passing -gamepadui would be asking an
+        # already-running Big Picture to start Big Picture, and -silent is the
+        # flag from the era when the shell was trying to keep Valve's UI OFF the
+        # screen -- which is no longer the design.
         #
-        # Directly under the session's gamescope, NOT inside a nested one -- the
-        # nested wrapper shipped for one evening and its inner compositor
-        # aborted on this NVIDIA driver three minutes into the first real game
-        # (catalogue.gd carries the full story). Every word in this exec is
-        # spaceless (the appid is numeric), which the space-joined, space-split
-        # exec field requires -- the title, which may contain anything, never
-        # rides in it.
-        #
-        # -silent, NOT -gamepadui, AND THAT IS THE WHOLE POINT OF THE SHELL.
-        # This line used to raise Big Picture and then launch the game inside
-        # it, so playing anything meant Valve's CEF UI arriving on the
-        # television first. There is no longer a reason for that: the shell
-        # draws the storefront, the search, the account and the wishlist itself,
-        # and the rail IS the library -- so Big Picture has nothing left to show
-        # here that this machine cannot draw with its own pad. What it does have
-        # is the flicker the owner reported, and a UI nobody asked to see.
-        #
-        # -silent means "start with no window". It is right in both states the
-        # client can be in, which is why it replaces the flag rather than merely
-        # dropping it: against a WARM client `flatpak run` hands the URL over
-        # and exits, and against a COLD one Steam starts windowless and then
-        # launches the game. Removing -gamepadui and passing nothing would have
-        # started the cold client in DESKTOP mode -- a mouse UI on a machine
-        # whose only pointer is a thumbstick, which is worse than what this
-        # replaces.
-        #
-        # So the only window that reaches the screen is the game's, and quitting
-        # it lands back on the rail rather than in somebody else's menu.
+        # Every word in this exec is spaceless (the appid is numeric), which the
+        # space-joined, space-split exec field requires -- the title, which may
+        # contain anything, never rides in it.
         printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
             "steam.$appid" "$name" "$detail" "$icon" "$exec_cmd" "$state"
     done
