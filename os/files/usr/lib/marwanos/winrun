@@ -30,18 +30,20 @@ err()  { printf '<3>%s: %s\n' "$TAG" "$*" >&2; }
 
 # THE RUNTIME, AND IT IS THE WHOLE DECISION THIS FILE EXISTS TO ISOLATE.
 #
-# umu-run is the intended answer: it is Proton outside Steam, which is the only
-# way a Windows game runs with Valve's compatibility work without Valve's client
-# owning the screen. That is the entire point of not being locked to Steam.
+# umu-run: Proton outside Steam, which is the only way a Windows game runs with
+# Valve's compatibility work without Valve's client owning the screen. That is
+# the entire point of not being locked to Steam, and it is in the image as a
+# pinned RPM -- see the Containerfile's UMU_VERSION block.
 #
-# IT IS NOT IN THE IMAGE YET, and the reason is honest rather than technical:
-# umu-launcher is in no repository this image already trusts, so adding it means
-# adding a third-party source -- which ADR 0011 says needs a decision, not a
-# commit. `wine` IS in Fedora's own repositories and is the fallback worth
-# having in the meantime; it runs a great many games and needs nothing new
-# trusted, at the cost of Proton's patches and bundled DXVK.
+# The override exists for two real cases rather than as a courtesy: `wine` is in
+# Fedora's own repositories and is what to fall back to if a title behaves worse
+# under Proton, and a bench run needs to be able to swap the runtime without
+# rebuilding an image.
 #
-# Whichever lands, it is spelled once, here.
+# FIRST LAUNCH NEEDS A NETWORK. umu downloads a Proton build into the player's
+# home the first time it runs; upstream's design, not this project's choice.
+# A machine that has never been online will fail its first Windows game and
+# succeed afterwards.
 RUNTIME="${MARWANOS_WINDOWS_RUNTIME:-umu-run}"
 
 slug="${1:-}"
@@ -81,7 +83,7 @@ if ! command -v "$RUNTIME" >/dev/null 2>&1; then
     # did not happen, and on a machine with no console this line in the journal
     # is the only explanation anybody will ever get. It names the fix.
     err "no Windows runtime: '$RUNTIME' is not installed, so '$slug' cannot start"
-    err "install umu-launcher (Proton outside Steam) or set MARWANOS_WINDOWS_RUNTIME=wine"
+    err "the image ships umu-run; set MARWANOS_WINDOWS_RUNTIME to override it"
     exit 1
 fi
 

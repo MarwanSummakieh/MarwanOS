@@ -68,6 +68,28 @@ ARG GODOT_RELEASE="stable"
 ARG GODOT_EDITOR_SHA512="4ccdab7a48eeccbe8819a2fc1f6262f8d72065d98601bcb3743fcbd7ebd39f373758a788ee3293a05ec5b2c48538266c437404312e372225cd2df273945a2de9"
 ARG GODOT_TEMPLATES_SHA512="afcc83d8d3d298038f19c58744a0d660fa75dd4baa33cb55d1011bb2565a2a8c2381728924564cb909e37c205a23f21b521b23bd057993afd43ae4da0b2f9d47"
 
+# THE WINDOWS RUNTIME: umu-launcher, which is Proton without Steam's client.
+# ADR 0012 names it, and it is the whole of "not locked to Steam" in one
+# package -- a Windows game bought anywhere runs with Valve's compatibility
+# work while Valve's UI stays off the screen.
+#
+# THE SECOND THIRD-PARTY SOURCE THIS FILE HAS EVER CARRIED, after Steam's own
+# repository in ADR 0011, whose block says none should be added "without an
+# ADR saying why". ADR 0012 is that ADR. It is a SINGLE PINNED RPM rather than
+# a repository, which is the smaller commitment of the two: nothing is
+# refreshed behind our back, and a version bump is a diff.
+#
+# Built by upstream for fc43 specifically -- the same Fedora this image is --
+# so its dependencies (python3-pyzstd, python3-urllib3, python3-xlib) resolve
+# from Fedora's own repositories rather than travelling with it.
+#
+# umu FETCHES PROTON AT RUNTIME, on the first launch, into the player's home.
+# That is upstream's design and it means the first Windows game started on a
+# machine with no network will fail. winrun reports it; there is nothing to
+# pre-seed here without shipping a Proton build this file does not control.
+ARG UMU_VERSION="1.4.4"
+ARG UMU_SHA512="bad74245fc18655e206bf3c9700917954f219ae9851de565a17695912beeaceda10cfb13a59999dbbe973f3901221198f35a03a93eae8a25867ba04e53f03872"
+
 FROM ${AKMODS_IMAGE}:${AKMODS_TAG}@${AKMODS_DIGEST} AS akmods
 
 
@@ -597,6 +619,31 @@ RUN --mount=type=cache,dst=/var/cache/libdnf5,sharing=locked \
         "https://mirrors.rpmfusion.org/nonfree/fedora/rpmfusion-nonfree-release-$(rpm -E %fedora).noarch.rpm"; \
     dnf -y install steam; \
     dnf clean all
+
+# UMU-LAUNCHER: Proton without Steam's client, so a Windows game from anywhere
+# runs without Valve's UI taking the screen. See the ARG block at the top of
+# this file for why it is a pinned RPM rather than a repository, and ADR 0012
+# for why it is here at all.
+ARG UMU_VERSION
+ARG UMU_SHA512
+RUN --mount=type=cache,dst=/var/cache/libdnf5,sharing=locked \
+    set -euxo pipefail; \
+    url="https://github.com/Open-Wine-Components/umu-launcher/releases/download"; \
+    rpm_name="umu-launcher-${UMU_VERSION}.fc$(rpm -E %fedora).x86_64.rpm"; \
+    : "Fetched to a path this build controls, verified BEFORE dnf is allowed"; \
+    : "to look at it. dnf would happily install a truncated download that"; \
+    : "still parses, and a game that fails to start six weeks later is not a"; \
+    : "failure anybody traces back to a bad byte in an image layer."; \
+    curl -fsSL --retry 3 -o /tmp/umu.rpm "${url}/${UMU_VERSION}/${rpm_name}"; \
+    printf '%s  %s\n' "$UMU_SHA512" /tmp/umu.rpm | sha512sum -c -; \
+    dnf -y install /tmp/umu.rpm; \
+    rm -f /tmp/umu.rpm; \
+    dnf clean all; \
+    : "BEHAVIOURAL, not a file test: the thing winrun calls is the name"; \
+    : "umu-run, and a package that installed but put its entry point"; \
+    : "somewhere else would pass every test that only looked at the rpm."; \
+    command -v umu-run >/dev/null \
+        || { echo "umu-launcher installed but umu-run is not on PATH"; exit 1; }
 
 # CAP_SYS_NICE on gamescope, and it is a measured fix rather than a precaution.
 #
@@ -1211,6 +1258,23 @@ RUN set -euxo pipefail; \
     : "|| exit because set -e ignores !-pipelines -- see the firefox removal."; \
     ! test -e /usr/lib/marwanos/mowser \
         || { echo "the mowser payload is back -- a console has no browser"; exit 1; }; \
+    : "THE WINDOWS RUNTIME AND ITS WRAPPER, asserted as the two things that"; \
+    : "have to be true for a game that is not Steam's to start at all:"; \
+    : "umu-run on PATH, and winrun executable by the player who calls it."; \
+    : "Both are BEHAVIOURAL -- winrun is RUN, not stat'd, because a script"; \
+    : "with a syntax error is executable and does nothing. Exit 2 is its"; \
+    : "documented answer to being given no slug, so it is the cheapest proof"; \
+    : "that the program parses and reaches its own argument handling."; \
+    : "The status is CAPTURED, not read from a bare call. set -e is on, so"; \
+    : "letting winrun exit 2 on its own line would abort the build before"; \
+    : "the test that wanted that 2 ever ran -- the assertion would appear to"; \
+    : "pass forever by never executing."; \
+    command -v umu-run >/dev/null \
+        || { echo "umu-run is gone -- no Windows game outside Steam can start"; exit 1; }; \
+    test -x /usr/lib/marwanos/winrun; \
+    winrun_rc=0; /usr/lib/marwanos/winrun >/dev/null 2>&1 || winrun_rc="$?"; \
+    test "$winrun_rc" -eq 2 \
+        || { echo "winrun answered $winrun_rc to a missing slug, not 2 -- it may not parse"; exit 1; }; \
     test -L /usr/lib/systemd/system/multi-user.target.wants/marwanos-netcheck.service; \
     test -L /usr/lib/systemd/system/multi-user.target.wants/marwanos-appscan.service; \
     test -L /usr/lib/systemd/system/multi-user.target.wants/marwanos-wifi.service; \

@@ -101,7 +101,7 @@ Adapters, in the order they earn their place:
 | Source | Mechanism | Why this one |
 | --- | --- | --- |
 | Steam | read `steamapps/*.acf` | no API, no auth, no network; works while Steam is not running |
-| Standalone Windows | `umu-launcher` | Proton **outside** Steam — the whole of "no matter where I get them" |
+| Standalone Windows | `umu-launcher` | Proton **outside** Steam — the whole of "no matter where I get them" (see the amendment below) |
 | Epic / GOG / Amazon | `legendary` / `gogdl` / `nile` | headless CLIs with JSON output; what Heroic already wraps |
 | Emulators | ROM directory scan | the conventions ES-DE already established |
 
@@ -186,6 +186,49 @@ describes what it was first used for, not what it is.
   before it is rasterised.
 - The `-e` question above is the next thing to settle on hardware, and until it
   is settled the per-game display split stays off.
+
+## Amendment, 2026-08-13 — umu-launcher is in the image
+
+The Windows adapter shipped with its runtime deliberately absent: `winrun`
+named it, failed loudly without it, and left the choice open. This amendment
+closes it.
+
+**Decision: umu-launcher 1.4.4, as a single pinned RPM.**
+
+The alternative was `wine`, which is in Fedora's own repositories and costs
+nothing new to trust. It was not chosen because it is not the same product:
+Proton's patches and bundled DXVK are a large part of why a modern Windows
+game runs at all, and shipping the weaker runtime to avoid a decision would
+have quietly made "no matter where I get them" mean "as long as it is an old
+game".
+
+This is the **second third-party source** this image has carried, after Steam's
+own repository in ADR 0011 — whose block says none should be added "without an
+ADR saying why". This is that ADR, and the commitment is deliberately the
+smaller of the two available shapes:
+
+- A **single pinned RPM**, not a repository. Nothing refreshes behind our back;
+  a version bump is a diff with a new hash in it.
+- Fetched, then **verified against a recorded SHA-512 before dnf is allowed to
+  look at it**. dnf will install a truncated download that still parses, and a
+  game that fails six weeks later is not a failure anybody traces back to a bad
+  byte in an image layer.
+- Built by upstream **for fc43 specifically**, the same Fedora this image runs,
+  so its dependencies resolve from Fedora's own repositories rather than
+  travelling with it.
+
+### What this costs, stated plainly
+
+- **The first Windows game needs a network.** umu downloads a Proton build into
+  the player's home on first run. That is upstream's design, not a choice
+  available here, and there is nothing to pre-seed without shipping a Proton
+  build this project does not control. `winrun` reports the failure; the second
+  attempt, online, succeeds.
+- **Upstream's release process is now in the trust path.** The hash pins the
+  bytes, not the intent behind them.
+
+`MARWANOS_WINDOWS_RUNTIME` overrides the runtime for a bench run or for a title
+that behaves better under plain wine, without rebuilding an image.
 
 ## What this ADR does not decide
 
