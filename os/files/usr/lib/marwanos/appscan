@@ -293,6 +293,24 @@ exec_line() {
 
     flatpak_id="$(desktop_get "$file" X-Flatpak)"
     if [ -n "$flatpak_id" ]; then
+        # STEAM OPENS INTO BIG PICTURE, and it is the one app on this machine
+        # that gets a flag added to its own desktop entry. Valve ships a
+        # DESKTOP-mode launcher -- `flatpak run com.valvesoftware.Steam` with no
+        # arguments -- which on a television is a mouse UI driven by a
+        # thumbstick. -gamepadui is the current spelling of Big Picture
+        # (-tenfoot named the old one; -bigpicture now lands on the same UI).
+        #
+        # Done HERE rather than by starting a background client, because the
+        # owner's arrangement is that Steam is closed until it is opened, then
+        # opens like any other entry on the rail. The session's WINDOW_DEFAULT
+        # block says why the client is not warmed at boot.
+        #
+        # Not a name match on the title: the flatpak id is the stable identity,
+        # and a title is whatever Valve's desktop file says this week.
+        if [ "$flatpak_id" = "com.valvesoftware.Steam" ]; then
+            printf 'flatpak run %s -gamepadui' "$flatpak_id"
+            return 0
+        fi
         printf 'flatpak run %s' "$flatpak_id"
         return 0
     fi
@@ -676,7 +694,7 @@ scan_steam() {
         # anywhere downstream.
         exec_cmd=""
         if [ "$state" = "installed" ]; then
-            exec_cmd="flatpak run com.valvesoftware.Steam steam://rungameid/$appid"
+            exec_cmd="flatpak run com.valvesoftware.Steam -gamepadui steam://rungameid/$appid"
         fi
 
         # STRAIGHT AT THE FLATPAK AS A steam:// URL, because Valve's client is
@@ -686,13 +704,24 @@ scan_steam() {
         # and the tier logic, the QR sign-in and the depot downloader went with
         # it. The session starts the client; this only ever hands it a URL.
         #
-        # NO -gamepadui AND NO -silent HERE, and both absences are deliberate.
-        # The session starts Big Picture and keeps it running, so by the time
-        # anything on the rail is pressed there IS a warm client: `flatpak run`
-        # hands the URL to it and exits. Passing -gamepadui would be asking an
-        # already-running Big Picture to start Big Picture, and -silent is the
-        # flag from the era when the shell was trying to keep Valve's UI OFF the
-        # screen -- which is no longer the design.
+        # -gamepadui RIDES ALONG, AND THE COLD CLIENT IS WHY. This line briefly
+        # carried no flag at all, on the reasoning that the session kept a warm
+        # Big Picture client so the URL would simply be handed over. That
+        # reasoning died the same day: the session went back to starting NO
+        # background client, so the FIRST game launched after a boot starts
+        # Steam cold -- and a cold `flatpak run` with only a URL comes up in
+        # DESKTOP mode, a mouse UI on a machine whose only pointer is a
+        # thumbstick, left running behind the game.
+        #
+        # Against a WARM client the flag is inert: the URL is forwarded and the
+        # wrapper exits. Against a COLD one it is what decides which UI the
+        # client that outlives the game is wearing. The owner's rule is that
+        # Steam runs only in Big Picture, and this is the line that keeps that
+        # true on the path that does not go through Steam's own card.
+        #
+        # -silent is deliberately NOT used, though it would also avoid the
+        # desktop UI: it leaves a windowless client that shows a DESKTOP window
+        # the moment anything raises it, which is the same bug deferred.
         #
         # Every word in this exec is spaceless (the appid is numeric), which the
         # space-joined, space-split exec field requires -- the title, which may

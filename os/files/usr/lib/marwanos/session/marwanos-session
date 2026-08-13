@@ -490,29 +490,26 @@ readonly PROFILE_REFRESH_FAST=100
 # Under /var and no default file baked, for PROFILE_FILE's reason verbatim.
 readonly WINDOW_PROFILE_FILE="/var/marwanos/window.profile"
 
-# BIG PICTURE IS THE MACHINE NOW, on the owner's 2026-08-13 instruction ("just
-# implement normal steam ... it runs only in big picture mode"). That reverses
-# the 2026-08-12 default of no-bg-steam, which existed because a -silent client
-# mapped a login window gamescope then focused -- a fight this appliance lost
-# every session. It is not a fight any more: the client is SUPPOSED to hold the
-# screen, so the thing it was competing with is gone.
+# NO BACKGROUND CLIENT. Steam is an APP on the rail, opened like any other,
+# and it opens into Big Picture when it is opened. The owner's 2026-08-13
+# instruction, restoring the 9cbb0e7 arrangement after a few hours of the
+# opposite: "steam was closed and will open separately like any other game".
 #
-# steam-split rather than steam-aware, and -e is the load-bearing half. Under -e
-# gamescope takes a window's appID from the STEAM_GAME atom, which is what makes
-# Steam's own window authoritative (STEAM_GAME=769) and games first-class focus
-# candidates. Without it every window is its own app and Big Picture behaves
-# like any other client. --xwayland-count 2 is the other half and buys per-game
-# X isolation -- keyboard and pointer grabs stop leaking between a game and the
-# UI, the widely-reported "input is wrong in game mode" symptom. Valve ships
-# exactly this pair.
+# THIS FILE TRIED steam-split FOR ONE BUILD AND IT WAS THE WRONG SHAPE, for a
+# reason worth keeping so nobody re-derives it. steam-split's value is `-e`,
+# which makes gamescope read a window's appID from the STEAM_GAME atom. But -e
+# also FILTERS FOCUS CANDIDATES: with it set, any window that lacks that atom
+# and was not launched by Steam's reaper is excluded from focus entirely. The
+# shell is exactly such a window. So -e is correct when Steam owns the machine
+# and actively harmful when the SHELL owns it -- and the shell owns it here.
+# The rail must be focusable, so no -e.
 #
-# KNOWN CONSEQUENCE, written down rather than discovered later: under -e any
-# window WITHOUT a STEAM_GAME atom that Steam's reaper did not launch is
-# excluded from focus entirely. The shell is such a window. It can therefore
-# only ever be an external overlay here, never the focused app -- which is the
-# design, but it means the shell gets no keyboard or pointer from the
-# compositor and must read the pad from evdev itself. It already does.
-readonly WINDOW_DEFAULT="steam-split"
+# What Big Picture costs on this profile is latency and nothing else: the warm
+# client is what makes `steam://rungameid/` resolve in seconds, so the first
+# game launched after a boot waits out a cold Steam. The rail, the library and
+# the art are unaffected -- appscan reads Valve's manifests off disk and needs
+# no running client to do it.
+readonly WINDOW_DEFAULT="no-bg-steam"
 
 # Where a rejected window profile lands, and the same word as the default:
 # no-bg-steam is `plain` minus one launch -- the gamescope argument list is
