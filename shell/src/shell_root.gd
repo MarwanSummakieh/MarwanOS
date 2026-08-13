@@ -10,27 +10,33 @@ extends Control
 ## top bar, the clock and status corner, the process pill, the in-game overlay,
 ## the launch handlers and the input routing between them.
 ##
-## THE RAIL IS COMING BACK, FED DIFFERENTLY. The old one read a catalogue that
-## knew about Steam and nothing else. Its replacement reads the same seam it
-## always did -- appscan writes /run/marwanos/apps.tsv, installed.gd polls it --
-## but with more scanners behind it: Steam's own manifests, umu for standalone
-## Windows games, the store CLIs, a ROM scan. Nothing in this file needs to know
-## which of those an entry came from, which is the entire point of putting the
-## seam there.
+## THE RAIL IS BACK, FED DIFFERENTLY. The old one read a catalogue that knew
+## about Steam and nothing else. This one reads the same seam it always did --
+## appscan writes /run/marwanos/apps.tsv, installed.gd polls it -- but with more
+## scanners behind it: Steam's own manifests, umu for standalone Windows games,
+## the store CLIs, a ROM scan. NOTHING IN THIS FILE KNOWS WHICH SOURCE AN ENTRY
+## CAME FROM, which is the entire point of putting the seam there. Only card.gd
+## looks, and only to print a caption.
 ##
-## WHAT THE PLACEHOLDER HAS TO PRESERVE. Two invariants outlived the rail and
-## are load-bearing while there is nothing to show:
+## WHAT DID NOT COME BACK: the full-bleed hero artwork behind the rail, its
+## crossfade, its cache and its debounce -- about 400 lines whose whole job was
+## to repaint the screen behind the selection. The accent wash on each card is
+## what is left of it, and it is derived from the id rather than sampled from a
+## picture, so it needs no artwork to exist.
+##
+## TWO INVARIANTS, and they outlived the rail's absence so they are written
+## here rather than left implicit:
 ##
 ##   - Something is always focused. A gamepad UI with no focus owner does not
 ##     move, and reads as a crashed machine. See _ensure_focus.
-##   - The bar cannot be hidden into a dead end. It is the only focusable
-##     surface right now, so _hide_bar refuses while the rail is empty and
-##     _ready reveals it at boot.
+##   - The bar cannot be hidden into a dead end. On a machine with nothing
+##     installed it is the only focusable surface, so _hide_bar refuses while
+##     the rail is empty and _ready reveals it at boot.
 ##
-## THREE ROWS, ONE OF THEM FOCUSABLE. Top is the bar, middle is the placeholder,
-## bottom is the hint row. Up and Down between them are explicit and consumed --
-## see _handle_bar_reveal and _handle_bar_return, both of which already handled
-## the empty-rail case and so needed no change.
+## THREE ROWS, TWO OF THEM FOCUSABLE. Top is the bar (hidden until Up asks for
+## it), middle is the rail -- or, on an empty machine, a sentence standing where
+## it would be -- and bottom is the hint row. Up and Down between them are
+## explicit and consumed; see _handle_bar_reveal and _handle_bar_return.
 ##
 ## The whole layout is built in code rather than in a .tscn. Two reasons, both
 ## specific to this repo: a scene file is authored by a GUI tool that rewrites it
@@ -39,6 +45,7 @@ extends Control
 ## runtime anyway.
 
 const TvTheme = preload("res://src/tv_theme.gd")
+const Card = preload("res://src/card.gd")
 const IconButton = preload("res://src/icon_button.gd")
 const AppOverlay = preload("res://src/app_overlay.gd")
 const ListMenu = preload("res://src/list_menu.gd")
@@ -57,10 +64,9 @@ const BAR_RETURN_GRACE_MSEC := 550
 
 var _hero: ColorRect = null
 
-## The rows the details panel used to cover, hidden together rather than painted
-## over -- see _set_lower_deck_visible. `_title_block` holds the placeholder
-## now; `_rail_row` stays declared and null until something builds a rail, and
-## the loop that hides them skips nulls.
+## The rows a fullscreen sheet covers, hidden together rather than painted over
+## -- see _set_lower_deck_visible. `_title_block` is the empty-library sentence
+## and `_rail_row` is the rail; exactly one of the two is visible at a time.
 var _title_block: Control = null
 var _rail_row: Control = null
 var _hint_row: Control = null
@@ -105,14 +111,20 @@ var _power_button: IconButton = null
 ## rather than gaining a sibling, and what used to drop from here instead.
 var _status_corner: StatusCorner = null
 
-## The rail's cards. PERMANENTLY EMPTY until something builds a rail, and that
-## emptiness is load-bearing rather than incidental: five guards below already
-## asked "is the rail empty" and did the right thing when it was -- the bar
-## refuses to hide, Up does not consume, B does not strand the pad. They were
-## written for a machine with no applications installed and they are correct,
-## unchanged, for a shell with no rail at all. Filling this array is most of
-## what bringing the library back means here.
-var _tiles: Array = []
+## The strip and the window it slides inside. The strip is wider than the
+## screen; the window clips it at the screen edge. See _build_rail.
+var _rail_viewport: Control = null
+var _rail: HBoxContainer = null
+
+## The rail's cards, in the order the seam supplied them. Empty is a normal
+## state and five guards below depend on it being handled: the bar refuses to
+## hide, Up does not consume, B does not strand the pad.
+var _cards: Array = []
+
+## The card the cursor is on, so the rail can shrink it when the cursor leaves.
+var _selected_card: Control = null
+
+var _rail_tween: Tween = null
 
 ## Where focus was when a fullscreen surface took the screen, so closing it
 ## puts the ring back on the icon it was opened from. See _hand_screen_over.
@@ -133,6 +145,9 @@ func _ready() -> void:
 		return
 
 	_build()
+	_populate()
+	_wire_focus_neighbours()
+	_refresh_empty_state()
 
 	Launcher.launch_started.connect(_on_launch_started)
 	Launcher.launch_finished.connect(_on_launch_finished)
@@ -149,12 +164,11 @@ func _ready() -> void:
 	PlayerOne.player_one_present.connect(_on_player_one_present)
 	PlayerOne.player_one_absent.connect(_on_player_one_absent)
 	SystemStatus.network_changed.connect(_on_network_changed)
-	# Installed.apps_changed, GameArt.changed and Apps.state_changed all landed
-	# here and all rebuilt the rail. Nothing draws a library right now, so there
-	# is nothing for them to rebuild -- they are reconnected by whatever renders
-	# the sources, not restored here as handlers that would run against an empty
-	# screen. Installed itself is untouched and still polling; only this screen
-	# has stopped listening.
+	# A game finishing its download and an application being removed arrive
+	# through the same door, because to this screen they are the same event:
+	# the library is different now. GameArt.changed used to be a third path
+	# into the same rebuild and is gone with the artwork cache it fed.
+	Installed.apps_changed.connect(_on_apps_changed)
 	_refresh_status()
 	# SystemStatus polled once in its own _ready, which ran before this one, so
 	# this is the current answer rather than a default -- the first frame the
@@ -171,13 +185,17 @@ func _ready() -> void:
 
 	_start_clock()
 
-	# THE BAR STARTS UP WHILE THERE IS NO LIBRARY, and it is the same reasoning
-	# as the no-controller case above rather than a new rule: the bar is hidden
-	# because the rail is the thing worth looking at, and there is no rail. A
-	# hidden bar plus a placeholder with no focusable children is a screen a pad
-	# cannot move at all -- the dead-gamepad-UI failure _ensure_focus exists to
-	# prevent, arrived at from the other direction.
-	if _bar_row != null and not _bar_row.visible:
+	# THE BAR STARTS UP ON AN EMPTY MACHINE, and it is the same reasoning as the
+	# no-controller case above rather than a new rule: the bar is hidden because
+	# the rail is the thing worth looking at, and a machine with nothing
+	# installed has no rail. A hidden bar plus a placeholder with no focusable
+	# children is a screen the pad cannot move at all -- the dead-gamepad-UI
+	# failure _ensure_focus exists to prevent, arrived at from the other side.
+	#
+	# Gated on the rail being empty, NOT on the bar being hidden: without the
+	# guard this reveals the bar on every boot, including the ordinary one where
+	# there is a library to look at and the bar is hidden on purpose.
+	if _cards.is_empty() and _bar_row != null and not _bar_row.visible:
 		_reveal_bar(false)
 
 	# Nothing navigates until something is focused: the viewport's directional
@@ -279,21 +297,15 @@ func _build() -> void:
 	spacer.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	column.add_child(spacer)
 
-	# THE RAIL IS NOT HERE YET, and this is what stands where it will stand.
-	#
-	# The old rail, its cards, its hero art and its details sheet were the
-	# presentation of a library that was Steam-shaped and built twice. Both
-	# copies are gone (ADR 0012), and the sources that replace them -- Steam's
-	# own manifests, umu for standalone Windows games, the store CLIs, a ROM
-	# scan -- feed the SAME seam the rail already read from: appscan writes
-	# apps.tsv, installed.gd reads it. So this placeholder is the only piece of
-	# the home screen that has to be thrown away when they arrive.
-	#
-	# It says what is true rather than "no games found", which on a machine that
-	# has games installed would be a lie about the machine instead of a fact
-	# about the shell.
+	# THE PLACEHOLDER AND THE RAIL ARE BOTH BUILT, and only one of them is ever
+	# visible -- see _refresh_empty_state. A machine with nothing installed gets
+	# a sentence; a machine with a library gets the library. Building both up
+	# front rather than swapping nodes on every change means an install arriving
+	# is a visibility flip, not a rebuild of the row above the one being read.
 	_title_block = _inset(_build_home_placeholder())
 	column.add_child(_title_block)
+	_rail_row = _build_rail()
+	column.add_child(_rail_row)
 	_hint_row = _inset(_build_hints())
 	column.add_child(_hint_row)
 
@@ -317,13 +329,139 @@ func _build_home_placeholder() -> Control:
 	block.add_child(headline)
 
 	var line := Label.new()
-	line.text = "Being rebuilt to read every source, not just Steam. Press Up for the bar."
+	line.text = "Nothing installed yet. Press Up for the bar."
 	line.add_theme_font_size_override("font_size", TvTheme.SIZE_BODY)
 	line.add_theme_color_override("font_color", TvTheme.TEXT_SECONDARY)
 	line.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	block.add_child(line)
 
 	return block
+
+
+## The rail: one row, full bleed, clipped to the screen edge.
+##
+## FULL BLEED AND NOT INSET, which is the one row that breaks the safe-area
+## rule and the reason is a defect this structure was built to fix. Clipping
+## the strip to the safe area guillotines cards at an invisible line 96 px in
+## from each screen edge, and the eye reads that cut as damage. A card has to
+## leave the screen AT the screen's edge. What stays inside the safe area is
+## the SELECTED card, which _scroll_to_selected parks at SAFE_MARGIN_X.
+func _build_rail() -> Control:
+	_rail_viewport = Control.new()
+	_rail_viewport.clip_contents = true
+	_rail_viewport.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	# Room for the tallest state (a focused card) plus the caption block that
+	# hangs below it, so a selection growing does not shove the hint row down.
+	_rail_viewport.custom_minimum_size = Vector2(0, TvTheme.CARD_FOCUSED_SIZE + 96)
+
+	_rail = HBoxContainer.new()
+	_rail.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_rail.add_theme_constant_override("separation", TvTheme.CARD_GAP)
+	_rail.position = Vector2(TvTheme.SAFE_MARGIN_X, 0)
+	_rail_viewport.add_child(_rail)
+
+	return _rail_viewport
+
+
+## Build one card per entry, in the order the seam supplied them.
+##
+## ORDER IS THE SCANNER'S, not this screen's. appscan decides what the library
+## looks like; a second sort here would mean two answers to "where is my game"
+## and the one a person learns is whichever they saw first.
+func _populate() -> void:
+	for card in _cards:
+		_rail.remove_child(card)
+		card.queue_free()
+	_cards.clear()
+
+	for entry in Installed.apps:
+		var card := Card.new()
+		card.setup(entry)
+		card.selected.connect(_on_card_selected)
+		_rail.add_child(card)
+		_cards.append(card)
+
+	ShellLog.info("home rail ready with %d cards" % _cards.size())
+
+
+## The cursor moved onto a card: grow it, shrink the last one, slide the strip.
+func _on_card_selected(entry: Dictionary) -> void:
+	var card := get_viewport().gui_get_focus_owner()
+	if card == null or not _cards.has(card):
+		return
+
+	if is_instance_valid(_selected_card) and _selected_card != card:
+		_selected_card.set_selected_size(false)
+	_selected_card = card
+	card.set_selected_size(true)
+
+	_scroll_to_selected()
+	# The bar's way back down has to follow the cursor, or Down from the bar
+	# lands on whatever was selected when the bar went up. One source of truth
+	# for "where the person's place is" -- see _handle_bar_return.
+	for button in _bar_buttons:
+		if is_instance_valid(button):
+			button.focus_neighbor_bottom = button.get_path_to(card)
+
+	ShellLog.info("selected %s" % str(entry.get("id", "")))
+
+
+## Park the selected card's left edge on the safe margin by sliding the STRIP,
+## not by moving a highlight.
+##
+## This is the property that stops the eye re-finding the cursor after every
+## press: the selection stays put and the library moves underneath it.
+func _scroll_to_selected() -> void:
+	if _rail == null or not is_instance_valid(_selected_card):
+		return
+	# Deferred one frame: the card was resized this frame and the HBox has not
+	# laid out yet, so its position is still the old one.
+	await get_tree().process_frame
+	if _rail == null or not is_instance_valid(_selected_card):
+		return
+
+	var target := TvTheme.SAFE_MARGIN_X - _selected_card.position.x
+	if _rail_tween != null and _rail_tween.is_valid():
+		_rail_tween.kill()
+	_rail_tween = create_tween()
+	_rail_tween.set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
+	_rail_tween.tween_property(_rail, "position:x", target, TvTheme.RAIL_TWEEN_SECONDS)
+
+
+## Exactly one of the rail and the empty-library sentence is visible.
+func _refresh_empty_state() -> void:
+	var has_library := not _cards.is_empty()
+	if _rail_row != null:
+		_rail_row.visible = has_library
+	if _title_block != null:
+		_title_block.visible = not has_library
+
+
+## The seam said the library changed: rebuild, and put the cursor back where it
+## was if that entry is still there.
+##
+## REMEMBERED BY ID, not by node. Every card is freed and rebuilt here, so the
+## control that had focus a moment ago is a dangling reference by the time this
+## needs to restore anything.
+func _on_apps_changed(_apps: Array) -> void:
+	var focused_id := ""
+	var owner := get_viewport().gui_get_focus_owner()
+	if owner != null and _cards.has(owner):
+		focused_id = str(owner.entry.get("id", ""))
+
+	_populate()
+	_wire_focus_neighbours()
+	_refresh_empty_state()
+
+	var restored: Control = null
+	for card in _cards:
+		if str(card.entry.get("id", "")) == focused_id:
+			restored = card
+			break
+	if restored != null:
+		restored.grab_focus()
+	else:
+		_ensure_focus()
 
 
 ## deliberately does not -- see the comment in _build().
@@ -520,16 +658,30 @@ func _on_pill_membership_changed(_apps: Array) -> void:
 		% ("joined" if _process_pill.visible else "left"))
 
 
-## The bar's focus chain: one axis, hard stops at both ends, nothing above and
-## nothing below.
+## Two rows, one axis each, hard stops at both ends.
 ##
-## This is the second half of the old _wire_focus_neighbours. The first half
-## wired the rail's cards and pointed the bar's `down` at the first of them;
-## with no cards, `down` points at the button itself. Pointed at SELF rather
-## than left unset, deliberately -- an unset neighbour lets Control's geometric
-## search wander off and find the hint row, which is not focusable and produces
-## a press that goes nowhere.
+## EVERY NEIGHBOUR IS STATED, including the ones that point at the control
+## itself. An unset neighbour lets Control's geometric search wander off and
+## find something that was never meant to be reachable -- the hint row, or a
+## card three screens away -- and the resulting press goes somewhere invisible.
+## A self-reference is a hard stop the search cannot get past.
+##
+## Up and Down between the two rows are NOT in this table. They are consumed in
+## _input by _handle_bar_reveal and _handle_bar_return, because the bar hides,
+## and a neighbour path into a hidden control is a press Godot drops with a
+## warning rather than a move somebody sees.
 func _wire_focus_neighbours() -> void:
+	var card_count := _cards.size()
+	for index in card_count:
+		var card: Control = _cards[index]
+		var left := index - 1 if index > 0 else index
+		var right := index + 1 if index + 1 < card_count else index
+
+		card.focus_neighbor_left = card.get_path_to(_cards[left])
+		card.focus_neighbor_right = card.get_path_to(_cards[right])
+		card.focus_neighbor_top = card.get_path_to(card)
+		card.focus_neighbor_bottom = card.get_path_to(card)
+
 	var count := _bar_buttons.size()
 	for index in count:
 		var button: Control = _bar_buttons[index]
@@ -539,28 +691,36 @@ func _wire_focus_neighbours() -> void:
 		button.focus_neighbor_left = button.get_path_to(_bar_buttons[previous])
 		button.focus_neighbor_right = button.get_path_to(_bar_buttons[next])
 		button.focus_neighbor_top = button.get_path_to(button)
-		button.focus_neighbor_bottom = button.get_path_to(button)
+		# Down goes to the selected card once one exists; _on_card_selected
+		# keeps it following the cursor after that.
+		var below: Control = _cards[0] if card_count > 0 else button
+		button.focus_neighbor_bottom = button.get_path_to(below)
 
 
 ## Put focus somewhere, or the pad moves nothing.
 ##
-## THE BAR IS THE ONLY CANDIDATE NOW. This used to prefer the rail and fall back
-## to the bar on an empty machine; the fallback is the whole function today, and
-## _ready reveals the bar before calling it so the focus lands on something a
-## person can actually see. A focus ring on a hidden control is worse than none:
-## the pad moves, nothing on screen changes, and the machine reads as crashed.
+## THREE CANDIDATES IN ORDER, and the order is what makes each landing the
+## least surprising one available.
 ##
-## _last_focused FIRST, and it is why _hand_screen_over bothers to record it:
+## _last_focused first, and it is why _hand_screen_over bothers to record it:
 ## closing Settings should return the ring to the gear it was opened from, not
 ## to whatever happens to be leftmost. Validity is checked rather than assumed
 ## -- the remembered control may have been freed while the covering screen was
-## up, which is exactly what happened to the rail's cards on every rebuild.
+## up, which is exactly what happens to every card on a library rebuild.
+##
+## Then the rail, because the rail is the home screen. Then the bar, which is
+## the empty-machine fallback and the reason _ready reveals it in that case: a
+## focus ring on a hidden control is worse than none, since the pad moves,
+## nothing on screen changes, and the machine reads as crashed.
 func _ensure_focus() -> void:
 	if get_viewport().gui_get_focus_owner() != null:
 		return
 	if is_instance_valid(_last_focused) and _last_focused.visible \
 			and _last_focused.is_inside_tree():
 		_last_focused.grab_focus()
+		return
+	if not _cards.is_empty():
+		_cards[0].grab_focus()
 		return
 	for button in _bar_buttons:
 		if is_instance_valid(button) and button.visible:
@@ -766,7 +926,7 @@ func _handle_bar_reveal(event: InputEvent) -> bool:
 	if not event.is_action_pressed("ui_up"):
 		return false
 	var owner := get_viewport().gui_get_focus_owner()
-	if owner == null or not _tiles.has(owner):
+	if owner == null or not _cards.has(owner):
 		return false
 	get_viewport().set_input_as_handled()
 	_reveal_bar(true)
@@ -797,14 +957,14 @@ func _handle_bar_return(event: InputEvent) -> void:
 		return
 	if not event.is_action_pressed("ui_down"):
 		return
-	if _tiles.is_empty():
+	if _cards.is_empty():
 		# Nothing below the bar to go back to; the bar is the whole screen.
 		return
 	var owner := get_viewport().gui_get_focus_owner() as Control
 	if owner == null or not _bar_buttons.has(owner):
 		return
 	var below := owner.get_node_or_null(owner.focus_neighbor_bottom) as Control
-	if below == null or not _tiles.has(below):
+	if below == null or not _cards.has(below):
 		return
 	get_viewport().set_input_as_handled()
 	# Stamped BEFORE the grab, because the grab is what fires the card's
@@ -852,7 +1012,7 @@ func _reveal_bar(take_focus: bool) -> void:
 func _hide_bar() -> void:
 	if _bar_row == null or not _bar_row.visible:
 		return
-	if _tiles.is_empty():
+	if _cards.is_empty():
 		return
 	_bar_revealed_for_alert = false
 	_bar_row.visible = false
@@ -1007,7 +1167,7 @@ func _unhandled_input(event: InputEvent) -> void:
 	# the bar is the only surface, and backing out of it would strand the pad.
 	var owner := get_viewport().gui_get_focus_owner()
 	if _bar_row != null and _bar_row.visible and owner != null \
-			and _bar_buttons.has(owner) and not _tiles.is_empty():
+			and _bar_buttons.has(owner) and not _cards.is_empty():
 		var below := owner.get_node_or_null(owner.focus_neighbor_bottom) as Control
 		if below != null:
 			below.grab_focus()
