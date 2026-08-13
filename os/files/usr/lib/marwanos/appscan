@@ -186,6 +186,30 @@ STEAM_APPS_DIRS="/var/home/player/Games/SteamLibrary/steamapps $STEAM_DATA/steam
 # appearing behind the game, which is the first row of the table above.
 STEAM_UI_FLAG="-gamepadui"
 
+# STANDALONE WINDOWS GAMES: the ones Steam will not install, which is the whole
+# reason ADR 0012 exists. One directory per game, dropped in by the person who
+# owns the machine:
+#
+#   ~/Games/Windows/Hollow Knight/hollow_knight.exe
+#   ~/Games/Windows/Bastion/.launch          <- "Bastion.exe", if ambiguous
+#   ~/Games/Windows/Bastion/.icon.png        <- optional
+#
+# THE RULE IS "EXACTLY ONE .exe AT THE TOP LEVEL", and `.launch` is the escape
+# hatch for the many games that ship an installer, an unins000.exe and a
+# launcher beside the real thing. A directory this cannot resolve is REPORTED
+# and skipped rather than guessed at: picking the wrong .exe silently starts an
+# uninstaller on somebody's game.
+#
+# /var/home rather than /home, for the reason every other path here does: /home
+# is a symlink on ostree.
+WINDOWS_DIR=/var/home/player/Games/Windows
+
+# slug -> executable, for winrun. The exec column in apps.tsv cannot carry a
+# path with a space in it (installed.gd splits that column on spaces), and
+# Windows games are shipped in directories with spaces in their names. So the
+# id carries a slug and this file carries the mapping. See winrun's header.
+WINDOWS_INDEX="$STATE_DIR/windows.tsv"
+
 # Where marwanos-steam lands artwork it fetched from the network, shared
 # with the shipped applications' Flathub icons. Read-only from here: this
 # scanner never downloads anything (the shell is not the only renderer in this
@@ -210,6 +234,13 @@ STORE_ICON_DIR=/var/marwanos/store/icons
 STEAM_ART_DIR=/var/marwanos/steam/art
 
 info() { printf '<6>%s: %s\n' "$TAG" "$*"; }
+# <4> is warning. Added for the Windows scanner, which has a class of outcome
+# the other scanners do not: a game directory this cannot make sense of is
+# neither fine nor fatal, and the person who dropped it in is the only one who
+# can fix it. Silence there would be a card that never appears for no stated
+# reason. Everything it prints goes to stderr with the others, so
+# `journalctl -p warning -t marwanos-appscan` is the whole diagnosis.
+warn() { printf '<4>%s: %s\n' "$TAG" "$*" >&2; }
 err()  { printf '<3>%s: %s\n' "$TAG" "$*" >&2; }
 
 install -d "$STATE_DIR" || err "cannot create $STATE_DIR -- the rail will stay empty"
@@ -886,6 +917,121 @@ dirs_signature() {
 ## are stat'ed as well. There is one per game the client has drawn -- the same
 ## order of cheap as the manifest walk below, and the alternative is an art
 ## column that is right on some Steam versions and permanently empty on others.
+## A directory name reduced to something that can live in an id and in an argv
+## entry: lowercase, spaces and punctuation collapsed to single dashes.
+##
+## THE ONLY IMPLEMENTATION. winrun does NOT re-derive this -- it reads the
+## mapping this file publishes -- because a slug rule written twice disagrees
+## exactly once, on the one title with an apostrophe in it, and the symptom is
+## a card that does nothing.
+windows_slug() {
+    printf '%s' "$1" \
+        | tr '[:upper:]' '[:lower:]' \
+        | sed -e 's/[^a-z0-9]\+/-/g' -e 's/^-\+//' -e 's/-\+$//'
+}
+
+
+## The executable for one game directory, or empty with a reason logged.
+windows_exe() {
+    local dir="$1" launch="" count=0 found="" exe
+
+    # `.launch` wins outright: it is the person saying which one, and a
+    # directory that has said so is never guessed about.
+    if [ -r "$dir/.launch" ]; then
+        IFS= read -r launch < "$dir/.launch" 2>/dev/null || true
+        launch="${launch#"${launch%%[![:space:]]*}"}"
+        launch="${launch%"${launch##*[![:space:]]}"}"
+        if [ -n "$launch" ]; then
+            if [ -f "$dir/$launch" ]; then
+                printf '%s' "$dir/$launch"
+                return 0
+            fi
+            warn "$(basename "$dir"): .launch names '$launch', which is not there"
+            return 1
+        fi
+    fi
+
+    # Top level only, deliberately: a recursive search finds the redistributable
+    # installers that games bundle three directories down.
+    for exe in "$dir"/*.exe "$dir"/*.EXE; do
+        [ -f "$exe" ] || continue
+        count=$((count + 1))
+        found="$exe"
+    done
+
+    case "$count" in
+        0) warn "$(basename "$dir"): no .exe at the top level; skipping" ; return 1 ;;
+        1) printf '%s' "$found" ; return 0 ;;
+        *) warn "$(basename "$dir"): $count .exe files and no .launch to choose; skipping"
+           return 1 ;;
+    esac
+}
+
+
+## One apps.tsv record per standalone Windows game, and the slug index winrun
+## needs, written as a side effect.
+##
+## The index is rewritten from scratch on every call rather than appended to,
+## so a game that was removed stops being resolvable at the same moment its
+## card stops being drawn.
+scan_windows() {
+    local dir name slug exe icon index_tmp
+
+    [ -d "$WINDOWS_DIR" ] || return 0
+
+    index_tmp="$WINDOWS_INDEX.tmp"
+    : > "$index_tmp" || { err "cannot write $index_tmp"; return 0; }
+
+    for dir in "$WINDOWS_DIR"/*/; do
+        [ -d "$dir" ] || continue
+        dir="${dir%/}"
+        name="$(basename "$dir")"
+
+        slug="$(windows_slug "$name")"
+        [ -n "$slug" ] || { warn "cannot make an id out of '$name'; skipping"; continue; }
+
+        exe="$(windows_exe "$dir")" || continue
+
+        icon=""
+        [ -f "$dir/.icon.png" ] && icon="$dir/.icon.png"
+
+        # A tab shears the record into extra columns and a newline shears it
+        # into two, so both become spaces -- scan_steam's sanitising, and for
+        # the same reason: these names came off somebody's disk, not out of
+        # this file.
+        name="${name//$'\t'/ }"
+        name="${name//$'\n'/ }"
+        name="${name//$'\r'/}"
+
+        printf '%s\t%s\n' "$slug" "$exe" >> "$index_tmp"
+        printf 'win.%s\t%s\t%s\t%s\t%s\t%s\n' \
+            "$slug" "$name" "Windows game" "$icon" \
+            "/usr/lib/marwanos/winrun $slug" "installed"
+    done
+
+    mv -f "$index_tmp" "$WINDOWS_INDEX" \
+        || err "cannot place $WINDOWS_INDEX -- Windows games will not start"
+}
+
+
+## Cheap enough to run every cycle: one stat per game directory plus one for
+## the root, which is the same order as dirs_signature.
+windows_signature() {
+    local dir file
+    printf '%s:%s ' "$WINDOWS_DIR" "$(stat -c %Y "$WINDOWS_DIR" 2>/dev/null || echo 0)"
+    [ -d "$WINDOWS_DIR" ] || return 0
+    for dir in "$WINDOWS_DIR"/*/; do
+        [ -d "$dir" ] || continue
+        printf '%s:%s ' "$dir" "$(stat -c %Y "$dir" 2>/dev/null || echo 0)"
+        # .launch chooses the executable, so editing it has to re-scan even
+        # though nothing about the directory itself changed.
+        for file in "$dir/.launch" "$dir/.icon.png"; do
+            [ -f "$file" ] && printf '%s:%s ' "$file" "$(stat -c %Y "$file" 2>/dev/null || echo 0)"
+        done
+    done
+}
+
+
 steam_signature() {
     local dir file
     printf '%s:%s ' "$STORE_ICON_DIR" "$(stat -c %Y "$STORE_ICON_DIR" 2>/dev/null || echo 0)"
@@ -935,18 +1081,25 @@ pending_signature() {
 last_dirs=""
 last_pending=""
 last_steam=""
+last_windows=""
 installed_listing=""
 steam_listing=""
+windows_listing=""
 while :; do
     dirs_now="$(dirs_signature)"
     pending_now="$(pending_signature)"
     steam_now="$(steam_signature)"
+    windows_now="$(windows_signature)"
 
     if [ "$dirs_now" != "$last_dirs" ] || [ "$pending_now" != "$last_pending" ] \
-        || [ "$steam_now" != "$last_steam" ]; then
+        || [ "$steam_now" != "$last_steam" ] || [ "$windows_now" != "$last_windows" ]; then
         if [ "$dirs_now" != "$last_dirs" ]; then
             last_dirs="$dirs_now"
             installed_listing="$(scan)"
+        fi
+        if [ "$windows_now" != "$last_windows" ]; then
+            last_windows="$windows_now"
+            windows_listing="$(scan_windows)"
         fi
         if [ "$steam_now" != "$last_steam" ]; then
             last_steam="$steam_now"
@@ -980,12 +1133,13 @@ while :; do
         # install finishes.
         listing="$( { printf '%s' "${installed_listing:+$installed_listing$'\n'}"; \
                       printf '%s' "${steam_listing:+$steam_listing$'\n'}"; \
+                      printf '%s' "${windows_listing:+$windows_listing$'\n'}"; \
                       pending; } \
             | grep -v '^$' | sort -t"$(printf '\t')" -k2,2f)"
         count=0
         [ -n "$listing" ] && count="$(printf '%s\n' "$listing" | wc -l)"
 
-        info "scan found $count application(s), including Steam games and pending installs"
+        info "scan found $count entr(ies): applications, Steam games, standalone Windows games, pending installs"
 
         # Atomic via rename: the shell polls this file and must never read a
         # half-written listing. Logged rather than fatal, same as netcheck --

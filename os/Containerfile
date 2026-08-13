@@ -891,6 +891,11 @@ RUN set -euxo pipefail; \
     chmod 0755 /usr/lib/marwanos/update; \
     chmod 0755 /usr/lib/marwanos/appctl; \
     chmod 0755 /usr/lib/marwanos/usbmount; \
+    : "winrun starts a standalone Windows game. It runs as the PLAYER, not as"; \
+    : "root -- it is the only program in this list the shell execs directly"; \
+    : "rather than asking a root service to do, because starting a game is"; \
+    : "the player's own privilege and needs none of root's."; \
+    chmod 0755 /usr/lib/marwanos/winrun; \
     : "shipped-apps is deliberately NOT in the 0755 list: it is data that"; \
     : "appctl reads, not a program, and the find above has already"; \
     : "normalised it to 0644."; \
