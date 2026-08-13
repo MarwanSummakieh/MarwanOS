@@ -41,9 +41,15 @@ shell/
                                                         (autoload Wifi)
     wifi_screen.gd       networks in range, and joining one
     keyboard.gd          on-screen keyboard, pad-driven
-    stores.gd            THE STORES SEAM                 (autoload Stores)
-    steamfront.gd        THE STOREFRONT SEAM: Valve's own front page, fetched
-                         by marwanos-steamfront and read off disk
+    (no store seam)      stores.gd and steamfront.gd are both GONE. The store
+                         icon opened this project's own Steam client, then
+                         Valve's Big Picture, and finally a flatpak the image
+                         no longer ships -- so on 2026-08-13 the seam, the
+                         autoload and the bar button were removed together.
+                         The rail's empty-state focus fallback moved to Files
+                         with it, which is the load-bearing half: with no cards
+                         to land on, a bar button has to exist or the pad is
+                         pointing at nothing.
                                                         (autoload Steamfront)
     stores_screen.gd     side tabs + the store page they render, which for an
                          installed Steam is a browsable grid of real games

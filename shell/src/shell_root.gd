@@ -118,7 +118,6 @@ var _bar_buttons: Array = []
 ## used to share that corner -- see process_pill.gd.
 var _process_pill: ProcessPill = null
 var _process_menu: ProcessMenu = null
-var _store_button: IconButton = null
 var _files_button: IconButton = null
 var _gear_button: IconButton = null
 var _power_button: IconButton = null
@@ -174,8 +173,6 @@ func _ready() -> void:
 	Launcher.launch_finished.connect(_on_launch_finished)
 	Settings.settings_opened.connect(_on_surface_opened)
 	Settings.settings_closed.connect(_on_surface_closed)
-	Stores.stores_opened.connect(_on_surface_opened)
-	Stores.stores_closed.connect(_on_surface_closed)
 	Power.power_opened.connect(_on_surface_opened)
 	Power.power_closed.connect(_on_surface_closed)
 	Files.files_opened.connect(_on_surface_opened)
@@ -522,7 +519,15 @@ func _build_topbar() -> Control:
 	# defensible reading; sitting next to the gear is the better one, and it
 	# frees the rail's first card to be something the person actually put there.
 	# One thing, one home (ADR 0006) is what forbids it being in both places.
-	_store_button = _bar_button("store", "Store", Stores.open)
+	# THERE IS NO STORE BUTTON, and its absence is the correction. It opened the
+	# in-shell Steam client, which was deleted on 2026-08-13; after that it
+	# launched Valve's Big Picture instead, and once Steam left the image
+	# entirely it became a button that runs a flatpak this machine does not
+	# have. A bar icon that cannot work is worse than a missing one on a
+	# television with no console to say why it did nothing.
+	#
+	# The rail's empty-state fallback moved to Files with it -- see _ensure_focus.
+	# Somewhere to land is the load-bearing part, not which icon it is.
 	_files_button = _bar_button("folder", "Files", Files.open)
 	_gear_button = _bar_button("gear", "Settings", Settings.open)
 	# The power menu, asked for by name: off, restart, sleep, next to the
@@ -1147,15 +1152,16 @@ func _ensure_focus() -> void:
 	elif not _tiles.is_empty():
 		var first: Control = _tiles[0]
 		first.grab_focus()
-	elif _store_button != null:
+	elif _files_button != null:
 		# An empty rail is the normal state of a fresh machine, and it must not
-		# be a dead end: with no card to focus, the store icon is both the only
-		# focusable thing left and exactly where someone with nothing installed
-		# needs to go. The bar has to exist to be landed on, so the hide (#12)
+		# be a dead end: with no card to focus, a bar icon is the only focusable
+		# thing left. This was the store icon until the store was removed; Files
+		# takes the role because it is the next button along and is always
+		# present. The bar has to exist to be landed on, so the hide (#12)
 		# yields here -- and _hide_bar refuses to fire while the rail is empty,
 		# which keeps the two rules from fighting.
 		_reveal_bar(false)
-		_store_button.grab_focus()
+		_files_button.grab_focus()
 
 
 ## The rail's two moods: a library, or a machine with nothing on it yet.
@@ -1225,7 +1231,7 @@ func _on_launch_finished(_entry: Dictionary) -> void:
 	# what the person should land back on when the app quits -- not the rail
 	# grabbing focus to a card that is drawn underneath an open surface. The
 	# surface's own close is what restores the rail.
-	if Stores.is_open() or Settings.is_open():
+	if Settings.is_open():
 		return
 	_take_screen_back()
 
@@ -1631,8 +1637,8 @@ func _reveal_bar(take_focus: bool) -> void:
 		ShellLog.info("top bar revealed")
 	if take_focus:
 		_bar_revealed_for_alert = false
-		if _store_button != null:
-			_store_button.grab_focus()
+		if _files_button != null:
+			_files_button.grab_focus()
 
 
 ## Hide the bar again -- unless the rail is empty, in which case the bar is
@@ -1745,7 +1751,7 @@ func _on_details_requested(tile: Control) -> void:
 			and Time.get_ticks_msec() - _left_bar_msec < BAR_RETURN_GRACE_MSEC:
 		ShellLog.info("details ignored: still the Down that came back from the top bar")
 		return
-	if Settings.is_open() or Stores.is_open() or Power.is_open() or Files.is_open() \
+	if Settings.is_open() or Power.is_open() or Files.is_open() \
 			or Info.is_open() or Launcher.is_busy():
 		return
 	if not is_instance_valid(tile) or not _tiles.has(tile):
@@ -1852,7 +1858,7 @@ func _set_lower_deck_visible(shown: bool) -> void:
 func _open_process_menu() -> void:
 	if _process_menu != null or _details != null:
 		return
-	if Settings.is_open() or Stores.is_open() or Power.is_open() or Files.is_open() \
+	if Settings.is_open() or Power.is_open() or Files.is_open() \
 			or Info.is_open() or Launcher.is_busy():
 		return
 
@@ -1896,7 +1902,7 @@ func _open_card_menu() -> void:
 		# A second press while it is up is a bounced button, not a request for
 		# two -- the same rule the other surfaces enforce.
 		return
-	if Settings.is_open() or Stores.is_open() or Power.is_open() or Files.is_open() \
+	if Settings.is_open() or Power.is_open() or Files.is_open() \
 			or Info.is_open() or Launcher.is_busy():
 		# The rail is not what is on screen, so the selected card is not what the
 		# person is looking at.
