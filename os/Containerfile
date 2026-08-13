@@ -1137,8 +1137,6 @@ RUN set -euxo pipefail; \
     chmod 0755 /usr/lib/marwanos/update; \
     chmod 0755 /usr/lib/marwanos/appctl; \
     chmod 0755 /usr/lib/marwanos/usbmount; \
-    chmod 0755 /usr/lib/marwanos/panic-exit; \
-    chmod 0644 /usr/lib/systemd/system/marwanos-panic-exit.service; \
     : "shipped-apps is deliberately NOT in the 0755 list: it is data that"; \
     : "appctl reads, not a program, and the find above has already"; \
     : "normalised it to 0644."; \
@@ -1188,15 +1186,6 @@ RUN set -euxo pipefail; \
         /usr/lib/systemd/system/multi-user.target.wants/marwanos-update.service; \
     ln -sf ../marwanos-appctl.service \
         /usr/lib/systemd/system/multi-user.target.wants/marwanos-appctl.service; \
-    : "THE WAY OUT. Enabled here rather than left to the session, because the"; \
-    : "one thing it must survive is a wedged session -- an escape hatch that"; \
-    : "is started by the thing you are escaping is not one. On 2026-08-13 the"; \
-    : "owner was trapped in Steam Big Picture with the Guide button taken, its"; \
-    : "own Shut Down doing nothing, no console login (player is nologin and no"; \
-    : "account has a password) and sshd down: the physical power button was"; \
-    : "the only exit from an application."; \
-    ln -sf ../marwanos-panic-exit.service \
-        /usr/lib/systemd/system/multi-user.target.wants/marwanos-panic-exit.service; \
     : "The display profile's privileged half: the only writer of"; \
     : "/var/marwanos/display.profile, which is how somebody with no"; \
     : "keyboard changes what gamescope is asked to do about a flickering"; \
@@ -1379,19 +1368,6 @@ RUN set -euxo pipefail; \
     test -x /usr/lib/marwanos/wifi; \
     test -x /usr/lib/marwanos/update; \
     test -x /usr/lib/marwanos/appctl; \
-    : "THE PANIC EXIT, asserted by RUNNING ITS PARSER rather than by grepping"; \
-    : "it, because the failure this defends against is silent by construction:"; \
-    : "nobody notices a broken escape hatch until they are already trapped, and"; \
-    : "at that point there is no console to ask why. So the build loads the"; \
-    : "module and checks the two facts it cannot work without -- that the evdev"; \
-    : "record is 24 bytes (a wrong struct format reads garbage forever and the"; \
-    : "chord never fires), and that the device picker takes a js-handler device"; \
-    : "and REFUSES a keyboard, which is what keeps it off Steam's virtual pad."; \
-    test -x /usr/lib/marwanos/panic-exit; \
-    python3 -c "import importlib.machinery as M, importlib.util as U; l = M.SourceFileLoader('p', '/usr/lib/marwanos/panic-exit'); s = U.spec_from_loader('p', l); m = U.module_from_spec(s); l.exec_module(m); assert m.EVENT_SIZE == 24, m.EVENT_SIZE; assert m._nodes_from_block('H: Handlers=event5 js0') == ['/dev/input/event5'], 'gamepad not picked'; assert m._nodes_from_block('H: Handlers=sysrq kbd event3') == [], 'a keyboard was taken for a gamepad'; assert m.CHORD == frozenset((0x13A, 0x13B)), 'chord is not Select+Start'; print('panic-exit parser OK')"; \
-    : "And that it is actually STARTED. The file being present while nothing"; \
-    : "runs it is precisely the state this exists to prevent."; \
-    test -L /usr/lib/systemd/system/multi-user.target.wants/marwanos-panic-exit.service; \
     : "The shared allow-list. Missing or empty, appctl refuses every store"; \
     : "request -- failing silently on a machine with no console. The greps are the"; \
     : "exact-id check on the one id the file ships: matching everywhere is"; \
