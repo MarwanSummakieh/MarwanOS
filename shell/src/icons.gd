@@ -70,6 +70,7 @@ const CODEPOINTS := {
 	# already declared below -- was rendered in the same pass as a control, so
 	# the sweep's numbering is known to line up with this table.
 	"stack": 0xe466,
+	"browser": 0xe0f4,
 	"wifi": 0xe4ea,         # wifi-high
 	"wifi-off": 0xe4f2,     # wifi-slash
 	"close": 0xe4f6,        # x

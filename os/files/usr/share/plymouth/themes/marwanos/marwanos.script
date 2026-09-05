@@ -1,47 +1,70 @@
-// MarwanOS boot splash: the wordmark in a comic font on black, a spinner
-// turning under it. The wordmark is a transparent PNG -- no field, no banner,
-// no rectangle -- so the black below is the plymouth background, not baked into
-// the art. scripts/make-splash.sh draws both PNGs from a recipe; edit there.
+// PC1 boot identity, carried from the Windows PC1 repository. The firmware
+// frame already shows the large PC1 mark on this pale field. Plymouth keeps it
+// in exactly the same place, reveals "Powered by" and the original MarwanOS
+// artwork while the Godot shell comes up.
+// scripts/make-splash.sh owns every raster; edit the sources there.
 
-// PURE BLACK, both stops. The owner asked for black rather than the old blue
-// field, and a single flat colour also means the wordmark's transparency reads
-// identically whatever the screen's aspect ratio does to the letterboxing.
-Window.SetBackgroundTopColor(0.0, 0.0, 0.0);
-Window.SetBackgroundBottomColor(0.0, 0.0, 0.0);
+Window.SetBackgroundTopColor(0.85098, 0.85490, 0.86667);
+Window.SetBackgroundBottomColor(0.81176, 0.81961, 0.83529);
 
-logo.image = Image("splash.png");
+field.image = Image("field.png");
+field.scaled = field.image.Scale(Window.GetWidth(), Window.GetHeight());
+field.sprite = Sprite(field.scaled);
+field.sprite.SetX(0);
+field.sprite.SetY(0);
 
-// A little under half the screen width. The comic wordmark is a compact block
-// of type rather than a wide banner, so it reads from the couch at this size
-// without crowding a 14" panel.
-scale = Window.GetWidth() * 0.45 / logo.image.GetWidth();
-if (scale > 1) { scale = 1; }
+pc1.image = Image("pc1.png");
+pc1.scale = Window.GetWidth() * 0.56 / pc1.image.GetWidth();
+pc1.height_scale = Window.GetHeight() * 0.34 / pc1.image.GetHeight();
+if (pc1.height_scale < pc1.scale) { pc1.scale = pc1.height_scale; }
+pc1.scaled = pc1.image.Scale(pc1.image.GetWidth() * pc1.scale,
+                             pc1.image.GetHeight() * pc1.scale);
+pc1.sprite = Sprite(pc1.scaled);
+pc1.sprite.SetX(Window.GetWidth() / 2 - pc1.scaled.GetWidth() / 2);
+pc1.sprite.SetY(Window.GetHeight() * 0.34 - pc1.scaled.GetHeight() / 2);
 
-logo.scaled = logo.image.Scale(logo.image.GetWidth() * scale,
-                               logo.image.GetHeight() * scale);
-logo.sprite = Sprite(logo.scaled);
-logo.sprite.SetX(Window.GetWidth() / 2 - logo.scaled.GetWidth() / 2);
-// Above centre, leaving the lower third for the spinner.
-logo.sprite.SetY(Window.GetHeight() * 0.42 - logo.scaled.GetHeight() / 2);
+powered.image = Image("powered-by.png");
+powered.scale = Window.GetHeight() * 0.03 / powered.image.GetHeight();
+powered.scaled = powered.image.Scale(powered.image.GetWidth() * powered.scale,
+                                     powered.image.GetHeight() * powered.scale);
+powered.sprite = Sprite(powered.scaled);
+powered.sprite.SetX(Window.GetWidth() / 2 - powered.scaled.GetWidth() / 2);
+powered.final_y = Window.GetHeight() * 0.56 - powered.scaled.GetHeight() / 2;
+powered.sprite.SetY(powered.final_y + 10);
+powered.sprite.SetOpacity(0);
 
-// The spinner. A 300-degree amber arc rotated a step per refresh, centred below
-// the wordmark. This is the "little loading circle" the owner asked for, and it
-// is the one moving thing on the screen -- which is what turns a held image
-// into "loading" without inventing a progress bar that measures nothing.
-spinner.image = Image("spinner.png");
-spinner.cx = Window.GetWidth() / 2;
-spinner.cy = Window.GetHeight() * 0.72;
-spinner.angle = 0;
+marwanos.image = Image("marwanos.png");
+marwanos.scale = Window.GetWidth() * 0.30 / marwanos.image.GetWidth();
+marwanos.height_scale = Window.GetHeight() * 0.26 / marwanos.image.GetHeight();
+if (marwanos.height_scale < marwanos.scale) { marwanos.scale = marwanos.height_scale; }
+marwanos.scaled = marwanos.image.Scale(marwanos.image.GetWidth() * marwanos.scale,
+                                       marwanos.image.GetHeight() * marwanos.scale);
+marwanos.sprite = Sprite(marwanos.scaled);
+marwanos.sprite.SetX(Window.GetWidth() / 2 - marwanos.scaled.GetWidth() / 2);
+marwanos.final_y = Window.GetHeight() * 0.70 - marwanos.scaled.GetHeight() / 2;
+marwanos.sprite.SetY(marwanos.final_y + 14);
+marwanos.sprite.SetOpacity(0);
+
+reveal.phase = 0;
+
+fun clamp(value) {
+    if (value < 0) { return 0; }
+    if (value > 1) { return 1; }
+    return value;
+}
 
 fun refresh() {
-    // ~6 degrees per refresh; plymouth refreshes near 50Hz, so roughly one turn
-    // every 1.2s -- brisk enough to read as spinning, slow enough not to strobe.
-    spinner.angle += 0.1;
-    if (spinner.angle > 6.2832) { spinner.angle -= 6.2832; }
-    rotated = spinner.image.Rotate(spinner.angle);
-    spinner.sprite = Sprite(rotated);
-    spinner.sprite.SetX(spinner.cx - rotated.GetWidth() / 2);
-    spinner.sprite.SetY(spinner.cy - rotated.GetHeight() / 2);
+    reveal.phase += 1;
+
+    // Staggered opacity and a few pixels of upward travel: one restrained
+    // identity reveal, all transform-like work, then a still logo stack.
+    powered.opacity = clamp((reveal.phase - 8) / 18.0);
+    powered.sprite.SetOpacity(powered.opacity);
+    powered.sprite.SetY(powered.final_y + (1 - powered.opacity) * 10);
+
+    marwanos.opacity = clamp((reveal.phase - 18) / 22.0);
+    marwanos.sprite.SetOpacity(marwanos.opacity);
+    marwanos.sprite.SetY(marwanos.final_y + (1 - marwanos.opacity) * 14);
 }
 
 Plymouth.SetRefreshFunction(refresh);

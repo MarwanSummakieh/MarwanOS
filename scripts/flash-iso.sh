@@ -8,21 +8,17 @@
 # read out of partitions 3 and 4, a checksum of BOOTX64.EFI mounted off
 # partition 2. Every one of those steps is meaningless here and most of them
 # are actively wrong: an installer ISO is a hybrid ISO9660 image whose layout
-# is not a GPT disk, and running `sgdisk -e` across it would rewrite structures
-# the ISO does not have. Two write paths that share nothing but `dd` are
+# contains its own GPT and appended EFI partition. Running `sgdisk -e` would
+# modify the mastered image and invalidate byte-for-byte verification. Two write paths are
 # clearer as two files than as one file with a mode switch threading through
 # every check.
 #
-# WHAT VERIFICATION MEANS FOR AN ISO. There are no partition UUIDs to compare,
-# so the check is the honest one: read back exactly as many bytes as were
+# WHAT VERIFICATION MEANS FOR AN ISO. Read back exactly as many bytes as were
 # written and compare a hash. That catches a short write, a silently failing
-# stick, and a truncated image -- which is the whole failure surface here.
+# stick, and a truncated image. It does not prove firmware compatibility.
 #
-# THE WINDOWS GPT TRAP DOES NOT APPLY. That trap is Windows rewriting the GPT
-# of a removable disk it enumerates; an ISO has no GPT to rewrite, so the
-# elaborate pull-it-physically dance around flash-usb.sh is unnecessary here.
-# Windows may still pop a "format this disk?" dialog -- say no; it is reacting
-# to a filesystem it cannot read, not to damage.
+# Windows may expose the EFI partition or offer to format other partitions.
+# Do not format or repair the mastered installer layout.
 #
 #   FLASH_CONFIRM=yes ./scripts/flash-iso.sh <iso> <device>
 #   e.g. FLASH_CONFIRM=yes ./scripts/flash-iso.sh /var/tmp/bench-out/install.iso /dev/sde
@@ -94,7 +90,6 @@ cat <<EOF
     Boot: F12 (or the target's boot-menu key) -> EFI USB Device.
     Secure Boot must be off.
 
-    Unlike the disk-image sticks, this one has no GPT for Windows to corrupt,
-    so it survives being left plugged in. If Windows offers to format it, say
-    no -- it simply cannot read ISO9660.
+    This hybrid ISO includes a GPT and an EFI partition. If Windows offers to
+    format or repair it, decline; preserve the verified installer layout.
 EOF

@@ -59,6 +59,9 @@ Info="*res://src/info.gd"
 ; Last, and the order matters: setup.gd's open() guards against Settings, Power
 ; and Info, so all three must already exist when it loads.
 Setup="*res://src/setup.gd"
+WindowsInstall="*res://src/windows_install.gd"
+Files="*res://src/files.gd"
+Browser="*res://src/browser.gd"
 
 [display]
 

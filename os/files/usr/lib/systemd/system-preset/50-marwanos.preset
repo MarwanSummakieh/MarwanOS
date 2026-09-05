@@ -27,6 +27,7 @@
 # target from deciding the unit should be off.
 
 enable greetd.service
+enable marwanos-windows.service
 enable marwanos-panel.service
 enable marwanos-link-scrub.path
 disable getty@tty1.service

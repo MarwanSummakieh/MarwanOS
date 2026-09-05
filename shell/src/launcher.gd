@@ -56,16 +56,9 @@ const LaunchSplash = preload("res://src/launch_splash.gd")
 const PadKeys = preload("res://src/pad_keys.gd")
 ## Which launched applications get the pad-to-keyboard bridge, by entry id.
 ##
-## EMPTY, AND THE SEAM IS KEPT ANYWAY. This lived in catalogue.gd and had one
-## entry left -- the terminal -- which went with the rest of the non-console
-## surfaces. Its other dialect, "pointer", died earlier with the foreign-client
-## browser. So today nothing asks for the bridge and pad_keys.gd is unreached.
-##
-## It stays because the next source to arrive is the one that needs it: an
-## emulator's own menus are keyboard-driven, and a Windows game run outside
-## Steam has no Steam Input translating a controller for it. Re-deriving this
-## mechanism then would cost more than the two lines it costs now. See
-## pad_keys.gd for the dialects themselves.
+## Legacy per-ID overrides. Managed Windows manifests instead carry input_mode
+## from the image-owned installation recipe. The first recipe uses pointer mode;
+## the bridge pauses whenever the PC1 overlay owns input.
 const PAD_KEY_APPS := {}
 
 var _current: Dictionary = {}
@@ -398,7 +391,7 @@ func _check_window() -> void:
 		Kiosk.Focus.ELSEWHERE:
 			_app_is_up()
 		Kiosk.Focus.SHELL:
-			if _watched_seconds >= WINDOW_DEADLINE_SECONDS \
+			if _watched_seconds >= float(_current.get("window_deadline", WINDOW_DEADLINE_SECONDS)) \
 					and _pid > 0 and is_instance_valid(_splash):
 				ShellLog.warn("%s alive as pid %d but no window after %.0f s; offering Close"
 					% [_label(_current), _pid, _watched_seconds])
@@ -407,9 +400,12 @@ func _check_window() -> void:
 				# exits or the person closes it, both of which reach _finish.
 				_stop_watchdog()
 		_:
-			# UNKNOWN. No claim, no action -- see the header. The plain splash
-			# stands until launch_finished.
-			pass
+			# A managed app still needs a controller-accessible escape when
+			# gamescope's focus property is unavailable. Do not claim it mapped.
+			if str(_current.get("id", "")).begins_with("managed.") \
+					and _watched_seconds >= float(_current.get("window_deadline", WINDOW_DEADLINE_SECONDS)) and is_instance_valid(_splash):
+				_splash.show_failure()
+				_stop_watchdog()
 
 
 ## Something other than the shell owns the screen: the application arrived.
@@ -441,7 +437,7 @@ func _app_is_up() -> void:
 	# on screen to type into. Which is also why a desk run never gets one -- the
 	# watchdog only answers ELSEWHERE where gamescope exists, and that is the only
 	# place XTEST injection lands where a person can see what it did.
-	var mode := str(PAD_KEY_APPS.get(str(_current.get("id", "")), ""))
+	var mode := str(_current.get("input_mode", PAD_KEY_APPS.get(str(_current.get("id", "")), "")))
 	if _pad_keys == null and not mode.is_empty():
 		_pad_keys = PadKeys.new()
 		_pad_keys.mode = mode
@@ -619,6 +615,14 @@ func can_close() -> bool:
 func close_current() -> void:
 	if _current.is_empty():
 		return
+	var stop_exec: Array = _current.get("stop_exec", [])
+	if not stop_exec.is_empty():
+		var stop_args := PackedStringArray()
+		for index in range(1, stop_exec.size()):
+			stop_args.append(str(stop_exec[index]))
+		if OS.create_process(str(stop_exec[0]), stop_args) <= 0:
+			ShellLog.error("could not close the managed application; keeping its process tracked")
+		return
 
 	# A HANDOFF CLOSES STEAM ITSELF, and there is no gentler option. The game is
 	# a process inside the client's sandbox that this shell never started, never
@@ -717,7 +721,6 @@ func _kill_pid() -> void:
 	# later is_process_running an engine ERROR about a reaped pid, so this is
 	# the one path that must stop asking. Every other close keeps polling and
 	# the rail comes back when the process is actually gone.
-	_terminating = true
 	# OS.kill is SIGKILL on Unix. Abrupt, and acceptable here: this is the
 	# button someone presses because the thing on screen will not go away, and
 	# an application that ignored a polite request is exactly the case it
@@ -726,6 +729,8 @@ func _kill_pid() -> void:
 	var error := OS.kill(_pid)
 	if error != OK:
 		ShellLog.error("could not terminate pid %d (error %d)" % [_pid, error])
+	else:
+		_terminating = true
 
 
 ## The flatpak application id anywhere in an exec, else empty. Read from the

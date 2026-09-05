@@ -13,6 +13,9 @@
 .env.*
 
 # Editor / OS noise
+.idea/
+__pycache__/
+*.pyc
 .DS_Store
 *.swp
 

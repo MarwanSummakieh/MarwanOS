@@ -76,6 +76,13 @@ var _apps_path := APPS_FILE
 ## shell never looked" have to be distinguishable.
 var _loaded := false
 var _last_raw := ""
+var _last_managed := ""
+
+
+func _managed_library() -> Array:
+	# WindowsInstall is later in autoload order; the first poll precedes it.
+	var manager := get_node_or_null("/root/WindowsInstall")
+	return manager.library() if manager != null else []
 
 
 func _ready() -> void:
@@ -97,16 +104,20 @@ func _ready() -> void:
 
 func _poll() -> void:
 	var raw := _read_file(_apps_path)
+	var managed := _managed_library()
+	var managed_raw := JSON.stringify(managed)
 	# Compared as raw text rather than by diffing parsed lists: the file is
 	# small, string equality is exact, and it means an unchanged scan costs one
 	# comparison instead of rebuilding the rail every two seconds. The first
 	# poll always goes through, however it compares -- see _loaded.
-	if _loaded and raw == _last_raw:
+	if _loaded and raw == _last_raw and managed_raw == _last_managed:
 		return
 	_loaded = true
 	_last_raw = raw
+	_last_managed = managed_raw
 
 	apps = _parse(raw)
+	apps.append_array(managed)
 	ShellLog.info("installed applications: %d" % apps.size())
 	for app in apps:
 		ShellLog.info("  %s (%s) [%s]"

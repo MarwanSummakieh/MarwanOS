@@ -1,65 +1,82 @@
 #!/usr/bin/env bash
 #
-# Generate the boot splash artwork from a recipe, so the committed bitmaps are
-# reproducible rather than mystery binaries.
+# Generate the PC1 boot identity from its first-party source artwork, so the
+# committed bitmaps are reproducible rather than mystery binaries.
 #
 # Produces:
-#   os/files/usr/share/plymouth/themes/marwanos/splash.png   wordmark, TRANSPARENT
-#   os/files/usr/share/plymouth/themes/marwanos/spinner.png  ring the script rotates
-#   os/branding/splash.bmp                                   wordmark ON BLACK, for the UKI stub
+#   os/files/usr/share/plymouth/themes/marwanos/pc1.png        PC1 mark
+#   os/files/usr/share/plymouth/themes/marwanos/powered-by.png caption
+#   os/files/usr/share/plymouth/themes/marwanos/marwanos.png   original tag
+#   os/files/usr/share/plymouth/themes/marwanos/field.png      pale linework
+#   os/files/usr/share/plymouth/themes/marwanos/splash.png     final stack preview
+#   os/branding/splash.bmp                                     early UKI frame
 #
-# THE LOOK IS PLAIN, on purpose. An earlier version drew each letter tilted with
-# outlines, drips and splatter -- a graffiti tag. The owner asked for that to be
-# replaced with just the comic font, so this is the wordmark set once in Comic
-# Neue Bold, near-white, on a transparent ground. No field, no rectangle, no
-# per-letter theatrics. The one moving thing is the spinner, drawn separately
-# and rotated by the plymouth script.
-#
-# The font is vendored at os/branding/fonts/ComicNeue-Bold.ttf (SIL OFL, hash in
-# that directory) rather than assumed present: the build container ships no
-# comic face, so relying on fontconfig to find one would render a different
-# font on the machine that has one and a fallback on the one that does not.
+# The composition follows PC1's own boot screen: a pale grey field, the exact
+# heavy PC1 geometry in near-black, a quiet "Powered by" caption, and the
+# owner's original colour MarwanOS tag. The static UKI frame carries the PC1
+# mark alone. Plymouth starts on the same frame and reveals the two lower
+# layers. That avoids a branded frame disappearing during the firmware-to-
+# userspace handoff.
 #
 # Requires ImageMagick 7.
 #
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-OUT_PNG="${REPO_ROOT}/os/files/usr/share/plymouth/themes/marwanos/splash.png"
-OUT_SPINNER="${REPO_ROOT}/os/files/usr/share/plymouth/themes/marwanos/spinner.png"
+THEME_DIR="${REPO_ROOT}/os/files/usr/share/plymouth/themes/marwanos"
+OUT_PC1="${THEME_DIR}/pc1.png"
+OUT_POWERED="${THEME_DIR}/powered-by.png"
+OUT_MARWANOS="${THEME_DIR}/marwanos.png"
+OUT_FIELD="${THEME_DIR}/field.png"
+OUT_PNG="${THEME_DIR}/splash.png"
 OUT_BMP="${REPO_ROOT}/os/branding/splash.bmp"
-FONT_FILE="${REPO_ROOT}/os/branding/fonts/ComicNeue-Bold.ttf"
+FONT_FILE="${REPO_ROOT}/os/branding/fonts/Inter-var-latin.woff2"
+PC1_SOURCE="${REPO_ROOT}/os/branding/pc1-wordmark.svg"
+MARWANOS_SOURCE="${REPO_ROOT}/os/branding/MarwanOS.svg"
 
 [ -r "$FONT_FILE" ] || { echo "missing $FONT_FILE" >&2; exit 1; }
+[ -r "$PC1_SOURCE" ] || { echo "missing $PC1_SOURCE" >&2; exit 1; }
+[ -r "$MARWANOS_SOURCE" ] || { echo "missing $MARWANOS_SOURCE" >&2; exit 1; }
 
-POINT=300
-FILL="#E8EAEE"      # FOCUS_RING, near-white -- matches the shell's own text
-ACCENT="#EBB05C"    # TEXT_ALERT amber -- the spinner, the one accent
+CAPTION="#2A2A2E"
+FIELD_TOP="#D9DADD"
+FIELD_BOTTOM="#CFD1D5"
+LINE="#C4C7CC"
 
-echo "==> wordmark"
-# Passing the ttf by PATH via -font, so the vendored file is used regardless of
-# whether fontconfig knows about it. A subtle drop shadow lifts near-white off
-# black without the outline/drip machinery the old version had.
-magick -background none -font "$FONT_FILE" -pointsize "$POINT" \
-    -fill "$FILL" "label:MarwanOS" \
-    \( +clone -background "#000000" -shadow 55x10+0+8 \) \
-    +swap -background none -layers merge +repage \
-    -bordercolor none -border 40 "$OUT_PNG"
+echo "==> PC1 wordmark"
+magick -background none "$PC1_SOURCE" -resize 2352x708 -strip "$OUT_PC1"
 
-echo "==> spinner"
-# A 300-degree amber arc; the plymouth script rotates it. The gap is what makes
-# the rotation visible.
-magick -size 120x120 xc:none \
-    -stroke "$ACCENT" -strokewidth 10 -fill none \
-    -draw "arc 12,12 108,108 0,300" \
-    "$OUT_SPINNER"
+echo "==> Powered by caption"
+# This is the only typeset layer. It uses the exact Inter subset bundled by PC1;
+# the copy and the expressive vector artwork above and below it also stay fixed.
+magick -background none -font "$FONT_FILE" -pointsize 100 \
+    -fill "$CAPTION" "label:Powered by" \
+    -bordercolor none -border 8 -strip "$OUT_POWERED"
 
-echo "==> UKI stub bitmap (flattened onto black)"
-# The systemd-boot stub renders BMP only, and BMP has no alpha, so black is
-# baked in -- which is also the point: the field IS black.
-magick -size 1672x941 xc:black \
-    \( "$OUT_PNG" -resize 1200x \) -gravity center -composite \
-    -type TrueColor BMP3:"$OUT_BMP"
+echo "==> MarwanOS tag"
+magick -background none "$MARWANOS_SOURCE" -resize 1257x417 -strip "$OUT_MARWANOS"
+
+echo "==> background field"
+magick -size 1672x941 gradient:"${FIELD_TOP}-${FIELD_BOTTOM}" \
+    -stroke "$LINE" -strokewidth 1 \
+    -draw "line -160,941 360,0 line 240,941 760,0 line 640,941 1160,0 line 1040,941 1560,0 line 1440,941 1960,0" \
+    -strip "$OUT_FIELD"
+
+echo "==> composed reference frame"
+magick "$OUT_FIELD" \
+    \( "$OUT_PC1" -resize 936x \) -gravity north -geometry +0+179 -composite \
+    \( "$OUT_POWERED" -resize 150x \) -gravity north -geometry +0+505 -composite \
+    \( "$OUT_MARWANOS" -resize 502x \) -gravity north -geometry +0+575 -composite \
+    -strip "$OUT_PNG"
+
+echo "==> UKI stub bitmap"
+# The firmware stub can only show a static BMP. It gets the opening frame: the
+# same field and PC1 position that Plymouth inherits, before the lower identity
+# layers animate in.
+magick "$OUT_FIELD" \
+    \( "$OUT_PC1" -resize 936x \) -gravity north -geometry +0+179 -composite \
+    -type TrueColor -strip BMP3:"$OUT_BMP"
 
 echo "==> done"
-magick identify "$OUT_PNG" "$OUT_SPINNER" "$OUT_BMP"
+magick identify "$OUT_PC1" "$OUT_POWERED" "$OUT_MARWANOS" "$OUT_FIELD" \
+    "$OUT_PNG" "$OUT_BMP"

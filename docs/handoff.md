@@ -1,5 +1,10 @@
 # Handoff — where MarwanOS is right now
 
+> Historical handoff: this file describes earlier iterations, including removed
+> Steam-client and browser code. For the current PC1 requirements and checked-in
+> implementation, start with [README.md](../README.md). Do not use this document
+> as a current feature inventory.
+
 **Written 2026-08-07.** This file is *current state*, not a record. It is meant to be
 rewritten or deleted, unlike [phase-0-plan.md](phase-0-plan.md) and the ADRs, which
 are the durable documents. If it disagrees with them, they win — and this file is

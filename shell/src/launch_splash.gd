@@ -191,12 +191,12 @@ func show_failure() -> void:
 	_failed = true
 	_dots.stop()
 
-	_status.text = "%s is running, but has not put anything on screen." \
+	_status.text = "PC1 could not confirm that %s is ready." \
 		% str(entry.get("title", "It"))
 	_status.add_theme_color_override("font_color", TvTheme.TEXT_ALERT)
 
 	var journal := Label.new()
-	journal.text = "The application's own account is in the journal: journalctl -t marwanos-session"
+	journal.text = "Close the application and try opening it again."
 	journal.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	journal.add_theme_font_size_override("font_size", TvTheme.SIZE_SUPPLEMENTAL)
 	journal.add_theme_color_override("font_color", TvTheme.TEXT_SECONDARY)

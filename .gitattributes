@@ -25,3 +25,4 @@ Containerfile text eol=lf
 *.bmp       binary
 *.png       binary
 *.ttf       binary
+*.woff2     binary

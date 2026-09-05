@@ -161,6 +161,12 @@ func _ready() -> void:
 	# _hand_screen_over remembers the focus owner, _take_screen_back restores it.
 	Info.info_opened.connect(_on_surface_opened)
 	Info.info_closed.connect(_on_surface_closed)
+	WindowsInstall.opened.connect(_on_surface_opened)
+	WindowsInstall.closed.connect(_on_surface_closed)
+	Files.files_opened.connect(_on_surface_opened)
+	Files.files_closed.connect(_on_surface_closed)
+	Browser.opened.connect(_on_surface_opened)
+	Browser.closed.connect(_on_surface_closed)
 	PlayerOne.player_one_present.connect(_on_player_one_present)
 	PlayerOne.player_one_absent.connect(_on_player_one_absent)
 	SystemStatus.network_changed.connect(_on_network_changed)
@@ -532,35 +538,11 @@ func _build_topbar() -> Control:
 
 	bar.add_child(_bar_gap())
 
-	# The bar's icon cluster, PS5-fashion (ADR 0006, third amendment): these are
-	# the FOCUSABLE things outside the rail -- up from any card lands on the
-	# store -- and the wifi glyph and clock after them are indicators, not
-	# controls. The order keeps them adjacent so left/right between them never
-	# crosses a non-focusable.
-	#
-	# FILES IS ONE OF THEM NOW, at the owner's request, and it stopped being a
-	# rail card in the same move. The rail is the library -- the applications
-	# this machine has -- and the file manager is a shell surface exactly like
-	# settings and power: a screen the binary draws, not a thing you install or
-	# remove. It had a card because "an app in the person's mental model" was a
-	# defensible reading; sitting next to the gear is the better one, and it
-	# frees the rail's first card to be something the person actually put there.
-	# One thing, one home (ADR 0006) is what forbids it being in both places.
-	# THERE IS NO STORE BUTTON, and its absence is the correction. It opened the
-	# in-shell Steam client, which was deleted on 2026-08-13; after that it
-	# launched Valve's Big Picture instead, and once Steam left the image
-	# entirely it became a button that runs a flatpak this machine does not
-	# have. A bar icon that cannot work is worse than a missing one on a
-	# television with no console to say why it did nothing.
-	#
-	# THERE IS NO FILES BUTTON EITHER, and it went for a plainer reason than the
-	# store did: a console has no file manager. The eight modules behind it were
-	# the single largest thing in this shell that was not aimed at playing a
-	# game, and ADR 0012 removed them.
-	#
-	# The empty-state focus fallback used to land here. It lands on the gear
-	# now -- somewhere to land is the load-bearing part, not which icon it is.
+	# Built-in tools share the shell screen and controller focus.
 	_gear_button = _bar_button("gear", "Settings", Settings.open)
+	_bar_button("download", "Install", WindowsInstall.open)
+	_bar_button("folder", "Files", Files.open)
+	_bar_button("browser", "Browser", Browser.open)
 	# The power menu, asked for by name: off, restart, sleep, next to the
 	# others.
 	_power_button = _bar_button("power", "Power", Power.open)
@@ -758,7 +740,7 @@ func _on_launch_finished(_entry: Dictionary) -> void:
 	# what the person should land back on when the app quits -- not the rail
 	# grabbing focus to a card that is drawn underneath an open surface. The
 	# surface's own close is what restores the rail.
-	if Settings.is_open():
+	if Settings.is_open() or WindowsInstall.is_open() or Files.is_open() or Browser.is_open():
 		return
 	_take_screen_back()
 
@@ -1107,7 +1089,7 @@ func _open_process_menu() -> void:
 	if _process_menu != null or _details != null:
 		return
 	if Settings.is_open() or Power.is_open() \
-			or Info.is_open() or Launcher.is_busy():
+			or Info.is_open() or Files.is_open() or Browser.is_open() or WindowsInstall.is_open() or Launcher.is_busy():
 		return
 
 	_process_menu = ProcessMenu.new()

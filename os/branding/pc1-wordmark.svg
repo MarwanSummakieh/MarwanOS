@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 588 177" width="588" height="177">
+  <!--
+    PC1 wordmark geometry copied from the first-party PC1 boot identity:
+    https://github.com/MarwanSummakieh/PC1/blob/main/console/shell/src/surfaces/boot.js
+
+    The horizontal strokes are deliberately thinner than the verticals. Keep
+    these paths in sync with PC1 rather than redrawing the letters as type.
+  -->
+  <g fill="#1c1c1e">
+    <path d="M0 0 H189 A49 49 0 0 1 189 98 H55 A15 15 0 0 0 40 113 V177 H0 V114 A36 36 0 0 1 36 78 H168 A29 29 0 0 0 168 20 H0 Z"/>
+    <path d="M478 0 H317 A54 54 0 0 0 263 54 V123 A54 54 0 0 0 317 177 H478 V156 H328 L303 131 V45 L328 20 H478 Z"/>
+    <path d="M554 0 H588 V177 H548 V26.5 L512 43 V19 Z"/>
+  </g>
+</svg>

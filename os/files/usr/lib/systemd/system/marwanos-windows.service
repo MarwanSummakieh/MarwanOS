@@ -1,0 +1,26 @@
+[Unit]
+Description=PC1 background Windows application installation
+After=local-fs.target systemd-tmpfiles-setup.service
+
+[Service]
+Type=exec
+User=player
+Group=player
+Environment=HOME=/var/home/player
+Environment=XDG_RUNTIME_DIR=/run/pc1-windows-runtime
+RuntimeDirectory=pc1-windows-runtime
+RuntimeDirectoryMode=0700
+ExecStart=/usr/lib/marwanos/windows/manager.py daemon
+Restart=on-failure
+RestartSec=5
+UMask=0077
+PrivateTmp=yes
+PrivateDevices=yes
+NoNewPrivileges=yes
+KillMode=control-group
+TimeoutStopSec=30
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
