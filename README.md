@@ -27,6 +27,10 @@ affiliated with Sony.
 See the [current roadmap](docs/roadmap.md) for priorities, dependencies and
 Tekken 8's pending metadata acceptance after installation finishes.
 
+Development is organized through the [PC1 GitHub Project](https://github.com/users/MarwanSummakieh/projects/3)
+and [six repositories](docs/repositories.md), with pinned component copies in
+this OS integration repository.
+
 ## Current implementation
 
 This is a bootable development distro. The current build runs in a UEFI VM

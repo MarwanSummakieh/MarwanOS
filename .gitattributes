@@ -26,3 +26,6 @@ Containerfile text eol=lf
 *.png       binary
 *.ttf       binary
 *.woff2     binary
+
+# Historical upstream patch evidence retains its original context whitespace.
+*.patch     -whitespace

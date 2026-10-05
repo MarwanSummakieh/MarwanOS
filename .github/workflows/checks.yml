@@ -9,6 +9,12 @@ permissions:
   contents: read
 
 jobs:
+  component-pins:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify pinned component integration copies
+        run: python3 scripts/components.py --verify
   windows-installation:
     runs-on: ubuntu-latest
     timeout-minutes: 10
