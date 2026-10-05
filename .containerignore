@@ -31,5 +31,9 @@ shell/.godot/
 shell/.import/
 
 # Editor and OS noise
+.idea/
+tests/
+__pycache__/
+*.pyc
 .DS_Store
 *.swp

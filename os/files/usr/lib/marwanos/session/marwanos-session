@@ -781,6 +781,7 @@ show_error_screen() {
 # --system rather than --user because that is the only installation this image
 # has: the shell installs into it and nothing here ever writes a user remote.
 steam_installed() {
+    command -v steam >/dev/null 2>&1 && return 0
     command -v flatpak >/dev/null 2>&1 || return 1
     flatpak info --system "$STEAM_FLATPAK_ID" >/dev/null 2>&1
 }
@@ -1111,11 +1112,10 @@ supervise_steam() {
                 _steam_multi_xwayland=0
             fi
         fi
-        flatpak run \
-            --env=ENABLE_GAMESCOPE_WSI="$_steam_wsi" \
-            --env=STEAM_MULTIPLE_XWAYLANDS="$_steam_multi_xwayland" \
-            --env=STEAM_GAME_DISPLAY_0="$_steam_game_display" \
-            "$STEAM_FLATPAK_ID" -gamepadui > "$_steam_out" 2>&1 &
+        env ENABLE_GAMESCOPE_WSI="$_steam_wsi" \
+            STEAM_MULTIPLE_XWAYLANDS="$_steam_multi_xwayland" \
+            STEAM_GAME_DISPLAY_0="$_steam_game_display" \
+            /usr/lib/marwanos/steamctl background > "$_steam_out" 2>&1 &
         _steam_pid=$!
         _steam_started="$(uptime_seconds)"
         service_state steam running
@@ -1127,7 +1127,7 @@ supervise_steam() {
         while kill -0 "$_steam_pid" 2>/dev/null; do
             if ! service_wanted steam; then
                 log "background Steam stopped from the shell's service menu"
-                flatpak kill "$STEAM_FLATPAK_ID" >/dev/null 2>&1 || true
+                /usr/lib/marwanos/steamctl stop >/dev/null 2>&1 || true
                 break
             fi
             sleep 2
@@ -1243,7 +1243,7 @@ stop_background_steam() {
     # and has no pid to signal. flatpak is the only thing that knows where it
     # went, so flatpak is asked -- otherwise a session that ends leaves a
     # logged-in Steam behind for the next one to collide with.
-    flatpak kill "$STEAM_FLATPAK_ID" >/dev/null 2>&1 || true
+    /usr/lib/marwanos/steamctl stop >/dev/null 2>&1 || true
 }
 
 # M3's supervision spec, scaffolded now because M1 is where the first client
@@ -1785,6 +1785,81 @@ fi
 RUNTIME="$XDG_RUNTIME_DIR/marwanos"
 mkdir -p "$RUNTIME"
 
+# All SDL clients use evdev so the physical grab cannot be bypassed by HIDAPI.
+# The shell receives the broker's physical state directly; games see its gated
+# virtual controller. Keep the broker alive across shell restarts.
+export SDL_JOYSTICK_HIDAPI=0
+export SDL_JOYSTICK_RAWINPUT=0
+# SDL applications select the routed pad rather than an exclusively grabbed
+# physical device that enumerates but intentionally produces no events.
+export SDL_GAMECONTROLLER_IGNORE_DEVICES_EXCEPT="0x1209/0x0001"
+export SDL_GAMECONTROLLERCONFIG="03000000091200000100000001000000,PC1 application controller,a:b0,b:b1,x:b3,y:b2,leftshoulder:b4,rightshoulder:b5,back:b6,start:b7,guide:b8,leftstick:b9,rightstick:b10,dpup:b11,dpdown:b12,dpleft:b13,dpright:b14,leftx:a0,lefty:a1,rightx:a3,righty:a4,lefttrigger:a2,righttrigger:a5,platform:Linux,"
+supervise_controller() {
+    _router_pid=""
+    trap '[ -z "$_router_pid" ] || kill "$_router_pid" 2>/dev/null; exit 0' TERM INT
+    while :; do
+        /usr/bin/python3 /usr/lib/marwanos/controller/router.py &
+        _router_pid=$!
+        wait "$_router_pid"
+        _router_pid=""
+        sleep 1
+    done
+}
+
+stop_controller() {
+    [ -z "${CONTROLLER_PID:-}" ] || kill "$CONTROLLER_PID" 2>/dev/null || true
+}
+
+# VMs expose software Vulkan without VK_EXT_physical_device_drm. An explicit
+# Xorg compatibility session provides the same shell and lifecycle there.
+# Physical appliances continue to use gamescope's direct DRM path.
+start_x11_compatibility() {
+    export MARWANOS_COMPOSITOR=x11
+    export ENABLE_GAMESCOPE_WSI=0
+    export DISPLAY=:0
+    export XAUTHORITY="$RUNTIME/Xauthority"
+    export __EGL_VENDOR_LIBRARY_FILENAMES=/usr/share/glvnd/egl_vendor.d/50_mesa.json
+    unset WAYLAND_DISPLAY GAMESCOPE_WAYLAND_DISPLAY
+    _cookie="$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')"
+    touch "$XAUTHORITY"
+    chmod 0600 "$XAUTHORITY"
+    xauth -f "$XAUTHORITY" add "$DISPLAY" . "$_cookie" || return 1
+    # Preserve greetd's console fd: asynchronous shell jobs otherwise inherit
+    # /dev/null, losing the console needed by rootless Xorg and logind.
+    /usr/libexec/Xorg "$DISPLAY" -noreset -nolisten tcp -keeptty vt1 \
+        -auth "$XAUTHORITY" -logfile "$RUNTIME/Xorg.log" <&0 > "$RUNTIME/Xorg-console.log" 2>&1 &
+    GAMESCOPE_PID=$!
+    _attempt=0
+    while ! xprop -root >/dev/null 2>&1; do
+        kill -0 "$GAMESCOPE_PID" 2>/dev/null || { cat "$RUNTIME/Xorg-console.log" >&2; return 1; }
+        _attempt=$((_attempt + 1))
+        [ "$_attempt" -lt 100 ] || return 1
+        sleep 0.1
+    done
+    # Controller input travels through the broker, so Xorg does not see it as
+    # keyboard/mouse activity. Keep an actively used console from blanking.
+    xset s off || return 1
+    xset s noblank || return 1
+    xset -dpms 2>/dev/null || true
+    openbox --config-file /usr/lib/marwanos/session/openbox.xml > "$RUNTIME/openbox.log" 2>&1 &
+    COMPAT_WM_PID=$!
+    xcompmgr -n > "$RUNTIME/xcompmgr.log" 2>&1 &
+    COMPAT_COMPOSITOR_PID=$!
+    _attempt=0
+    while ! xprop -root _NET_SUPPORTING_WM_CHECK 2>/dev/null | grep -q 'window id'; do
+        kill -0 "$COMPAT_WM_PID" 2>/dev/null || return 1
+        _attempt=$((_attempt + 1))
+        [ "$_attempt" -lt 100 ] || return 1
+        sleep 0.1
+    done
+    log "Xorg compatibility session ready on $DISPLAY"
+}
+
+stop_compatibility() {
+    [ -z "${COMPAT_WM_PID:-}" ] || kill "$COMPAT_WM_PID" 2>/dev/null || true
+    [ -z "${COMPAT_COMPOSITOR_PID:-}" ] || kill "$COMPAT_COMPOSITOR_PID" 2>/dev/null || true
+}
+
 # Environment.
 #
 # Mined from ChimeraOS/gamescope-session, which is the session bazzite forks --
@@ -1892,7 +1967,10 @@ fi
 GAMESCOPE_PID=""
 STEAM_STARTED=""
 STEAM_SUPERVISOR_PID=""
-trap 'stop_gamescope; stop_background_steam' EXIT INT TERM
+CONTROLLER_PID=""
+trap 'stop_gamescope; stop_background_steam; stop_controller; stop_compatibility' EXIT INT TERM
+supervise_controller &
+CONTROLLER_PID=$!
 
 DISPLAY_PROFILE="$(read_display_profile)"
 WINDOW_PROFILE="$(read_window_profile)"
@@ -1966,7 +2044,16 @@ start_gamescope_or_fall_back() {
     start_gamescope
 }
 
-if start_gamescope_or_fall_back; then
+start_graphics() {
+    if systemd-detect-virt --vm --quiet; then
+        start_x11_compatibility
+    else
+        export MARWANOS_COMPOSITOR=gamescope
+        start_gamescope_or_fall_back
+    fi
+}
+
+if start_graphics; then
     # The compositor is provably up (ready fd read, process alive), so the
     # frozen splash has covered everything it can -- see release_splash. Before
     # the client starts, deliberately: the splash's frame ends at gamescope's

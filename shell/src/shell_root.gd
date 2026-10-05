@@ -129,6 +129,7 @@ var _rail_tween: Tween = null
 ## Where focus was when a fullscreen surface took the screen, so closing it
 ## puts the ring back on the icon it was opened from. See _hand_screen_over.
 var _last_focused: Control = null
+var _windows_feedback := ""
 
 
 func _ready() -> void:
@@ -151,6 +152,8 @@ func _ready() -> void:
 
 	Launcher.launch_started.connect(_on_launch_started)
 	Launcher.launch_finished.connect(_on_launch_finished)
+	Launcher.minimized.connect(_on_launch_finished)
+	Launcher.blocked.connect(_on_launch_blocked)
 	Settings.settings_opened.connect(_on_surface_opened)
 	Settings.settings_closed.connect(_on_surface_closed)
 	Power.power_opened.connect(_on_surface_opened)
@@ -161,6 +164,13 @@ func _ready() -> void:
 	# _hand_screen_over remembers the focus owner, _take_screen_back restores it.
 	Info.info_opened.connect(_on_surface_opened)
 	Info.info_closed.connect(_on_surface_closed)
+	WindowsInstall.opened.connect(_on_surface_opened)
+	WindowsInstall.closed.connect(_on_surface_closed)
+	WindowsInstall.changed.connect(_on_windows_changed)
+	Files.files_opened.connect(_on_surface_opened)
+	Files.files_closed.connect(_on_surface_closed)
+	Browser.opened.connect(_on_surface_opened)
+	Browser.closed.connect(_on_surface_closed)
 	PlayerOne.player_one_present.connect(_on_player_one_present)
 	PlayerOne.player_one_absent.connect(_on_player_one_absent)
 	SystemStatus.network_changed.connect(_on_network_changed)
@@ -203,6 +213,7 @@ func _ready() -> void:
 	# origin to move from. This is the single most common way a gamepad UI ships
 	# looking dead.
 	_ensure_focus()
+	ControllerRouter.mark_shell_ready()
 
 
 # ---------------------------------------------------------------------------
@@ -532,35 +543,11 @@ func _build_topbar() -> Control:
 
 	bar.add_child(_bar_gap())
 
-	# The bar's icon cluster, PS5-fashion (ADR 0006, third amendment): these are
-	# the FOCUSABLE things outside the rail -- up from any card lands on the
-	# store -- and the wifi glyph and clock after them are indicators, not
-	# controls. The order keeps them adjacent so left/right between them never
-	# crosses a non-focusable.
-	#
-	# FILES IS ONE OF THEM NOW, at the owner's request, and it stopped being a
-	# rail card in the same move. The rail is the library -- the applications
-	# this machine has -- and the file manager is a shell surface exactly like
-	# settings and power: a screen the binary draws, not a thing you install or
-	# remove. It had a card because "an app in the person's mental model" was a
-	# defensible reading; sitting next to the gear is the better one, and it
-	# frees the rail's first card to be something the person actually put there.
-	# One thing, one home (ADR 0006) is what forbids it being in both places.
-	# THERE IS NO STORE BUTTON, and its absence is the correction. It opened the
-	# in-shell Steam client, which was deleted on 2026-08-13; after that it
-	# launched Valve's Big Picture instead, and once Steam left the image
-	# entirely it became a button that runs a flatpak this machine does not
-	# have. A bar icon that cannot work is worse than a missing one on a
-	# television with no console to say why it did nothing.
-	#
-	# THERE IS NO FILES BUTTON EITHER, and it went for a plainer reason than the
-	# store did: a console has no file manager. The eight modules behind it were
-	# the single largest thing in this shell that was not aimed at playing a
-	# game, and ADR 0012 removed them.
-	#
-	# The empty-state focus fallback used to land here. It lands on the gear
-	# now -- somewhere to land is the load-bearing part, not which icon it is.
+	# Built-in tools share the shell screen and controller focus.
 	_gear_button = _bar_button("gear", "Settings", Settings.open)
+	_bar_button("download", "Install", WindowsInstall.open)
+	_bar_button("folder", "Files", Files.open)
+	_bar_button("browser", "Browser", Browser.open)
 	# The power menu, asked for by name: off, restart, sleep, next to the
 	# others.
 	_power_button = _bar_button("power", "Power", Power.open)
@@ -750,7 +737,29 @@ func _on_launch_started(_entry: Dictionary) -> void:
 	_hand_screen_over()
 
 
+func _on_launch_blocked(detail: String) -> void:
+	if _app_alert != null:
+		_app_alert.text = detail
+		_app_alert.show()
+		_app_alert_timer.start(APP_ALERT_SECONDS)
+		_reveal_bar(false)
+		_bar_revealed_for_alert = true
+
+
+func _on_windows_changed() -> void:
+	var state: Dictionary = WindowsInstall.snapshot
+	var detail := WindowsInstall.message
+	if str(state.get("operation", "")) in ["remove", "discard"] and str(state.get("status", "")) == "failed":
+		detail = str(state.get("detail", "Could not remove the app. Try again."))
+	if visible and not detail.is_empty() and detail != _windows_feedback:
+		_windows_feedback = detail
+		_on_launch_blocked(detail)
+
+
 func _on_launch_finished(_entry: Dictionary) -> void:
+	if is_instance_valid(_process_pill):
+		_process_pill.visible = Launcher.is_minimized() or not Services.visible_services().is_empty()
+		_on_pill_membership_changed([])
 	# The app went away -- via the overlay's Close, or on its own. Either way
 	# the overlay is now framing nothing, so it goes first.
 	_close_overlay()
@@ -758,7 +767,7 @@ func _on_launch_finished(_entry: Dictionary) -> void:
 	# what the person should land back on when the app quits -- not the rail
 	# grabbing focus to a card that is drawn underneath an open surface. The
 	# surface's own close is what restores the rail.
-	if Settings.is_open():
+	if Settings.is_open() or WindowsInstall.is_open() or Files.is_open() or Browser.is_open():
 		return
 	_take_screen_back()
 
@@ -1020,6 +1029,9 @@ func _hide_bar() -> void:
 
 
 func _open_overlay() -> void:
+	Kiosk.remember_app_window()
+	Launcher.set_pad_keys_paused(true)
+	Launcher.set_splash_paused(true)
 	_overlay = AppOverlay.new()
 	_overlay.entry = Launcher.current_entry()
 	_overlay.closed.connect(_on_overlay_closed, CONNECT_ONE_SHOT)
@@ -1078,6 +1090,7 @@ func _close_overlay() -> void:
 	# launch that never drew is busy too, and minimising for it would leave the
 	# TV with nothing on it at all. See Kiosk.yield_screen.
 	if Launcher.app_on_screen():
+		Kiosk.focus_app()
 		Kiosk.yield_screen(true)
 	Launcher.set_pad_keys_paused(false)
 	Launcher.set_splash_paused(false)
@@ -1107,7 +1120,7 @@ func _open_process_menu() -> void:
 	if _process_menu != null or _details != null:
 		return
 	if Settings.is_open() or Power.is_open() \
-			or Info.is_open() or Launcher.is_busy():
+			or Info.is_open() or Files.is_open() or Browser.is_open() or WindowsInstall.is_open() or Launcher.is_busy():
 		return
 
 	_process_menu = ProcessMenu.new()
@@ -1140,6 +1153,10 @@ func _close_process_menu() -> void:
 
 
 func _unhandled_input(event: InputEvent) -> void:
+	if event.is_action_pressed("ui_shell_options") and is_instance_valid(_selected_card):
+		get_viewport().set_input_as_handled()
+		WindowsInstall.confirm_remove(_selected_card.entry)
+		return
 	# WHILE THE PANEL IS UP, THE RAIL IS NOT LISTENING. The panel is a later
 	# child and so is offered unhandled input first, and it consumes B -- but
 	# relying on dispatch order for "B does not do two things at once" is the

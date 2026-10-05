@@ -133,7 +133,10 @@ ICON_SIZES_SMALL=(128x128 96x96 64x64 48x48)
 # /var/home/player the APP_DIRS above use, because the appliance has exactly
 # one user, created by sysusers at uid 1000, and resolving it dynamically
 # would be ceremony around a constant.
-STEAM_DATA=/var/home/player/.var/app/com.valvesoftware.Steam/.local/share/Steam
+STEAM_DATA=/var/home/player/.local/share/Steam
+if [ ! -d "$STEAM_DATA" ]; then
+    STEAM_DATA=/var/home/player/.var/app/com.valvesoftware.Steam/.local/share/Steam
+fi
 STEAM_LIBCACHE="$STEAM_DATA/appcache/librarycache"
 
 # TWO LIBRARIES ARE WALKED, NOT ONE, and the second is the one this appliance
@@ -161,7 +164,9 @@ STEAM_LIBCACHE="$STEAM_DATA/appcache/librarycache"
 # `Games/SteamLibrary` is what the client mounts. /var/home rather than /home
 # for the same reason every other path here does: /home is a symlink on ostree
 # and Steam does not follow symlinks in a library path.
-STEAM_APPS_DIRS="/var/home/player/Games/SteamLibrary/steamapps $STEAM_DATA/steamapps"
+steam_library_dirs() {
+    /usr/lib/marwanos/steamctl libraries --home /var/home/player
+}
 
 # THE ONE PLACE THIS FLAG IS SPELLED, and ADR 0012 asks for that explicitly.
 #
@@ -634,8 +639,10 @@ human_bytes() {
 steam_games() {
     local dir file appid flags name state detail done_bytes total_bytes percent
     local seen=" "
+    local -a library_dirs=()
+    mapfile -d '' -t library_dirs < <(steam_library_dirs)
 
-    for dir in $STEAM_APPS_DIRS; do
+    for dir in "${library_dirs[@]}"; do
     [ -d "$dir" ] || continue
     for file in "$dir"/appmanifest_*.acf; do
         [ -f "$file" ] || continue
@@ -748,7 +755,7 @@ scan_steam() {
         # anywhere downstream.
         exec_cmd=""
         if [ "$state" = "installed" ]; then
-            exec_cmd="flatpak run com.valvesoftware.Steam $STEAM_UI_FLAG steam://rungameid/$appid"
+            exec_cmd="/usr/lib/marwanos/steamctl launch $appid"
         fi
 
         # STRAIGHT AT THE FLATPAK AS A steam:// URL, because Valve's client is
@@ -1034,6 +1041,8 @@ windows_signature() {
 
 steam_signature() {
     local dir file
+    local -a library_dirs=()
+    mapfile -d '' -t library_dirs < <(steam_library_dirs)
     printf '%s:%s ' "$STORE_ICON_DIR" "$(stat -c %Y "$STORE_ICON_DIR" 2>/dev/null || echo 0)"
     printf '%s:%s ' "$STEAM_LIBCACHE" "$(stat -c %Y "$STEAM_LIBCACHE" 2>/dev/null || echo 0)"
     for file in "$STEAM_LIBCACHE"/*/; do
@@ -1044,7 +1053,7 @@ steam_signature() {
     # returning there would stop the client's own library from ever being
     # signed -- and a download landing in a directory nobody signs is a rail
     # that never notices the game arrived.
-    for dir in $STEAM_APPS_DIRS; do
+    for dir in "${library_dirs[@]}"; do
         [ -d "$dir" ] || continue
         printf '%s:%s ' "$dir" "$(stat -c %Y "$dir" 2>/dev/null || echo 0)"
         for file in "$dir"/appmanifest_*.acf; do

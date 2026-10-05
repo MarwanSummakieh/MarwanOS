@@ -31,7 +31,7 @@ const SetupScreen = preload("res://src/setup_screen.gd")
 const STEAM_ENTRY := {
 	"id": "steam.signin",
 	"title": "Steam",
-	"exec": ["steam", "-gamepadui"],
+	"exec": ["/usr/lib/marwanos/steamctl", "signin"],
 }
 
 const DIR_NAME := ".local/share/marwanos"
@@ -105,7 +105,7 @@ func open() -> void:
 		return
 	if Launcher.is_busy():
 		return
-	if Settings.is_open() or Power.is_open() or Info.is_open():
+	if Settings.is_open() or Power.is_open() or Info.is_open() or Files.is_open() or Browser.is_open() or WindowsInstall.is_open():
 		return
 
 	ShellLog.info("setup opened")

@@ -111,10 +111,16 @@ func _build() -> void:
 	title.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	column.add_child(title)
 
+	var scroll := ScrollContainer.new()
+	scroll.custom_minimum_size = Vector2(0, minf(items.size() * 72.0, 500.0))
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	scroll.follow_focus = true
+	column.add_child(scroll)
 	var item_box := VBoxContainer.new()
+	item_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	item_box.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	item_box.add_theme_constant_override("separation", TvTheme.SETTINGS_ROW_GAP)
-	column.add_child(item_box)
+	scroll.add_child(item_box)
 
 	for item in items:
 		var row := AppMenuRow.new()

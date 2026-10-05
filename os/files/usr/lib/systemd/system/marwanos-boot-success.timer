@@ -9,3 +9,4 @@ Description=Record boot success once the session has held for two minutes
 
 [Timer]
 OnBootSec=2min
+OnUnitInactiveSec=30s

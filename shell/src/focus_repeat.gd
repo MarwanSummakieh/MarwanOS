@@ -70,17 +70,17 @@ func _held_direction() -> Vector2i:
 	if pad < 0:
 		return Vector2i.ZERO
 
-	var stick_x := Input.get_joy_axis(pad, JOY_AXIS_LEFT_X)
-	var stick_y := Input.get_joy_axis(pad, JOY_AXIS_LEFT_Y)
+	var stick_x := PlayerOne.axis(JOY_AXIS_LEFT_X)
+	var stick_y := PlayerOne.axis(JOY_AXIS_LEFT_Y)
 
 	var direction := Vector2i.ZERO
-	if Input.is_joy_button_pressed(pad, JOY_BUTTON_DPAD_LEFT) or stick_x <= -STICK_DEADZONE:
+	if PlayerOne.button(JOY_BUTTON_DPAD_LEFT) or stick_x <= -STICK_DEADZONE:
 		direction.x -= 1
-	if Input.is_joy_button_pressed(pad, JOY_BUTTON_DPAD_RIGHT) or stick_x >= STICK_DEADZONE:
+	if PlayerOne.button(JOY_BUTTON_DPAD_RIGHT) or stick_x >= STICK_DEADZONE:
 		direction.x += 1
-	if Input.is_joy_button_pressed(pad, JOY_BUTTON_DPAD_UP) or stick_y <= -STICK_DEADZONE:
+	if PlayerOne.button(JOY_BUTTON_DPAD_UP) or stick_y <= -STICK_DEADZONE:
 		direction.y -= 1
-	if Input.is_joy_button_pressed(pad, JOY_BUTTON_DPAD_DOWN) or stick_y >= STICK_DEADZONE:
+	if PlayerOne.button(JOY_BUTTON_DPAD_DOWN) or stick_y >= STICK_DEADZONE:
 		direction.y += 1
 
 	if direction.x != 0 and direction.y != 0:

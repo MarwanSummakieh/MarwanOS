@@ -20,8 +20,11 @@ ConditionPathExists=/boot/grub2/grubenv
 [Service]
 Type=oneshot
 ExecCondition=/usr/bin/systemctl is-active --quiet greetd.service
+ExecCondition=/usr/bin/python3 /usr/lib/marwanos/session/check-ready
 # menu_auto_hide is written alongside boot_success so a fresh install
 # converges on its own: the first good session turns hiding on, no
 # machine-local grub2-editenv step required (the bench needed one only
 # because its grub.cfg predates the reader).
-ExecStart=/usr/bin/grub2-editenv - set boot_success=1 menu_auto_hide=1
+# bootc mounts /boot read-only. Remount only inside this helper's private mount
+# namespace; the session and the rest of the OS keep their read-only mount.
+ExecStart=/usr/bin/unshare --mount --propagation private /usr/bin/sh -ec "/usr/bin/mount -o remount,rw /boot; exec /usr/bin/grub2-editenv /boot/grub2/grubenv set boot_success=1 menu_auto_hide=1"

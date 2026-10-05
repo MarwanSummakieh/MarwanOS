@@ -46,14 +46,8 @@ extends Control
 ## would have covered the app -- and the field a person is typing into is the
 ## one thing they must be able to see.
 ##
-## MINIMIZE IS GONE FROM THE MENU, NOT FROM THE SHELL -- and honestly: the
-## function exists, nothing calls it, and nothing listens to its `minimized`
-## signal either (review confirmed the whole path is dead code today). It was
-## always the weaker of the two controls -- it depends on gamescope handing
-## focus back to the shell, which is the compositor's decision and not
-## something a client can insist on. It stays in launcher.gd as the shape a
-## future entry would take; when the menu grows, it is the first entry to
-## reconsider, and the bench is what decides whether it earns its place.
+## Minimize keeps the process alive and restores the previous shell surface.
+## Its library card and the processes menu resume that same process.
 ##
 ## Navigation is the settings list's, verbatim: one axis, hard stops,
 ## perpendicular pointed at self. B closes the menu and returns to the
@@ -77,6 +71,7 @@ const Keyboard = preload("res://src/keyboard.gd")
 ## happens all through it.
 const MENU_ITEMS := [
 	{"id": "type", "label": "Type", "icon": "keyboard"},
+	{"id": "minimize", "label": "Minimize", "icon": "home"},
 	{"id": "close", "label": "Close", "icon": "close"},
 ]
 
@@ -100,6 +95,8 @@ var _rows: Array = []
 ## the left edge, and nothing here should have to change again if it moves back.
 var _menu: Control = null
 var _keyboard: Keyboard = null
+var _typing_pid := -1
+var _typing_error: Label = null
 
 
 func _ready() -> void:
@@ -241,6 +238,9 @@ func _on_item_chosen(id: String) -> void:
 			# normal exit takes. Waiting here would leave the menu on screen over
 			# a dying application.
 			closed.emit()
+		"minimize":
+			Launcher.minimize_current()
+			closed.emit()
 		_:
 			# Unreachable while MENU_ITEMS and this match agree, which is exactly
 			# why it is logged: the failure it catches is an entry added to the
@@ -317,6 +317,8 @@ func _open_keyboard() -> void:
 ## binds submission to, the person presses it themselves once the overlay is
 ## gone and the pad is talking to the app again.
 func _on_typed(text: String) -> void:
+	if _typing_pid > 0:
+		return
 	var title := str(entry.get("title", "<unknown>"))
 
 	if text.is_empty():
@@ -332,13 +334,27 @@ func _on_typed(text: String) -> void:
 	# journal is read by whoever is debugging the machine.
 	ShellLog.info("typing into %s (%d characters)" % [title, text.length()])
 
-	var pid := OS.create_process("xdotool", ["type", "--clearmodifiers", "--", text])
+	if not Kiosk.focus_app_keyboard():
+		_keyboard.title_text = "App window unavailable. Press B to return."
+		if not is_instance_valid(_typing_error):
+			_typing_error = Label.new()
+			_typing_error.text = "App window unavailable. Press B to return."
+			_typing_error.add_theme_font_size_override("font_size", TvTheme.SIZE_BODY)
+			_typing_error.position = Vector2(TvTheme.SAFE_MARGIN_X, TvTheme.SAFE_MARGIN_Y)
+			_keyboard.add_child(_typing_error)
+		ShellLog.warn("app keyboard focus unavailable; no text injected")
+		return
+	var pid := OS.create_process("xdotool", ["type", "--clearmodifiers", "--delay", "0", "--", text])
+	_typing_pid = pid
 	if pid <= 0:
 		# Best effort only -- see the header for why this rarely fires on
 		# Linux. Naming the binary once and handing the screen back is the
 		# whole failure path: a desk run without xdotool must return to the
 		# application, not take the shell down.
 		ShellLog.warn("could not spawn xdotool; nothing was typed into %s" % title)
+	while pid > 0 and OS.is_process_running(pid):
+		await get_tree().create_timer(0.05).timeout
+	_typing_pid = -1
 
 	# Whether or not the injection took, the person is done with the keyboard and
 	# the application should have the screen back. shell_root's _close_overlay is
@@ -347,11 +363,19 @@ func _on_typed(text: String) -> void:
 
 
 func _on_typing_cancelled() -> void:
+	if _typing_pid > 0:
+		OS.kill(_typing_pid)
+		_typing_pid = -1
 	# B out of the keyboard types nothing at all -- not an empty string, not a
 	# stray keystroke. The application is exactly as it was left.
 	ShellLog.info("typing cancelled; nothing typed into %s"
 		% str(entry.get("title", "<unknown>")))
 	closed.emit()
+
+
+func _exit_tree() -> void:
+	if _typing_pid > 0:
+		OS.kill(_typing_pid)
 
 
 func _unhandled_input(event: InputEvent) -> void:

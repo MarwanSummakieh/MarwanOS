@@ -146,6 +146,21 @@ func _ready() -> void:
 
 
 func _build_rows() -> void:
+	if Launcher.is_minimized():
+		var entry := Launcher.current_entry()
+		for action in ["resume", "close"]:
+			var app_row := ActionRow.new()
+			app_row.setup(("Resume " if action == "resume" else "Close ") + str(entry.get("title", "app")), "Running")
+			app_row.activated.connect(func():
+				if action == "resume":
+					closed.emit()
+					Launcher.resume_current.call_deferred()
+				else:
+					Launcher.close_current()
+					closed.emit())
+			_list.add_child(app_row)
+			_rows.append(app_row)
+			_ids.append("")
 	var services: Array = Services.visible_services()
 	if services.is_empty():
 		# A real state on a machine with nothing installed, and it says so
@@ -161,6 +176,7 @@ func _build_rows() -> void:
 		empty.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		empty.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		_list.add_child(empty)
+		TvTheme.wire_column(_rows)
 		return
 
 	for service in services:
@@ -191,6 +207,8 @@ func _value_for(id: String) -> String:
 
 func _refresh_values() -> void:
 	for index in _rows.size():
+		if str(_ids[index]).is_empty():
+			continue
 		var row: ActionRow = _rows[index]
 		if is_instance_valid(row):
 			row.set_value(_value_for(str(_ids[index])))

@@ -1,6 +1,6 @@
 [Plymouth Theme]
 Name=MarwanOS
-Description=MarwanOS loading screen: the wordmark held from early boot until the session takes the display
+Description=PC1 powered by MarwanOS identity reveal, held until the shell takes the display
 ModuleName=script
 
 [script]

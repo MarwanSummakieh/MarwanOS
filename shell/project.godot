@@ -9,7 +9,7 @@ config_version=5
 [application]
 
 config/name="MarwanOS Shell"
-config/description="Phase 0 shell skeleton: a controller-navigable tile grid."
+config/description="PC1 controller-first desktop, browser, files and applications."
 run/main_scene="res://scenes/shell_root.tscn"
 
 ; Tracks the Containerfile's GODOT_VERSION, currently 4.7.1. The floor is 4.5,
@@ -41,6 +41,7 @@ run/flush_stdout_on_print=true
 ShellLog="*res://src/shell_log.gd"
 Kiosk="*res://src/kiosk.gd"
 ShellInput="*res://src/shell_input.gd"
+ControllerRouter="*res://src/controller_router.gd"
 PlayerOne="*res://src/player_one.gd"
 FocusRepeat="*res://src/focus_repeat.gd"
 SystemStatus="*res://src/system_status.gd"
@@ -59,6 +60,9 @@ Info="*res://src/info.gd"
 ; Last, and the order matters: setup.gd's open() guards against Settings, Power
 ; and Info, so all three must already exist when it loads.
 Setup="*res://src/setup.gd"
+WindowsInstall="*res://src/windows_install.gd"
+Files="*res://src/files.gd"
+Browser="*res://src/browser.gd"
 
 [display]
 

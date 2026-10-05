@@ -19,6 +19,9 @@ on:
     paths:
       - "os/**"
       - "shell/**"
+      - "mowser/**"
+      - "tests/**"
+      - "scripts/check-*.sh"
       - ".github/workflows/build.yml"
   workflow_dispatch:
 
@@ -34,6 +37,17 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+
+      - name: Check installation flows before publishing
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb
+          python3 -m unittest discover -s tests -v
+
+      - name: Check controller flows before publishing
+        run: |
+          sudo apt-get install -y curl unzip libfontconfig1 libxkbcommon0 libgl1 libasound2t64
+          bash scripts/check-shell.sh
 
       # A hosted runner has roughly 25 GB free. Base layers plus akmods plus the
       # finished image comfortably exceed that during the build, and running out

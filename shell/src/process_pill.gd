@@ -100,6 +100,8 @@ func _ready() -> void:
 
 	pressed.connect(_on_pressed)
 	Services.services_changed.connect(refresh)
+	Launcher.minimized.connect(func(_entry: Dictionary): refresh())
+	Launcher.launch_finished.connect(func(_entry: Dictionary): refresh())
 	# Visibility depends on what is installed -- see refresh -- so the pill has
 	# to re-answer when the installed list does.
 	Installed.apps_changed.connect(_on_installed_changed)
@@ -117,7 +119,7 @@ func refresh() -> void:
 	# NOTHING INSTALLED IS NOT AN EMPTY PILL. A pill over zero processes would
 	# be a door onto "nothing runs here"; hiding it also takes it out of the
 	# neighbour chain, which shell_root's pill-membership wiring handles.
-	visible = not services.is_empty()
+	visible = Launcher.is_minimized() or not services.is_empty()
 	if not visible:
 		return
 

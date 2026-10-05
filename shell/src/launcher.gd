@@ -50,25 +50,20 @@ signal launch_finished(entry: Dictionary)
 ## than stopped. The rail comes back; the process does not go away, and
 ## launch_finished still fires later when it eventually exits.
 signal minimized(entry: Dictionary)
+signal blocked(detail: String)
 
 const LaunchPlaceholder = preload("res://src/launch_placeholder.gd")
 const LaunchSplash = preload("res://src/launch_splash.gd")
 const PadKeys = preload("res://src/pad_keys.gd")
 ## Which launched applications get the pad-to-keyboard bridge, by entry id.
 ##
-## EMPTY, AND THE SEAM IS KEPT ANYWAY. This lived in catalogue.gd and had one
-## entry left -- the terminal -- which went with the rest of the non-console
-## surfaces. Its other dialect, "pointer", died earlier with the foreign-client
-## browser. So today nothing asks for the bridge and pad_keys.gd is unreached.
-##
-## It stays because the next source to arrive is the one that needs it: an
-## emulator's own menus are keyboard-driven, and a Windows game run outside
-## Steam has no Steam Input translating a controller for it. Re-deriving this
-## mechanism then would cost more than the two lines it costs now. See
-## pad_keys.gd for the dialects themselves.
+## Legacy per-ID overrides. Managed Windows manifests instead carry input_mode
+## from the image-owned installation recipe. The first recipe uses pointer mode;
+## the bridge pauses whenever the PC1 overlay owns input.
 const PAD_KEY_APPS := {}
 
 var _current: Dictionary = {}
+var _minimized := false
 
 # Typed as the script rather than as Control so `entry` and `closed` resolve
 # statically -- GDScript treats a missing member on a typed variable as an error,
@@ -98,7 +93,11 @@ var _pad_keys_paused := false
 
 
 func is_busy() -> bool:
-	return not _current.is_empty()
+	return not _current.is_empty() and not _minimized
+
+
+func is_minimized() -> bool:
+	return _minimized and not _current.is_empty()
 
 
 ## Is something other than the shell provably drawing? shell_root asks when the
@@ -116,6 +115,15 @@ func current_entry() -> Dictionary:
 
 ## The only way anything gets launched.
 func launch(entry: Dictionary) -> void:
+	if entry.has("executable") and not FileAccess.file_exists(str(entry.get("executable", ""))):
+		blocked.emit("%s is unavailable. Reconnect its drive or remove the app." % str(entry.get("title", "App")))
+		return
+	if not _current.is_empty():
+		if _minimized and str(entry.get("id", "")) == str(_current.get("id", "")):
+			resume_current()
+		elif _minimized:
+			blocked.emit("Close or resume %s in Processes before opening another app." % str(_current.get("title", "the running app")))
+		return
 	if is_busy():
 		# One at a time. A second press while something is up is a bounced button
 		# or an impatient person, not a request to launch twice.
@@ -185,6 +193,8 @@ var _poll: Timer = null
 ## Set once a close has been asked for, so the exit poll stops interrogating a
 ## pid it knows is on its way out. See _check_exit.
 var _terminating := false
+var _steam_stop_pid := -1
+var _closing := false
 
 
 func _spawn(exec: Array) -> void:
@@ -383,7 +393,7 @@ func _start_watchdog() -> void:
 func _check_window() -> void:
 	_watched_seconds += WINDOW_POLL_SECONDS
 
-	var focus := Kiosk.focused_window()
+	var focus := Kiosk.focused_window(_pid, str(_current.get("prefix", "")))
 	# Recorded on every answer that IS one, whichever branch consumes it: this is
 	# the flag that tells a dead wrapper whether there is a window question worth
 	# waiting for. See _handoff_hands_over.
@@ -398,7 +408,7 @@ func _check_window() -> void:
 		Kiosk.Focus.ELSEWHERE:
 			_app_is_up()
 		Kiosk.Focus.SHELL:
-			if _watched_seconds >= WINDOW_DEADLINE_SECONDS \
+			if _watched_seconds >= float(_current.get("window_deadline", WINDOW_DEADLINE_SECONDS)) \
 					and _pid > 0 and is_instance_valid(_splash):
 				ShellLog.warn("%s alive as pid %d but no window after %.0f s; offering Close"
 					% [_label(_current), _pid, _watched_seconds])
@@ -407,9 +417,12 @@ func _check_window() -> void:
 				# exits or the person closes it, both of which reach _finish.
 				_stop_watchdog()
 		_:
-			# UNKNOWN. No claim, no action -- see the header. The plain splash
-			# stands until launch_finished.
-			pass
+			# A managed app still needs a controller-accessible escape when
+			# gamescope's focus property is unavailable. Do not claim it mapped.
+			if str(_current.get("id", "")).begins_with("managed.") \
+					and _watched_seconds >= float(_current.get("window_deadline", WINDOW_DEADLINE_SECONDS)) and is_instance_valid(_splash):
+				_splash.show_failure()
+				_stop_watchdog()
 
 
 ## Something other than the shell owns the screen: the application arrived.
@@ -436,12 +449,14 @@ func _app_is_up() -> void:
 	# condition. See Kiosk.yield_screen for what a second fullscreen window costs
 	# while Steam is mapping its own.
 	_app_on_screen = true
+	ControllerRouter.set_app_input(not _pad_keys_paused and not _uses_pad_bridge())
+	Kiosk.remember_app_window()
 	Kiosk.yield_screen(true)
 	# The one moment the bridge may start: there is now provably an application
 	# on screen to type into. Which is also why a desk run never gets one -- the
 	# watchdog only answers ELSEWHERE where gamescope exists, and that is the only
 	# place XTEST injection lands where a person can see what it did.
-	var mode := str(PAD_KEY_APPS.get(str(_current.get("id", "")), ""))
+	var mode := str(_current.get("input_mode", PAD_KEY_APPS.get(str(_current.get("id", "")), "")))
 	if _pad_keys == null and not mode.is_empty():
 		_pad_keys = PadKeys.new()
 		_pad_keys.mode = mode
@@ -562,9 +577,14 @@ func _remove_pad_keys() -> void:
 ## even while no bridge exists, so one created later starts in the right
 ## state -- see _pad_keys_paused.
 func set_pad_keys_paused(value: bool) -> void:
+	ControllerRouter.set_app_input(_app_on_screen and not _minimized and not value and not _uses_pad_bridge())
 	_pad_keys_paused = value
 	if is_instance_valid(_pad_keys):
 		_pad_keys.set_paused(value)
+
+
+func _uses_pad_bridge() -> bool:
+	return not str(_current.get("input_mode", PAD_KEY_APPS.get(str(_current.get("id", "")), ""))).is_empty()
 
 
 ## The second lever, for the same two moments and the same reason: the splash
@@ -617,7 +637,19 @@ func can_close() -> bool:
 ## quiet flag is armed solely by _kill_pid, whose OS.kill is the thing that
 ## makes a later is_process_running an engine ERROR in the journal.
 func close_current() -> void:
-	if _current.is_empty():
+	if _current.is_empty() or _closing:
+		return
+	if _steam_stop_pid > 0:
+		return
+	var stop_exec: Array = _current.get("stop_exec", [])
+	if not stop_exec.is_empty():
+		var stop_args := PackedStringArray()
+		for index in range(1, stop_exec.size()):
+			stop_args.append(str(stop_exec[index]))
+		if OS.create_process(str(stop_exec[0]), stop_args) <= 0:
+			ShellLog.error("could not close the managed application; keeping its process tracked")
+		else:
+			_closing = true
 		return
 
 	# A HANDOFF CLOSES STEAM ITSELF, and there is no gentler option. The game is
@@ -631,19 +663,16 @@ func close_current() -> void:
 	# running and hoping -- is the failure this whole seam exists to avoid, a rail
 	# back on screen underneath something that is still there.
 	#
-	# The launch ends HERE rather than on the next exit poll, because for a
-	# handoff there is usually no pid left to poll: the wrapper died in the first
-	# second. Nothing would ever notice, and the splash or the app menu would sit
-	# over a screen that is already going back to the rail.
+	# The native/legacy Steam helper owns shutdown. The exit poll watches that
+	# helper even when the handoff wrapper has already exited.
 	if _handoff:
-		ShellLog.info("closing %s, which ends the game and the client with it" % HANDOFF_APP_ID)
-		if OS.create_process("flatpak", ["kill", HANDOFF_APP_ID]) <= 0:
-			ShellLog.warn("could not run `flatpak kill %s`" % HANDOFF_APP_ID)
-		_forget_wrapper()
-		_on_closed()
+		_close_steam()
 		return
 
 	var exec: Array = _current.get("exec", [])
+	if not exec.is_empty() and (str(exec[0]).ends_with("steamctl") or str(exec[0]).get_file() == "steam"):
+		_close_steam()
+		return
 	var app_id := _flatpak_app_id(exec)
 
 	if not app_id.is_empty():
@@ -661,23 +690,38 @@ func close_current() -> void:
 	_kill_pid()
 
 
+func _close_steam() -> void:
+	_steam_stop_pid = OS.create_process("/usr/lib/marwanos/steamctl", ["stop"])
+	if _steam_stop_pid <= 0:
+		ShellLog.error("Steam could not close; keeping its launch tracked")
+		return
+	_closing = true
+	_stop_watchdog()
+	_remove_splash()
+	_splash = LaunchSplash.new()
+	_splash.entry = _current
+	get_tree().root.add_child(_splash)
+	_splash._dots.stop()
+	_splash._status.text = "Closing Steam…"
+	_splash.set_paused(true)
+	if not is_instance_valid(_poll):
+		_poll = Timer.new()
+		_poll.wait_time = EXIT_POLL_SECONDS
+		_poll.timeout.connect(_check_exit)
+		add_child(_poll)
+		_poll.start()
+
+
 ## Leave the application running and give the screen back to the rail.
 ##
-## HONEST ABOUT WHAT IT CAN AND CANNOT DO. Nothing here stops the process --
-## that is the whole point -- so all this can do is stop being an overlay and
-## ask gamescope to put the shell in front. Whether that happens is the
-## COMPOSITOR'S decision: gamescope arbitrates focus between its clients, and an
-## X client cannot insist. window_move_to_foreground is the strongest request
-## available and it is a request.
-##
-## So this logs what it asked for. If the bench shows the app stays in front,
-## the fix is a gamescope-side focus mechanism (it publishes GAMESCOPE_FOCUSED_
-## WINDOW and friends, so there is somewhere to look) rather than more force
-## from here -- and the journal will say so instead of leaving someone
-## wondering whether the button did anything.
+## The process and exit poll stay alive. gamescope's explicit base-layer window
+## control restores the shell; the saved app window restores the same process.
 func minimize_current() -> void:
-	if _current.is_empty():
+	if _current.is_empty() or _minimized:
 		return
+	_minimized = true
+	_app_on_screen = false
+	set_pad_keys_paused(true)
 	ShellLog.info("minimize requested for %s; app stays running"
 		% str(_current.get("title", "")))
 	# If the splash is somehow still up -- possible only where the watchdog
@@ -695,8 +739,24 @@ func minimize_current() -> void:
 	# Kiosk.yield_screen exists to avoid, and the honest cost of a control that
 	# backgrounds an application instead of closing it.
 	Kiosk.yield_screen(false)
+	Kiosk.focus_shell()
 	DisplayServer.window_move_to_foreground()
 	minimized.emit(_current)
+
+
+func resume_current() -> void:
+	if not is_minimized():
+		return
+	_minimized = false
+	_pad_keys_paused = false
+	_handoff_seen = false
+	_handoff_shell_ticks = 0
+	launch_started.emit(_current)
+	_splash = LaunchSplash.new()
+	_splash.entry = _current
+	get_tree().root.add_child(_splash)
+	Kiosk.focus_app()
+	_start_watchdog()
 
 
 ## How many exit polls a `flatpak kill` gets to actually end the sandbox
@@ -717,7 +777,6 @@ func _kill_pid() -> void:
 	# later is_process_running an engine ERROR about a reaped pid, so this is
 	# the one path that must stop asking. Every other close keeps polling and
 	# the rail comes back when the process is actually gone.
-	_terminating = true
 	# OS.kill is SIGKILL on Unix. Abrupt, and acceptable here: this is the
 	# button someone presses because the thing on screen will not go away, and
 	# an application that ignored a polite request is exactly the case it
@@ -726,6 +785,8 @@ func _kill_pid() -> void:
 	var error := OS.kill(_pid)
 	if error != OK:
 		ShellLog.error("could not terminate pid %d (error %d)" % [_pid, error])
+	else:
+		_terminating = true
 
 
 ## The flatpak application id anywhere in an exec, else empty. Read from the
@@ -750,6 +811,13 @@ func _flatpak_app_id(exec: Array) -> String:
 
 
 func _check_exit() -> void:
+	if _steam_stop_pid > 0:
+		if OS.is_process_running(_steam_stop_pid):
+			return
+		_steam_stop_pid = -1
+		_forget_wrapper()
+		_on_closed()
+		return
 	# ONCE WE HAVE KILLED IT, STOP ASKING. Godot's is_process_running() logs an
 	# engine-level ERROR when the pid has already been reaped -- "does not exist
 	# or is not a child of the calling process" -- and after our own kill that is
@@ -829,8 +897,15 @@ func _on_closed() -> void:
 
 
 func _finish() -> void:
+	if _current.is_empty():
+		return
 	var entry := _current
 	_current = {}
+	_closing = false
+	_steam_stop_pid = -1
+	_minimized = false
+	ControllerRouter.set_app_input(false)
+	Kiosk.clear_focus_override()
 
 	# Unconditionally, and first: every route out of a launch passes through
 	# this function, so this is the one line that guarantees a yielded window

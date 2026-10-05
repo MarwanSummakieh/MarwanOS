@@ -360,6 +360,11 @@ func set_overlay(enabled: bool) -> void:
 	if window != null:
 		window.transparent_bg = enabled
 	get_tree().root.transparent_bg = enabled
+	if _x11_session():
+		DisplayServer.window_set_flag(DisplayServer.WINDOW_FLAG_ALWAYS_ON_TOP, enabled)
+		if enabled:
+			focus_shell()
+		return
 
 	_write_overlay_property(enabled)
 
@@ -453,6 +458,89 @@ const FOCUSED_WINDOW_PROPERTY := "GAMESCOPE_FOCUSED_WINDOW"
 ## declares has not been measured on the bench yet -- this is the line that
 ## answers it if the answer is "neither of the two handled below".
 var _focus_parse_warned := false
+var _app_window := 0
+var _focus_request := 0
+
+
+func _x11_session() -> bool:
+	return OS.get_environment("MARWANOS_COMPOSITOR") == "x11"
+
+
+func _focus_property() -> String:
+	return "_NET_ACTIVE_WINDOW" if _x11_session() else FOCUSED_WINDOW_PROPERTY
+
+
+func remember_app_window() -> void:
+	var output: Array = []
+	if DisplayServer.get_name() != "X11":
+		return
+	if OS.execute("xprop", ["-root", "-notype", _focus_property()], output, true) != 0 or output.is_empty():
+		return
+	var line := str(output[0]).strip_edges()
+	var value := line.get_slice("=", 1) if line.contains("=") else line.get_slice(":", 1)
+	var own := DisplayServer.window_get_native_handle(DisplayServer.WINDOW_HANDLE)
+	for word in value.replace(",", " ").split(" ", false):
+		var id := word.hex_to_int() if word.begins_with("0x") else word.to_int()
+		if id > 0 and id != own:
+			_app_window = id
+			return
+
+
+func _focus_override(window_id: int) -> void:
+	if DisplayServer.get_name() != "X11":
+		return
+	if _x11_session():
+		if window_id > 0:
+			OS.create_process("xdotool", ["windowraise", str(window_id), "windowactivate", str(window_id)])
+		return
+	# gamescope's explicit base-layer control avoids competing fullscreen clients.
+	# https://github.com/ValveSoftware/gamescope/blob/master/src/steamcompmgr.cpp
+	OS.create_process("xprop", ["-root", "-f", "GAMESCOPECTRL_BASELAYER_WINDOW", "32c",
+		"-set", "GAMESCOPECTRL_BASELAYER_WINDOW", str(window_id)])
+
+
+func focus_shell() -> void:
+	_focus_request += 1
+	var request := _focus_request
+	if _x11_session():
+		# Changing transparent_bg recreates Godot's X window. The next rendered
+		# frame can precede Openbox handling its MapRequest under software rendering.
+		# Its desktop property proves the WM has adopted the current window.
+		for attempt in 20:
+			await get_tree().create_timer(0.05).timeout
+			if request != _focus_request:
+				return
+			var handle := DisplayServer.window_get_native_handle(DisplayServer.WINDOW_HANDLE)
+			var output: Array = []
+			if handle > 0 and OS.execute("xprop", ["-id", str(handle), "-notype", "_NET_WM_DESKTOP"], output, true) == 0 \
+					and not output.is_empty() and str(output[0]).contains("="):
+				break
+	_focus_override(DisplayServer.window_get_native_handle(DisplayServer.WINDOW_HANDLE))
+
+
+func focus_app() -> void:
+	_focus_request += 1
+	_focus_override(_app_window)
+	# If the saved app window has closed, normal compositor selection can recover.
+
+
+func clear_focus_override() -> void:
+	_focus_request += 1
+	_focus_override(0)
+	_app_window = 0
+
+
+func focus_app_keyboard() -> bool:
+	if DisplayServer.get_name() != "X11" or _app_window <= 0:
+		return false
+	# Gamepad UI input comes from the broker, independent of X keyboard focus.
+	# Restore the app's X focus before XTEST so typing cannot land in this menu.
+	var output: Array = []
+	if OS.execute("xdotool", ["windowfocus", str(_app_window)], output, true) != 0:
+		return false
+	output.clear()
+	return OS.execute("xdotool", ["getwindowfocus"], output, true) == 0 \
+		and not output.is_empty() and str(output[0]).strip_edges().to_int() == _app_window
 
 
 ## Who gamescope says owns the screen, as one of the three answers above.
@@ -464,14 +552,14 @@ var _focus_parse_warned := false
 ## not exist, so a missing "=" is the absence signal, not the exit code; and a
 ## line that parses to no usable ids at all is garbage, which is UNKNOWN
 ## rather than a claim about focus.
-func focused_window() -> int:
+func focused_window(launcher_pid: int = -1, prefix: String = "") -> int:
 	var handle := DisplayServer.window_get_native_handle(DisplayServer.WINDOW_HANDLE)
 	if handle == 0:
 		return Focus.UNKNOWN
 
 	var output: Array = []
 	var code := OS.execute("xprop",
-		PackedStringArray(["-root", "-notype", FOCUSED_WINDOW_PROPERTY]), output, true)
+		PackedStringArray(["-root", "-notype", _focus_property()]), output, true)
 	if code != 0 or output.is_empty():
 		return Focus.UNKNOWN
 
@@ -502,9 +590,65 @@ func focused_window() -> int:
 		saw_id = true
 		if id == handle:
 			return Focus.SHELL
+		if launcher_pid > 0 and not prefix.is_empty() and not _window_belongs_to_app(id, launcher_pid):
+			return Focus.UNKNOWN
 	if not saw_id:
 		if not _focus_parse_warned:
 			_focus_parse_warned = true
 			ShellLog.warn("cannot read an id out of xprop's answer: %s" % line)
 		return Focus.UNKNOWN
 	return Focus.ELSEWHERE
+
+
+func _window_belongs_to_app(window_id: int, launcher_pid: int) -> bool:
+	var output: Array = []
+	if OS.execute("xprop", ["-id", str(window_id), "-notype", "_NET_WM_PID"], output, true) != 0 or output.is_empty():
+		return false
+	var text := str(output[0]).strip_edges()
+	var window_pid := text.get_slice("=", 1).strip_edges().to_int()
+	if window_pid <= 1:
+		return false
+	if _descends_from(window_pid, launcher_pid):
+		return true
+	# Proton may expose a PID from its runtime namespace. Require an actual
+	# nested namespace and prove the matching host process belongs to this launch.
+	# A shared prefix alone also matches a setup wizard left from an earlier run.
+	for name in DirAccess.get_directories_at("/proc"):
+		if not name.is_valid_int():
+			continue
+		var status_file := FileAccess.open("/proc/" + name + "/status", FileAccess.READ)
+		if status_file == null:
+			continue
+		var status_lines := PackedStringArray()
+		while not status_file.eof_reached():
+			status_lines.append(status_file.get_line())
+		var namespace_match := false
+		for line in status_lines:
+			if line.begins_with("NSpid:"):
+				var namespace_pids := line.trim_prefix("NSpid:").strip_edges().replace("\t", " ").split(" ", false)
+				namespace_match = namespace_pids.size() >= 2 and namespace_pids[-1].to_int() == window_pid
+		if not namespace_match:
+			continue
+		if _descends_from(name.to_int(), launcher_pid):
+			return true
+	return false
+
+
+func _descends_from(pid: int, ancestor: int) -> bool:
+	for step in 64:
+		if pid == ancestor:
+			return true
+		var file := FileAccess.open("/proc/%d/stat" % pid, FileAccess.READ)
+		if file == null:
+			return false
+		var stat := file.get_line()
+		var end := stat.rfind(")")
+		if end < 0:
+			return false
+		var fields := stat.substr(end + 1).strip_edges().split(" ", false)
+		if fields.size() < 2:
+			return false
+		pid = fields[1].to_int()
+		if pid <= 1:
+			return false
+	return false

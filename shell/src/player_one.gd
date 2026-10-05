@@ -69,7 +69,21 @@ func has_controller() -> bool:
 	return device >= 0
 
 
+func axis(index: int) -> float:
+	if ControllerRouter.is_active():
+		return float(ControllerRouter._axes[index]) if device >= 0 else 0.0
+	return Input.get_joy_axis(device, index) if device >= 0 else 0.0
+
+
+func button(index: int) -> bool:
+	if ControllerRouter.is_active():
+		return bool(ControllerRouter._buttons[index]) if device >= 0 else false
+	return Input.is_joy_button_pressed(device, index) if device >= 0 else false
+
+
 func _on_joy_connection_changed(joy_device: int, connected: bool) -> void:
+	if ControllerRouter.is_active():
+		return
 	if connected:
 		_consider(joy_device)
 	elif joy_device == device:
@@ -152,6 +166,8 @@ func _release(reason: String) -> void:
 
 ## The backstop for the hotplug signals that do not always arrive.
 func _reconcile() -> void:
+	if ControllerRouter.is_active():
+		return
 	var connected := Input.get_connected_joypads()
 
 	if device >= 0 and not connected.has(device):
@@ -179,6 +195,10 @@ func _input(event: InputEvent) -> void:
 	# driven at a desk.
 	if not (event is InputEventJoypadButton or event is InputEventJoypadMotion):
 		return
+	if ControllerRouter.is_active():
+		if event.device != ControllerRouter.DEVICE or device < 0:
+			get_viewport().set_input_as_handled()
+		return
 
 	if device < 0:
 		# Last route in. If both the signal and the reconcile missed a pad, the
@@ -190,3 +210,13 @@ func _input(event: InputEvent) -> void:
 
 	if event.device != device:
 		get_viewport().set_input_as_handled()
+
+
+func set_routed_controller(connected: bool, routed_device: int, controller_name: String) -> void:
+	if not connected:
+		_release("disconnected")
+		return
+	device = routed_device
+	guid = "pc1-controller-router"
+	pad_name = controller_name
+	player_one_present.emit(device, pad_name)

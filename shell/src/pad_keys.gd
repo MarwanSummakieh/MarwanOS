@@ -88,6 +88,7 @@ const SCROLL_INTERVAL := 0.1
 var mode := "keys"
 
 var paused := false
+var _await_neutral := true
 
 var _held := ""
 var _repeat: Timer = null
@@ -114,12 +115,16 @@ func _ready() -> void:
 	_scroll.timeout.connect(_on_scroll_tick)
 	add_child(_scroll)
 
-	set_process(mode == "pointer")
+	set_process(true)
 	ShellLog.info("pad bridge up in %s mode" % mode)
 
 
 func _input(event: InputEvent) -> void:
 	if paused:
+		return
+	if _await_neutral:
+		if not event.is_action("ui_shell_home"):
+			get_viewport().set_input_as_handled()
 		return
 	if mode == "pointer":
 		_pointer_input(event)
@@ -177,6 +182,12 @@ func _pointer_input(event: InputEvent) -> void:
 func _process(delta: float) -> void:
 	if paused:
 		return
+	if _await_neutral:
+		if _controls_neutral():
+			_await_neutral = false
+		return
+	if mode != "pointer":
+		return
 	var dx := Input.get_action_strength("ui_right") - Input.get_action_strength("ui_left")
 	var dy := Input.get_action_strength("ui_down") - Input.get_action_strength("ui_up")
 	var tilt := Vector2(dx, dy)
@@ -200,12 +211,26 @@ func _process(delta: float) -> void:
 ## menu opened; the person's thumb has long since moved on.
 func set_paused(value: bool) -> void:
 	paused = value
+	_await_neutral = true
 	if paused:
 		_held = ""
 		_repeat.stop()
 		_scroll_button = 0
 		_scroll.stop()
 		_pointer_acc = Vector2.ZERO
+
+
+func _controls_neutral() -> bool:
+	for index in 15:
+		if index not in [JOY_BUTTON_BACK, JOY_BUTTON_GUIDE] and PlayerOne.button(index):
+			return false
+	for index in 6:
+		if absf(PlayerOne.axis(index)) > 0.2:
+			return false
+	for action in KEY_FOR_ACTION:
+		if Input.is_action_pressed(action):
+			return false
+	return true
 
 
 func _on_repeat() -> void:

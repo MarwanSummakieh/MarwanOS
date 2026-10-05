@@ -63,7 +63,7 @@ const SERVICES := [
 	{
 		"id": "steam",
 		"label": "Steam",
-		"app_id": "com.valvesoftware.Steam",
+		"app_id": "steam",
 		"detail": "Keeps your library ready and games launching fast",
 	},
 ]
@@ -131,7 +131,9 @@ func _installed(app_id: String) -> bool:
 	if app_id.is_empty():
 		return false
 	for app in Installed.apps:
-		if str(app.get("id", "")) == app_id and str(app.get("state", "")) == "installed":
+		var id := str(app.get("id", ""))
+		var matches := id == app_id or (app_id == "steam" and id == "com.valvesoftware.Steam")
+		if matches and str(app.get("state", "")) == "installed":
 			return true
 	return false
 
