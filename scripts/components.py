@@ -2,6 +2,7 @@
 """Verify or refresh PC1's pinned component integration copies."""
 import argparse
 import json
+import os
 from pathlib import Path, PurePosixPath
 import re
 import subprocess
@@ -13,7 +14,18 @@ LOCK = ROOT / "pc1-components.json"
 
 
 def git(*args, cwd=ROOT):
-    return subprocess.check_output(["git", *args], cwd=cwd)
+    command = ["git"]
+    pointer = Path(cwd) / ".git"
+    # A worktree created by Windows Git stores a drive path that WSL Git cannot
+    # resolve on its own. Give it the mounted administrative and worktree paths.
+    if os.name != "nt" and pointer.is_file():
+        match = re.fullmatch(r"gitdir: ([A-Za-z]):[/\\](.+)", pointer.read_text().strip())
+        if match:
+            admin = Path("/mnt") / match[1].lower() / match[2].replace("\\", "/")
+            if not admin.is_dir():
+                raise ValueError("Windows worktree Git directory is not mounted; run with Windows Git")
+            command += ["--git-dir", str(admin), "--work-tree", str(cwd)]
+    return subprocess.check_output([*command, *args], cwd=cwd)
 
 
 def checked_path(relative):
