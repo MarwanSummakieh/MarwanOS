@@ -80,10 +80,10 @@ APPS="$STATE_DIR/apps.tsv"
 # malformed and skips it, so a scanner that grew a column would empty the rail
 # of every machine running an older shell, including one mid-upgrade.
 #
-# So apps.tsv is untouched, down to the byte: its icon column is still
-# portrait-first exactly as steam_art() has always chosen it. The extra art
-# rides in a file of its own, which nothing older than it knows to read and
-# nothing older than it is broken by.
+# The six-column apps.tsv shape stays unchanged. Its icon column now prefers
+# the game's square logo to match the home cards, with the portrait as a
+# fallback. The extra art rides in a file of its own, which nothing older than
+# it knows to read and nothing older than it is broken by.
 #
 # THE SEAM: the shell joins apps.tsv rows with gameart.tsv rows BY ID. A
 # gameart row is `steam.<appid>TAB<icon or empty>TAB<hero or empty>`, one per
@@ -113,20 +113,32 @@ APP_DIRS=(
     /var/home/player/.local/share/flatpak/exports/share/applications
 )
 
-# Icon theme roots, searched in this order. hicolor is the spec's fallback
-# theme and the one flatpak exports into.
+# The application's own hicolor assets, including per-user and local installs.
+# Searching the fallback theme directly keeps replacement desktop themes from
+# substituting a different logo for the application's official artwork.
 ICON_ROOTS=(
-    /var/lib/flatpak/exports/share/icons/hicolor
+    /var/home/player/.icons/hicolor
+    /var/home/player/.local/share/icons/hicolor
     /var/home/player/.local/share/flatpak/exports/share/icons/hicolor
+    /var/lib/flatpak/exports/share/icons/hicolor
+    /usr/local/share/icons/hicolor
     /usr/share/icons/hicolor
+)
+ICON_FALLBACK_DIRS=(
+    /var/home/player/.icons
+    /var/home/player/.local/share/icons
+    /usr/local/share/icons
+    /usr/share/icons
+    /usr/local/share/pixmaps
+    /usr/share/pixmaps
 )
 
 # The sizes searched, split into the two the cards can use directly and the
 # ones that lose to a scalable icon. See icon_path for the ordering argument.
 # Largest first within each group: the cards are 200-340 px on a 1080p design
 # surface, so a 256 px icon is the smallest that is not visibly soft.
-ICON_SIZES_LARGE=(512x512 256x256)
-ICON_SIZES_SMALL=(128x128 96x96 64x64 48x48)
+ICON_SIZES_LARGE=(1024x1024 512x512 256x256)
+ICON_SIZES_SMALL=(192x192 128x128 96x96 64x64 48x48 32x32 24x24 22x22 16x16)
 
 # Steam's library state, which no desktop-entry walk can see. The root is the
 # flatpak app's private home under the player user -- the same fixed
@@ -295,7 +307,7 @@ desktop_get() {
 ## same icon as SVG is rasterised at whatever size is asked for. So a big PNG
 ## still wins -- it needs no rendering -- but scalable beats a small bitmap.
 icon_path() {
-    local name="$1" root size candidate
+    local name="$1" root size candidate extension
 
     [ -n "$name" ] || return 0
 
@@ -303,17 +315,23 @@ icon_path() {
     case "$name" in
         /*)
             case "$name" in
-                *.png|*.svg) [ -f "$name" ] && printf '%s' "$name" ;;
+                *.png|*.svg|*.jpg|*.jpeg|*.webp) [ -f "$name" ] && printf '%s' "$name" ;;
             esac
             return 0
             ;;
     esac
 
+    # Some desktop entries include the extension even for a theme icon.
+    # Strip it once so Icon=example.png does not search for example.png.png.
+    case "$name" in *.png|*.svg|*.jpg|*.jpeg|*.webp) name="${name%.*}" ;; esac
+
     for root in "${ICON_ROOTS[@]}"; do
         [ -d "$root" ] || continue
         for size in "${ICON_SIZES_LARGE[@]}"; do
-            candidate="$root/$size/apps/$name.png"
-            [ -f "$candidate" ] && { printf '%s' "$candidate"; return 0; }
+            for extension in png jpg jpeg webp; do
+                candidate="$root/$size/apps/$name.$extension"
+                [ -f "$candidate" ] && { printf '%s' "$candidate"; return 0; }
+            done
         done
     done
 
@@ -321,18 +339,38 @@ icon_path() {
         [ -d "$root" ] || continue
         candidate="$root/scalable/apps/$name.svg"
         [ -f "$candidate" ] && { printf '%s' "$candidate"; return 0; }
+        # Scalable files also ship in sized/context directories, not only in
+        # scalable/apps. The desktop entry's exact name still selects the logo.
+        for candidate in "$root"/*/*/"$name.svg"; do
+            [ -f "$candidate" ] && { printf '%s' "$candidate"; return 0; }
+        done
     done
 
     for root in "${ICON_ROOTS[@]}"; do
         [ -d "$root" ] || continue
         for size in "${ICON_SIZES_SMALL[@]}"; do
-            candidate="$root/$size/apps/$name.png"
-            [ -f "$candidate" ] && { printf '%s' "$candidate"; return 0; }
+            for extension in png jpg jpeg webp; do
+                candidate="$root/$size/apps/$name.$extension"
+                [ -f "$candidate" ] && { printf '%s' "$candidate"; return 0; }
+            done
         done
     done
 
-    for candidate in "/usr/share/pixmaps/$name.png" "/usr/share/pixmaps/$name.svg"; do
-        [ -f "$candidate" ] && { printf '%s' "$candidate"; return 0; }
+    # An uncommon size or context is still an actual app icon. Keep these
+    # behind the known large/scalable candidates so a tiny raster cannot win.
+    for root in "${ICON_ROOTS[@]}"; do
+        for extension in png jpg jpeg webp; do
+            for candidate in "$root"/*/*/"$name.$extension"; do
+                [ -f "$candidate" ] && { printf '%s' "$candidate"; return 0; }
+            done
+        done
+    done
+
+    for root in "${ICON_FALLBACK_DIRS[@]}"; do
+        for extension in png svg jpg jpeg webp; do
+            candidate="$root/$name.$extension"
+            [ -f "$candidate" ] && { printf '%s' "$candidate"; return 0; }
+        done
     done
 
     return 0
@@ -498,9 +536,9 @@ acf_get() {
 
 ## Absolute path to Steam's own art for one appid, or nothing.
 ##
-## The portrait grid image (library_600x900) is preferred because it is what
-## Steam's own library draws as a tile -- exactly this card's job -- and the
-## small square icon is a fallback, not a choice. Each name is looked up in
+## The square game icon is preferred because the home cards show app logos.
+## The portrait grid image (library_600x900) is the fallback when Steam has not
+## cached a square icon yet. Each name is looked up in
 ## both layouts the client has used for this cache: flat `<appid>_*.jpg`
 ## files, and the per-app subdirectory newer clients write instead. Which one
 ## exists depends on the Steam version that populated the cache, and checking
@@ -537,15 +575,13 @@ acf_get() {
 ## signal storeart is waiting for.
 steam_art() {
     local appid="$1" candidate
-    # The CDN pair comes after every local candidate, portrait before header:
-    # the header is storeart's last resort (a landscape capsule on a portrait
-    # card), kept under its own name precisely so the portrait stays wanted
-    # and replaces it the day Valve backfills -- see steam_fetch's note.
+    # The locally cached official logo wins over cover artwork. The fetched
+    # portrait keeps a new game's card illustrated while its logo is absent.
     for candidate in \
-        "$STEAM_LIBCACHE/${appid}_library_600x900.jpg" \
-        "$STEAM_LIBCACHE/$appid/library_600x900.jpg" \
         "$STEAM_LIBCACHE/${appid}_icon.jpg" \
         "$STEAM_LIBCACHE/$appid/icon.jpg" \
+        "$STEAM_LIBCACHE/${appid}_library_600x900.jpg" \
+        "$STEAM_LIBCACHE/$appid/library_600x900.jpg" \
         "$STEAM_ART_DIR/$appid.jpg"; do
         [ -f "$candidate" ] && { printf '%s' "$candidate"; return 0; }
     done
@@ -734,7 +770,7 @@ steam_games() {
 ## One apps.tsv record per fully-installed Steam game, or nothing at all.
 ##
 ## The icon column is UNCHANGED by the arrival of gameart.tsv: steam_art()
-## still chooses it, still portrait-first, still local-cache-before-CDN. See
+## still chooses it, logo-first and local-cache-before-CDN. See
 ## GAMEART at the top of this file for why the extra art went into a second
 ## file rather than a seventh column here.
 scan_steam() {
@@ -882,6 +918,17 @@ dirs_signature() {
             printf '%s:%s ' "$dir" "$(stat -c %Y "$dir" 2>/dev/null || echo 0)"
         fi
     done
+    # An icon may arrive after its desktop entry, particularly during an
+    # export. Watch the directories that gain icon files as well, so the next
+    # poll republishes a real path without waiting for another app install.
+    for dir in "${ICON_ROOTS[@]}"; do
+        [ -d "$dir" ] || continue
+        stat -c '%n:%Y' "$dir" "$dir"/* "$dir"/*/* 2>/dev/null || true
+    done
+    for dir in "${ICON_FALLBACK_DIRS[@]}"; do
+        [ -d "$dir" ] || continue
+        printf '%s:%s ' "$dir" "$(stat -c %Y "$dir" 2>/dev/null || echo 0)"
+    done
 }
 
 
@@ -1000,7 +1047,16 @@ scan_windows() {
         exe="$(windows_exe "$dir")" || continue
 
         icon=""
-        [ -f "$dir/.icon.png" ] && icon="$dir/.icon.png"
+        if [ -f "$dir/.icon.png" ]; then
+            icon="$dir/.icon.png"
+        else
+            # The manager extracts the executable's official logo (or a
+            # matching sidecar) into its PNG cache. Parse these user-supplied
+            # binaries as player, never as the root scanner service.
+            icon="$(runuser -u player -- /usr/lib/marwanos/windows/manager.py \
+                icon "legacy-$slug" "$exe" 2>/dev/null)" || icon=""
+            [ -f "$icon" ] || icon=""
+        fi
 
         # A tab shears the record into extra columns and a newline shears it
         # into two, so both become spaces -- scan_steam's sanitising, and for
@@ -1021,10 +1077,10 @@ scan_windows() {
 }
 
 
-## Cheap enough to run every cycle: one stat per game directory plus one for
-## the root, which is the same order as dirs_signature.
+## Cheap enough to run every cycle: game directories, their selected
+## executable, and any matching icon sidecars. No binaries are parsed here.
 windows_signature() {
-    local dir file
+    local dir file exe stem filename
     printf '%s:%s ' "$WINDOWS_DIR" "$(stat -c %Y "$WINDOWS_DIR" 2>/dev/null || echo 0)"
     [ -d "$WINDOWS_DIR" ] || return 0
     for dir in "$WINDOWS_DIR"/*/; do
@@ -1033,7 +1089,22 @@ windows_signature() {
         # .launch chooses the executable, so editing it has to re-scan even
         # though nothing about the directory itself changed.
         for file in "$dir/.launch" "$dir/.icon.png"; do
-            [ -f "$file" ] && printf '%s:%s ' "$file" "$(stat -c %Y "$file" 2>/dev/null || echo 0)"
+            [ -f "$file" ] && printf '%s:%s ' "$file" "$(stat -c '%s:%y' "$file" 2>/dev/null || echo 0)"
+        done
+        # A .launch target may be nested. Watch that selected executable and
+        # exactly the case-insensitive sidecar names the icon helper accepts,
+        # so replacing artwork in place invalidates the cached listing too.
+        exe="$(windows_exe "${dir%/}" 2>/dev/null)" || continue
+        printf '%s:%s ' "$exe" "$(stat -c '%s:%y' "$exe" 2>/dev/null || echo 0)"
+        stem="${exe##*/}"
+        stem="${stem%.*}"
+        for file in "${exe%/*}"/*; do
+            [ -f "$file" ] || continue
+            case "${file,,}" in *.ico|*.png|*.bmp) ;; *) continue ;; esac
+            filename="${file##*/}"
+            filename="${filename%.*}"
+            [ "${filename,,}" = "${stem,,}" ] || continue
+            printf '%s:%s ' "$file" "$(stat -c '%s:%y' "$file" 2>/dev/null || echo 0)"
         done
     done
 }

@@ -1,0 +1,27 @@
+{
+  "id": "managed.local-fdm-controller-20261005",
+  "recipe_id": "local-fdm-controller-20261005",
+  "title": "FDM Controller",
+  "prefix": "/var/home/player/.local/share/marwanos/windows/prefixes/local-fdm-controller-20261005",
+  "executable": "/var/home/player/.local/share/marwanos/portable/fdm-controller-20261005/FDM.exe",
+  "portable": true,
+  "input_mode": "",
+  "state": "installed",
+  "subtitle": "Controller download manager",
+  "icon": "/var/home/player/.local/share/marwanos/portable/fdm-controller-20261005/icon.png",
+  "exec": [
+    "/usr/bin/env",
+    "FDM_CONTROLLER_PORTABLE=1",
+    "FDM_CONTROLLER_UI=1",
+    "FDM_NOTIFICATION_DIR=Z:\\var\\home\\player\\.local\\share\\marwanos\\notification-events",
+    "FDM_DOWNLOAD_DIR=Z:\\var\\home\\player\\Downloads\\",
+    "/usr/lib/marwanos/windows/manager.py",
+    "launch",
+    "local-fdm-controller-20261005"
+  ],
+  "stop_exec": [
+    "/usr/lib/marwanos/windows/manager.py",
+    "stop",
+    "local-fdm-controller-20261005"
+  ]
+}

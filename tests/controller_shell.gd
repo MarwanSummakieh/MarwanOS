@@ -13,6 +13,13 @@ func check(value: bool, label: String) -> void:
 		push_error("FAIL: " + label)
 
 func _run() -> void:
+	var native_apps: Array = root.get_node("Installed")._parse(
+		"org.freedownloadmanager.Manager\tFree Download Manager\t\t\tflatpak run org.freedownloadmanager.Manager\tinstalled\n"
+		+ "steam.123\tGame\t\t\tsteam steam://rungameid/123\tinstalled\n")
+	check(native_apps.size() == 2, "native FDM and game entries load")
+	if native_apps.size() == 2:
+		check(native_apps[0].get("input_mode") == "pointer", "Linux FDM uses the controller pointer profile")
+		check(native_apps[1].get("input_mode") == "", "games retain ordinary controller routing")
 	var router := root.get_node("ControllerRouter")
 	var player := root.get_node("PlayerOne")
 	var scene: Node = load("res://scenes/shell_root.tscn").instantiate()

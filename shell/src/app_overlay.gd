@@ -58,6 +58,7 @@ signal closed()
 const TvTheme = preload("res://src/tv_theme.gd")
 const AppMenuRow = preload("res://src/app_menu_row.gd")
 const Keyboard = preload("res://src/keyboard.gd")
+const AudioScreen = preload("res://src/audio_screen.gd")
 
 ## The menu, in order. Adding an entry here and a branch in _on_item_chosen is
 ## the whole of adding a menu item -- the panel sizes itself and the focus chain
@@ -71,6 +72,7 @@ const Keyboard = preload("res://src/keyboard.gd")
 ## happens all through it.
 const MENU_ITEMS := [
 	{"id": "type", "label": "Type", "icon": "keyboard"},
+	{"id": "audio", "label": "Audio", "icon": ""},
 	{"id": "minimize", "label": "Minimize", "icon": "home"},
 	{"id": "close", "label": "Close", "icon": "close"},
 ]
@@ -95,6 +97,7 @@ var _rows: Array = []
 ## the left edge, and nothing here should have to change again if it moves back.
 var _menu: Control = null
 var _keyboard: Keyboard = null
+var _audio_screen: AudioScreen = null
 var _typing_pid := -1
 var _typing_error: Label = null
 
@@ -223,6 +226,8 @@ func _wire_focus_neighbours() -> void:
 func _on_item_chosen(id: String) -> void:
 	ShellLog.info("app menu: %s chosen" % id)
 	match id:
+		"audio":
+			_open_audio()
 		"type":
 			# NO closed.emit() ON THIS BRANCH, and that is the difference between
 			# it and every other entry. Closing the overlay would clear
@@ -252,6 +257,28 @@ func _on_item_chosen(id: String) -> void:
 # ---------------------------------------------------------------------------
 # Typing into the application
 # ---------------------------------------------------------------------------
+
+func _open_audio() -> void:
+	if _audio_screen != null:
+		return
+	_menu.hide()
+	_audio_screen = AudioScreen.new()
+	_audio_screen.closed.connect(func(): _close_audio.call_deferred())
+	add_child(_audio_screen)
+
+
+func _close_audio() -> void:
+	if _audio_screen == null:
+		return
+	var screen := _audio_screen
+	_audio_screen = null
+	remove_child(screen)
+	screen.queue_free()
+	_menu.show()
+	for row in _rows:
+		if row.id == "audio":
+			row.grab_focus()
+			break
 
 ## Swaps the menu panel for the keyboard on this same surface. See the header
 ## for why it is a swap and not a screen.
@@ -379,6 +406,8 @@ func _exit_tree() -> void:
 
 
 func _unhandled_input(event: InputEvent) -> void:
+	if _audio_screen != null:
+		return
 	# THE KEYBOARD OWNS B WHILE IT IS UP. It consumes ui_cancel for its own
 	# cancel signal, and this handler must not treat the same press as a second
 	# dismissal -- checked explicitly rather than left to dispatch order, which

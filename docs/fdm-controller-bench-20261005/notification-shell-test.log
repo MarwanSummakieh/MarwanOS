@@ -1,0 +1,36 @@
+Godot Engine v4.7.1.stable.official.a13da4feb - https://godotengine.org
+
+<6>marwanos-shell: kiosk display policy applied (fullscreen, borderless, cursor hidden)
+<6>marwanos-shell: display at startup: server headless, adapter 
+<6>marwanos-shell: screens: 0, primary 0, keyboard focus 0
+<6>marwanos-shell: window: mode 1 size (0, 0)
+<6>marwanos-shell: viewport: canvas (1920.0, 1920.0) design (1920, 1080) stretch mode 1 aspect 4
+<6>marwanos-shell: stretch: expand -- no bars; design surface is 1920x1920 (0 px wider than the 1920 base)
+<6>marwanos-shell: input map ready; joypad bindings present on all 12 required actions
+<6>marwanos-shell: player one claimed: index 0, DualSense Wireless Controller, guid 030057564c050000e60c000000016800
+<6>marwanos-shell: network is online
+<6>marwanos-shell: network link: ethernet enp4s0	192.168.50.206
+<6>marwanos-shell: installed applications: 1
+<6>marwanos-shell:   Steam (steam) [installed]
+<6>marwanos-shell: services seam watching /run/user/1000/marwanos/services
+<6>marwanos-shell: apps state: idle  
+<6>marwanos-shell: wifi state: no-device
+<6>marwanos-shell: update state: failed (error: Upgrading: Preparing import: Fetching manifest: failed to invoke method OpenImage: reading manifest controller-20261005 in ghcr.io/marwansummakieh/marwanos: manifest unknown)
+<6>marwanos-shell: display profile state: current (steady)
+<6>marwanos-shell: window profile in force this session: no-bg-steam
+<6>marwanos-shell: window profile state: current (no-bg-steam)
+<6>marwanos-shell: media state: idle
+<6>marwanos-shell: ignoring extra controller on index 1 (PC1 application controller)
+<6>marwanos-shell: display after the first frame: server headless, adapter 
+<6>marwanos-shell: screens: 0, primary 0, keyboard focus 0
+<6>marwanos-shell: window: mode 1 size (0, 0)
+<6>marwanos-shell: viewport: canvas (1920.0, 1920.0) design (1920, 1080) stretch mode 1 aspect 4
+<6>marwanos-shell: stretch: expand -- no bars; design surface is 1920x1920 (0 px wider than the 1920 base)
+<4>marwanos-shell: no native window handle; cannot set GAMESCOPE_EXTERNAL_OVERLAY (overlay will cover the app)
+<6>marwanos-shell: top bar starts hidden; Up from the rail reveals it
+<6>marwanos-shell: home rail ready with 1 cards
+<6>marwanos-shell: selected steam
+<6>marwanos-shell: top bar revealed
+<6>marwanos-shell: info opened
+<6>marwanos-shell: info screen up with 8 rows
+Notification shell checks: 0 failure(s)

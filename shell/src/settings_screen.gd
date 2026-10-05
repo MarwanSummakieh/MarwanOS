@@ -41,6 +41,7 @@ const TvTheme = preload("res://src/tv_theme.gd")
 const ActionRow = preload("res://src/action_row.gd")
 const WifiScreen = preload("res://src/wifi_screen.gd")
 const UpdateScreen = preload("res://src/update_screen.gd")
+const AudioScreen = preload("res://src/audio_screen.gd")
 
 var _rows: Array = []
 var _scroll: ScrollContainer = null
@@ -53,6 +54,8 @@ var _wifi_row: ActionRow = null
 var _wifi_screen: WifiScreen = null
 var _updates_row: ActionRow = null
 var _update_screen: UpdateScreen = null
+var _audio_row: ActionRow = null
+var _audio_screen: AudioScreen = null
 
 
 func _ready() -> void:
@@ -178,6 +181,12 @@ func _ready() -> void:
 	list.add_child(_wifi_row)
 	_rows.append(_wifi_row)
 
+	_audio_row = ActionRow.new()
+	_audio_row.setup("Audio", Audio.summary())
+	_audio_row.activated.connect(_on_audio_row_pressed)
+	list.add_child(_audio_row)
+	_rows.append(_audio_row)
+
 	# The second row that acts. Last, because it is the one that can restart
 	# the machine and should not sit under a thumb that was aiming for Wi-Fi.
 	_updates_row = ActionRow.new()
@@ -215,6 +224,7 @@ func _ready() -> void:
 	# The Wi-Fi row's value tracks the seam too, so joining a network updates
 	# the row behind the screen that joined it.
 	Wifi.state_changed.connect(_on_wifi_state_changed)
+	Audio.changed.connect(func(): _audio_row.set_value(Audio.summary()))
 	# The Display row tracks its seam for the same reason the network rows track
 	# theirs: the answer is root's to give, and a row that only updated on its
 	# own press would keep showing an optimistic guess after a refusal.
@@ -427,7 +437,7 @@ func _on_launch_finished(_entry: Dictionary) -> void:
 	# screen's guard said the other way round. A launch cannot be started from
 	# under one today -- the row is unreachable while a child screen holds focus
 	# -- so this is a guard against a future arrangement rather than a live case.
-	if _wifi_screen == null and _update_screen == null:
+	if _wifi_screen == null and _update_screen == null and _audio_screen == null:
 		set_process_unhandled_input(true)
 	# Nothing is focused after a hide, and a settings screen with no focus owner
 	# is a settings screen the pad cannot move -- the rail's _ensure_focus
@@ -464,6 +474,33 @@ func _close_update_screen() -> void:
 
 func _on_wifi_screen_closed() -> void:
 	_close_wifi_screen.call_deferred()
+
+
+func _on_audio_row_pressed() -> void:
+	if _audio_screen != null:
+		return
+	set_process_unhandled_input(false)
+	# Hide the parent's controls so GUI navigation cannot reach them behind Audio.
+	for child in get_children():
+		if child is Control:
+			child.hide()
+	_audio_screen = AudioScreen.new()
+	_audio_screen.closed.connect(func(): _close_audio_screen.call_deferred())
+	add_child(_audio_screen)
+
+
+func _close_audio_screen() -> void:
+	if _audio_screen == null:
+		return
+	var screen := _audio_screen
+	_audio_screen = null
+	remove_child(screen)
+	screen.queue_free()
+	for child in get_children():
+		if child is Control:
+			child.show()
+	set_process_unhandled_input(true)
+	_audio_row.grab_focus()
 
 
 func _close_wifi_screen() -> void:

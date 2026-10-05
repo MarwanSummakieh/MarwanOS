@@ -41,6 +41,12 @@ const STATUS_DIR_ENV := "MARWANOS_SHELL_STATUS_DIR"
 ## state. A line with fewer is malformed and skipped rather than guessed at.
 const FIELD_COUNT := 6
 
+# Desktop utilities need the controller pointer and native window sizing.
+# Use stable app IDs so games retain their ordinary controller routing.
+const INPUT_MODES := {
+	"org.freedownloadmanager.Manager": "pointer",
+}
+
 ## What a card says about an app that is on its way but not here yet. The words
 ## live HERE rather than in the scanner for the same reason the store page's
 ## do: the system reports a state, the shell decides how to say it, and the two
@@ -167,6 +173,7 @@ func _parse(raw: String) -> Array:
 			"icon": fields[3],
 			"exec": exec_parts,
 			"state": state,
+			"input_mode": str(INPUT_MODES.get(fields[0], "")),
 		})
 	return result
 

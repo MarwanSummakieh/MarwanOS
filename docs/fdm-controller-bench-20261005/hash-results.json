@@ -1,0 +1,44 @@
+[
+  {
+    "fixture": "fdm-controller-bench-fixture",
+    "file": "alpha.bin",
+    "bytes": 786432,
+    "sha256": "71eab3d2beba5e1719d6a6e7ffb7c43b40629bc6ea199387a4cd1588aad01d63",
+    "matches": true
+  },
+  {
+    "fixture": "fdm-controller-bench-fixture",
+    "file": "beta.bin",
+    "bytes": 525001,
+    "sha256": "fdb5bd85dea8a5a484518e56b7d79688bd92b78a179849860c75d8560c2cd886",
+    "matches": true
+  },
+  {
+    "fixture": "fdm-notification-fixture",
+    "file": "alpha.bin",
+    "bytes": 786432,
+    "sha256": "71eab3d2beba5e1719d6a6e7ffb7c43b40629bc6ea199387a4cd1588aad01d63",
+    "matches": true
+  },
+  {
+    "fixture": "fdm-notification-fixture",
+    "file": "beta.bin",
+    "bytes": 525001,
+    "sha256": "fdb5bd85dea8a5a484518e56b7d79688bd92b78a179849860c75d8560c2cd886",
+    "matches": true
+  },
+  {
+    "fixture": "fdm-notification-fixture-v2",
+    "file": "alpha.bin",
+    "bytes": 786432,
+    "sha256": "71eab3d2beba5e1719d6a6e7ffb7c43b40629bc6ea199387a4cd1588aad01d63",
+    "matches": true
+  },
+  {
+    "fixture": "fdm-notification-fixture-v2",
+    "file": "beta.bin",
+    "bytes": 525001,
+    "sha256": "fdb5bd85dea8a5a484518e56b7d79688bd92b78a179849860c75d8560c2cd886",
+    "matches": true
+  }
+]

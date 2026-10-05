@@ -1,0 +1,553 @@
+Build started 05/10/2026 19.18.05.
+Logging verbosity is set to: Normal.
+     1>Project "C:\Users\brain\Documents\repos\MarwanOS\out\fdm-classic\source\trunc\FDM.sln" on node 1 (FDM target(s)).
+     1>ValidateSolutionConfiguration:
+         Building solution configuration "Release|Win32".
+     1>Project "C:\Users\brain\Documents\repos\MarwanOS\out\fdm-classic\source\trunc\FDM.sln" (1) is building "C:\Users\brain\Documents\repos\MarwanOS\out\fdm-classic\source\trunc\FDM.vcxproj.metaproj" (2) on node 1 (default targets).
+     2>Project "C:\Users\brain\Documents\repos\MarwanOS\out\fdm-classic\source\trunc\FDM.vcxproj.metaproj" (2) is building "C:\Users\brain\Documents\repos\MarwanOS\out\fdm-classic\source\trunc\FDMCustomized\FDMCustomized_lib\FDMCustomized_lib.vcxproj" (5) on node 2 (default targets).
+     5>PrepareForBuild:
+         Structured output is enabled. The formatting of compiler diagnostics will reflect the error hierarchy. See https://aka.ms/cpp/structured-output for more details.
+     2>Project "C:\Users\brain\Documents\repos\MarwanOS\out\fdm-classic\source\trunc\FDM.vcxproj.metaproj" (2) is building "C:\Users\brain\Documents\repos\MarwanOS\out\fdm-classic\source\trunc\InetFile\cURL_lib\cURL_lib.vcxproj" (6) on node 6 (default targets).
+     6>PrepareForBuild:
+         Structured output is enabled. The formatting of compiler diagnostics will reflect the error hierarchy. See https://aka.ms/cpp/structured-output for more details.
+     5>InitializeBuildStatus:
+         Creating ".\Release\FDMCusto.C0565AAC.tlog\unsuccessfulbuild" because "AlwaysCreate" was specified.
+         Touching ".\Release\FDMCusto.C0565AAC.tlog\unsuccessfulbuild".
+     6>InitializeBuildStatus:
+         Creating ".\Release\cURL_lib.tlog\unsuccessfulbuild" because "AlwaysCreate" was specified.
+         Touching ".\Release\cURL_lib.tlog\unsuccessfulbuild".
+     2>Project "C:\Users\brain\Documents\repos\MarwanOS\out\fdm-classic\source\trunc\FDM.vcxproj.metaproj" (2) is building "C:\Users\brain\Documents\repos\MarwanOS\out\fdm-classic\source\trunc\PartMediaPreview\PartMediaPreview.vcxproj" (3) on node 3 (default targets).
+     3>PrepareForBuild:
+         Structured output is enabled. The formatting of compiler diagnostics will reflect the error hierarchy. See https://aka.ms/cpp/structured-output for more details.
+     5>ClCompile:
+         All outputs are up-to-date.
+     3>InitializeBuildStatus:
+         Creating ".\Release\PartMediaPreview.tlog\unsuccessfulbuild" because "AlwaysCreate" was specified.
+         Touching ".\Release\PartMediaPreview.tlog\unsuccessfulbuild".
+     2>Project "C:\Users\brain\Documents\repos\MarwanOS\out\fdm-classic\source\trunc\FDM.vcxproj.metaproj" (2) is building "C:\Users\brain\Documents\repos\MarwanOS\out\fdm-classic\source\trunc\zlib\zlib.vcxproj" (4) on node 1 (default targets).
+     4>PrepareForBuild:
+         Structured output is enabled. The formatting of compiler diagnostics will reflect the error hierarchy. See https://aka.ms/cpp/structured-output for more details.
+     5>Lib:
+         All outputs are up-to-date.
+         FDMCustomized_lib.vcxproj -> C:\Users\brain\Documents\repos\MarwanOS\out\fdm-classic\source\trunc\FDMCustomized\FDMCustomized_lib\Release\FDMCustomized_lib.lib
+     6>ClCompile:
+         All outputs are up-to-date.
+     4>InitializeBuildStatus:
+         Creating ".\Release\zlib.tlog\unsuccessfulbuild" because "AlwaysCreate" was specified.
+         Touching ".\Release\zlib.tlog\unsuccessfulbuild".
+     2>Project "C:\Users\brain\Documents\repos\MarwanOS\out\fdm-classic\source\trunc\FDM.vcxproj.metaproj" (2) is building "C:\Users\brain\Documents\repos\MarwanOS\out\fdm-classic\source\trunc\Hash\Hash.vcxproj" (7) on node 5 (default targets).
+     7>PrepareForBuild:
+         Structured output is enabled. The formatting of compiler diagnostics will reflect the error hierarchy. See https://aka.ms/cpp/structured-output for more details.
+     3>ClCompile:
+         All outputs are up-to-date.
+     2>Project "C:\Users\brain\Documents\repos\MarwanOS\out\fdm-classic\source\trunc\FDM.vcxproj.metaproj" (2) is building "C:\Users\brain\Documents\repos\MarwanOS\out\fdm-classic\source\trunc\InetFile\InetFile.vcxproj" (8) on node 4 (default targets).
+     8>PrepareForBuild:
+         Structured output is enabled. The formatting of compiler diagnostics will reflect the error hierarchy. See https://aka.ms/cpp/structured-output for more details.
+     7>InitializeBuildStatus:
+         Creating ".\Release\Hash.tlog\unsuccessfulbuild" because "AlwaysCreate" was specified.
+         Touching ".\Release\Hash.tlog\unsuccessfulbuild".
+     5>FinalizeBuildStatus:
+         Deleting file ".\Release\FDMCusto.C0565AAC.tlog\unsuccessfulbuild".
+         Touching ".\Release\FDMCusto.C0565AAC.tlog\FDMCustomized_lib.lastbuildstate".
+     5>Done Building Project "C:\Users\brain\Documents\repos\MarwanOS\out\fdm-classic\source\trunc\FDMCustomized\FDMCustomized_lib\FDMCustomized_lib.vcxproj" (default targets).
+     6>Lib:
+         All outputs are up-to-date.
+     8>InitializeBuildStatus:
+         Creating ".\Release\InetFile.tlog\unsuccessfulbuild" because "AlwaysCreate" was specified.
+     6>Lib:
+         cURL_lib.vcxproj -> C:\Users\brain\Documents\repos\MarwanOS\out\fdm-classic\source\trunc\InetFile\cURL_lib\Release\cURL_lib.lib
+     8>InitializeBuildStatus:
+         Touching ".\Release\InetFile.tlog\unsuccessfulbuild".
+     3>Lib:
+         All outputs are up-to-date.
+         PartMediaPreview.vcxproj -> C:\Users\brain\Documents\repos\MarwanOS\out\fdm-classic\source\trunc\PartMediaPreview\Release\PartMediaPreview.lib
+     7>ClCompile:
+         All outputs are up-to-date.
+     8>ClCompile:
+         All outputs are up-to-date.
+         All outputs are up-to-date.
+     7>Lib:
+         All outputs are up-to-date.
+         Hash.vcxproj -> C:\Users\brain\Documents\repos\MarwanOS\out\fdm-classic\source\trunc\Hash\Release\Hash.lib
+     6>FinalizeBuildStatus:
+         Deleting file ".\Release\cURL_lib.tlog\unsuccessfulbuild".
+         Touching ".\Release\cURL_lib.tlog\cURL_lib.lastbuildstate".
+     8>Lib:
+         All outputs are up-to-date.
+         InetFile.vcxproj -> C:\Users\brain\Documents\repos\MarwanOS\out\fdm-classic\source\trunc\InetFile\Release\InetFile.lib
+     6>Done Building Project "C:\Users\brain\Documents\repos\MarwanOS\out\fdm-classic\source\trunc\InetFile\cURL_lib\cURL_lib.vcxproj" (default targets).
+     3>FinalizeBuildStatus:
+         Deleting file ".\Release\PartMediaPreview.tlog\unsuccessfulbuild".
+         Touching ".\Release\PartMediaPreview.tlog\PartMediaPreview.lastbuildstate".
+     3>Done Building Project "C:\Users\brain\Documents\repos\MarwanOS\out\fdm-classic\source\trunc\PartMediaPreview\PartMediaPreview.vcxproj" (default targets).
+     7>FinalizeBuildStatus:
+         Deleting file ".\Release\Hash.tlog\unsuccessfulbuild".
+         Touching ".\Release\Hash.tlog\Hash.lastbuildstate".
+     7>Done Building Project "C:\Users\brain\Documents\repos\MarwanOS\out\fdm-classic\source\trunc\Hash\Hash.vcxproj" (default targets).
+     8>FinalizeBuildStatus:
+         Deleting file ".\Release\InetFile.tlog\unsuccessfulbuild".
+         Touching ".\Release\InetFile.tlog\InetFile.lastbuildstate".
+     8>Done Building Project "C:\Users\brain\Documents\repos\MarwanOS\out\fdm-classic\source\trunc\InetFile\InetFile.vcxproj" (default targets).
+     4>ClCompile:
+         All outputs are up-to-date.
+       Lib:
+         All outputs are up-to-date.
+         zlib.vcxproj -> C:\Users\brain\Documents\repos\MarwanOS\out\fdm-classic\source\trunc\zlib\Release\zlib.lib
+       FinalizeBuildStatus:
+         Deleting file ".\Release\zlib.tlog\unsuccessfulbuild".
+         Touching ".\Release\zlib.tlog\zlib.lastbuildstate".
+     4>Done Building Project "C:\Users\brain\Documents\repos\MarwanOS\out\fdm-classic\source\trunc\zlib\zlib.vcxproj" (default targets).
+     2>Project "C:\Users\brain\Documents\repos\MarwanOS\out\fdm-classic\source\trunc\FDM.vcxproj.metaproj" (2) is building "C:\Users\brain\Documents\repos\MarwanOS\out\fdm-classic\source\trunc\FDM.vcxproj" (9) on node 1 (default targets).
+     9>PrepareForBuild:
+         Structured output is enabled. The formatting of compiler diagnostics will reflect the error hierarchy. See https://aka.ms/cpp/structured-output for more details.
+       InitializeBuildStatus:
+         Creating ".\Release\FDM.tlog\unsuccessfulbuild" because "AlwaysCreate" was specified.
+         Touching ".\Release\FDM.tlog\unsuccessfulbuild".
+       Midl:
+         All outputs are up-to-date.
+       ClCompile:
+         All outputs are up-to-date.
+         C:\Users\brain\Documents\repos\MarwanOS\out\fdm-classic\toolchain\VC\Tools\MSVC\14.16.27023\/bin/Hostx64/x86\CL.exe /c /Iinclude.add /Iinclude.add\dshow /I"C:\Users\brain\Documents\repos\MarwanOS\out\fdm-classic/dependencies/boost_1_65_1" /Zi /nologo /W4 /WX- /diagnostics:column /O2 /Ot /Oy- /D NDEBUG /D WIN32 /D _WINDOWS /D CURL_STATICLIB /D USE_SSLEAY /D _CRT_SECURE_NO_WARNINGS /D _VC80_UPGRADE=0x0600 /D _UNICODE /D UNICODE /D _AFXDLL /D NOCRYPT /D NOUNCRYPT /Gm- /EHa /MD /GS /Gy- /arch:SSE /fp:precise /Zc:wchar_t /Zc:forScope /Zc:inline /Yu"stdafx.h" /Fp".\Release\FDM.pch" /Fo".\Release\\" /Fd".\Release\vc145.pdb" /external:W4 /Gd /TP /analyze- /FC /errorReport:queue /Zm200 FdmControllerWnd.cpp
+     9>cl : command line  warning D9007: '/external:W' requires '/experimental:external'; option ignored [C:\Users\brain\Documents\repos\MarwanOS\out\fdm-classic\source\trunc\FDM.vcxproj]
+         FdmControllerWnd.cpp
+         All outputs are up-to-date.
+         All outputs are up-to-date.
+         All outputs are up-to-date.
+       ResourceCompile:
+         All outputs are up-to-date.
+       Link:
+         C:\Users\brain\Documents\repos\MarwanOS\out\fdm-classic\toolchain\VC\Tools\MSVC\14.16.27023\/bin/Hostx64/x86\link.exe /ERRORREPORT:QUEUE /OUT:".\bin\Release\FDM.exe" /INCREMENTAL:NO /NOLOGO /LIBPATH:Lib.add /LIBPATH:"C:\Users\brain\Documents\repos\MarwanOS\out\fdm-classic/dependencies/boost_1_65_1\stage\lib" /LIBPATH:"C:\Users\brain\Documents\repos\MarwanOS\out\fdm-classic/dependencies/boost_1_65_1\lib32-msvc-10.0" /LIBPATH:"C:\Users\brain\Documents\repos\MarwanOS\out\fdm-classic/dependencies/boost_1_65_1\lib32-msvc-12.0" PartMediaPreview/Release/PartMediaPreview.lib FDMCustomized/FDMCustomized_lib/Release/FDMCustomized_lib.lib InetFile/Release/inetfile.lib Mswsock.lib Hash\Release\hash.lib inetfile/curl_lib/release/curl_lib.lib dxguid.lib wininet.lib rasapi32.lib Ws2_32.lib htmlhelp.lib winmm.lib strmiids.lib Version.lib Iphlpapi.lib "libeay32-md.lib" "ssleay32-md.lib" Msimg32.lib zlib\Release\zlib.lib dbghelp.lib /MANIFEST /MANIFESTDEPENDENCY:"type='Win32' name='Microsoft.Windows.Common-Controls' version='6.0.0.0' processorArchitecture='X86' publicKeyToken='6595b64144ccf1df' language='*'" /MANIFESTUAC:"level='asInvoker' uiAccess='false'" /manifest:embed /manifestinput:"C:\Users\brain\Documents\repos\MarwanOS\out\fdm-classic\toolchain\VC\Tools\MSVC\14.16.27023\Include\Manifest\dpiaware.manifest" /DEBUG /PDB:".\bin\Release\FDM.pdb" /SUBSYSTEM:WINDOWS /OPT:REF /TLBOUT:".\bin\Release\fdm.tlb" /TLBID:1 /ENTRY:"wWinMainCRTStartup" /DYNAMICBASE /NXCOMPAT /IMPLIB:".\bin\Release\FDM.lib" /MACHINE:X86 /SAFESEH:NO /MAPINFO:EXPORTS .\Release\fdm.res
+         .\Release\AERDlg.obj
+         .\Release\AlsFolderBrowser.obj
+         .\Release\AppStatusBar.obj
+         .\Release\BtDld_Files.obj
+         .\Release\BtDld_General.obj
+         .\Release\BtDld_Misc.obj
+         .\Release\BtDld_Seeding.obj
+         .\Release\BtDldSheet.obj
+         .\Release\CBD_SeeResultsDlg.obj
+         .\Release\CFDM.obj
+         .\Release\ChildView.obj
+         .\Release\ClientAreaWnd.obj
+         .\Release\CmdHistorySaver.obj
+         .\Release\ColumnTreeCtrl.obj
+         .\Release\ComboBox_Ex.obj
+         .\Release\ComboBoxTreeCtrl.obj
+         .\Release\CreateBatchDownload.obj
+         .\Release\CreateDownloadDlg.obj
+         .\Release\CreateDownloadFromTorrentFileDlg.obj
+         .\Release\CreateDownloadListDlg.obj
+         .\Release\CreateDownloadsDlg.obj
+         .\Release\CreateTPDownloadDlg.obj
+         .\Release\CsvParser.obj
+         .\Release\DDRDlg.obj
+         .\Release\DialDlg.obj
+         .\Release\DlgConnectionSpeedInfo.obj
+         .\Release\DlgSpecifyNetworkSpeedValue.obj
+         .\Release\DlgTumSettingsPerDirection.obj
+         .\Release\Dlg_CheckFileIntegrity.obj
+         .\Release\Dlg_CheckFileIntegrity_Progress.obj
+         .\Release\Dlg_CheckFileIntegrity_Result.obj
+         .\Release\Dlg_ChooseGroup.obj
+         .\Release\Dlg_Convert.obj
+         .\Release\Dlg_CreateFVDownload.obj
+         .\Release\Dlg_CreateNewTorrent.obj
+         .\Release\Dlg_Download.obj
+         .\Release\Dlg_Download_OnHide.obj
+         .\Release\Dlg_MakePortableVer.obj
+         .\Release\Dlg_Opinions.obj
+         .\Release\Dlg_Options.obj
+         .\Release\Dlg_Options_Downloads.obj
+         .\Release\Dlg_Options_Downloads_Bittorrent.obj
+         .\Release\Dlg_Options_Downloads_Flv.obj
+         .\Release\Dlg_Options_Downloads_Mirrors.obj
+         .\Release\Dlg_Options_Downloads_Monitoring.obj
+         .\Release\Dlg_Options_Downloads_Network.obj
+         .\Release\Dlg_Options_Downloads_NewDld.obj
+         .\Release\Dlg_Options_Downloads_TimeLimit.obj
+         .\Release\Dlg_Options_General.obj
+         .\Release\Dlg_Options_General_History.obj
+         .\Release\Dlg_Options_General_Misc.obj
+         .\Release\Dlg_Options_General_Misc_Advanced.obj
+         .\Release\Dlg_Options_Notifications.obj
+         .\Release\Dlg_Options_Page.obj
+         .\Release\Dlg_Options_SiteMgr.obj
+         .\Release\Dlg_SavePassword.obj
+         .\Release\Dlg_SetBatchNumbers.obj
+         .\Release\Dlg_ShutdownType.obj
+         .\Release\Dlg_SpreadHelp.obj
+         .\Release\Dlg_SpreadHelp2.obj
+         .\Release\Dlg_SpreadHelp2_wb_Events.obj
+         .\Release\Dlg_SpreadHelp2_wb_UIHandler.obj
+         .\Release\Dlg_SpreadHelp_LinkCode.obj
+         .\Release\Dlg_TUMChanged.obj
+         .\Release\Dlg_Unpack_AskOverwrite.obj
+         .\Release\Dlg_Unpack_InstAddPack.obj
+         .\Release\Dlg_UnpackProgress.obj
+         .\Release\Dlg_UnpackSettings.obj
+         .\Release\Dlg_WPD_IgnoreList.obj
+         .\Release\Dlg_WPD_IL_Add.obj
+         .\Release\DlgCreateFlvDownloads.obj
+         .\Release\DlgCreateFlvDownloadsByWebPageUrl.obj
+         .\Release\DlgCustomizeIEMenu.obj
+         .\Release\DlgDeletedProperties.obj
+         .\Release\DlgDL.obj
+         .\Release\DlgDownloadsHistory.obj
+         .\Release\DlgElevateRequired.obj
+         .\Release\DlgExportDownloads.obj
+         .\Release\DlgExportHistory.obj
+         .\Release\DlgExtensionsFilter.obj
+         .\Release\DlgFind.obj
+         .\Release\DlgFindAdvanced.obj
+         .\Release\DlgPI2.obj
+         .\Release\DlgPI2_IfRemind.obj
+         .\Release\DlgPI2_SureToCancel.obj
+         .\Release\DlgPI2_WbCustomization.obj
+         .\Release\DlgProgramOptions.obj
+         .\Release\DlgSounds.obj
+         .\Release\DlgT1ToT2.obj
+         .\Release\DlgVidMan.obj
+         .\Release\DlgVidSeek.obj
+         .\Release\DownloadAlrExistsDlg.obj
+         .\Release\DownloaderProperties_MonitorPage_SkipList.obj
+         .\Release\DownloadProperties.obj
+         .\Release\DownloadProperties_ConnectionPage.obj
+         .\Release\DownloadProperties_GeneralPage.obj
+         .\Release\DownloadProperties_IntegrityPage.obj
+         .\Release\DownloadProperties_MirrorsPage.obj
+         .\Release\DownloadProperties_MiscPage.obj
+         .\Release\DownloadProperties_ProtocolPage.obj
+         .\Release\DownloadProperties_ProxyPage.obj
+         .\Release\DownloadPropertiesSheet.obj
+         .\Release\Downloads_Bittorrent.obj
+         .\Release\Downloads_Bittorrent_Files.obj
+         .\Release\Downloads_Bittorrent_General.obj
+         .\Release\Downloads_Bittorrent_Peers.obj
+         .\Release\Downloads_Deleted.obj
+         .\Release\Downloads_Downloads.obj
+         .\Release\Downloads_Groups.obj
+         .\Release\Downloads_History.obj
+         .\Release\Downloads_Info.obj
+         .\Release\Downloads_InfoFrame.obj
+         .\Release\Downloads_Log.obj
+         .\Release\Downloads_Opinions.obj
+         .\Release\Downloads_Opinions_WBEvents.obj
+         .\Release\Downloads_Progress.obj
+         .\Release\Downloads_Tasks.obj
+         .\Release\Downloads_VideoPreview.obj
+         .\Release\DownloadsGroupsComboBox.obj
+         .\Release\DownloadsWnd.obj
+         .\Release\EnterKeyDlg.obj
+         .\Release\FDCButton.obj
+         .\Release\FdmApp.obj
+         .\Release\FdmBalloon.obj
+         .\Release\FdmBalloon_Content.obj
+         .\Release\FdmBalloon_OnDownloadDone.obj
+         .\Release\FdmBalloonContent.obj
+         .\Release\FDMDownload.obj
+         .\Release\FDMDownloadsStat.obj
+         .\Release\FDMFlashVideoDownloads.obj
+         .\Release\FdmFlvDownload.obj
+         .\Release\FdmTorrentFilesRcvr.obj
+         .\Release\FdmUiWindow.obj
+         .\Release\FdmControllerWnd.obj
+         .\Release\FDMUploader.obj
+         .\Release\FDMUploadPackage.obj
+         .\Release\FlashVideoDownloadsWnd.obj
+         .\Release\FloatingInfo_ListCtrlWnd.obj
+         .\Release\FloatingInfoWnd.obj
+         .\Release\FloatingWnd.obj
+         .\Release\FloatingWndDropTarget.obj
+         .\Release\FloatingWndsThread.obj
+         .\Release\FolderBrowser.obj
+         .\Release\fsAppSettings.obj
+         .\Release\fsArchiveFileStream.obj
+         .\Release\fsArchiveInternetStream.obj
+         .\Release\fsArchiveRebuilder.obj
+         .\Release\fsArchiveRebuilderStream.obj
+         .\Release\fsAutorunMgr.obj
+         .\Release\fsClipboardCatchMgr.obj
+         .\Release\fsClipboardMgr.obj
+         .\Release\fsCmdHistoryMgr.obj
+         .\Release\fsCommandLineParser.obj
+         .\Release\fsContextHelpMgr.obj
+         .\Release\fsDialogsMgr.obj
+         .\Release\fsDirectXVersion.obj
+         .\Release\fsDldFilter.obj
+         .\Release\fsDownload.obj
+         .\Release\fsDownloadMgr.obj
+         .\Release\fsDownloadRegSaver.obj
+         .\Release\fsDownloads_GroupsMgr.obj
+         .\Release\fsDownloadsHistoryMgr.obj
+         .\Release\fsDownloadsMgr.obj
+         .\Release\fsEventsMgr.obj
+         .\Release\fsFDMCmdLineParser.obj
+         .\Release\fsFindDownloadMgr.obj
+         .\Release\fsHistoriesMgr.obj
+         .\Release\fsIECatchMgr.obj
+         .\Release\fsIEContextMenuMgr.obj
+         .\Release\fsIEUserAgent.obj
+         .\Release\fsInternetDownloader.obj
+         .\Release\fsInternetFileListMgr.obj
+         .\Release\fsMFCLangMgr.obj
+         .\Release\fsMirrorURLsMgr.obj
+         .\Release\fsMutex.obj
+         .\Release\fsODMenu.obj
+         .\Release\fsOpNetIntegrationMgr.obj
+         .\Release\fsPluginMgr.obj
+         .\Release\fsRASMgr.obj
+         .\Release\fsScheduleMgr.obj
+         .\Release\fsShellBrowsersEvents.obj
+         .\Release\fsShellWindowsEvents.obj
+         .\Release\fsSitePingMgr.obj
+         .\Release\fsSitesMgr.obj
+         .\Release\fsSoundsMgr.obj
+         .\Release\fsSpeedMeter.obj
+         .\Release\fsTicksMgr.obj
+         .\Release\fsTrayIconMgr.obj
+         .\Release\fsUpdateMgr.obj
+         .\Release\fsUrlsToDownloadRegKeyMgr.obj
+         .\Release\fsWebPageDownloader.obj
+         .\Release\fsWebPageDownloadsMgr.obj
+         .\Release\fsZipArchiveFastRebuilder.obj
+         .\Release\fsZipArchiveRebuilder.obj
+         .\Release\ImportManager.obj
+         .\Release\ImportWizardPropertySheet.obj
+         .\Release\IwManagersPropertyPage.obj
+         .\Release\IwProgressPropertyPage.obj
+         .\Release\IwResultPropertyPage.obj
+         .\Release\MemHandleGuard.obj
+         .\Release\OrbitSupplier.obj
+         .\Release\orbit_download.obj
+         .\Release\sqlite3.obj
+         .\Release\StateInfo.obj
+         .\Release\TorrentMoveErrorDlg.obj
+         .\Release\to_link.obj
+         .\Release\TpDldSheet.obj
+         .\Release\TpDld_General.obj
+         .\Release\vmsAppGlobalObjects.obj
+         .\Release\vmsAVMergerFFMPEG.obj
+         .\Release\vmsAVMergingMgr.obj
+         .\Release\vmsChromeExtensionInstaller.obj
+         .\Release\vmsDownloaderSecCheckFailureHandler.obj
+         .\Release\vmsDownloadTools.obj
+         .\Release\vmsElevatedFdm.obj
+         .\Release\vmsFdmBrowserPluginMonitoring.obj
+         .\Release\vmsFdmFilesDeleter.obj
+         .\Release\vmsFdmOpNetIntegrationMgr.obj
+         .\Release\vmsFdmSimpleDownloader.obj
+         .\Release\vmsFdmUiDetails.obj
+         .\Release\vmsFdmURLDownloader.obj
+         .\Release\vmsFFMPEG.obj
+         .\Release\vmsFirefoxExtensionUpdateMgr.obj
+         .\Release\vmsLogger.obj
+         .\Release\vmsMagnetExtension.obj
+         .\Release\vmsThreadPoolAsio.obj
+         .\Release\vmsTpDownloadMgr.obj
+         .\Release\fuminterfaces_i.obj
+         .\Release\FVDownloads_Tasks.obj
+         .\Release\GroupDlg.obj
+         .\Release\grutil.obj
+         .\Release\HFE_Address.obj
+         .\Release\HFE_FileList.obj
+         .\Release\HFE_ListLog.obj
+         .\Release\HFE_Log.obj
+         .\Release\HFE_ProtocolPage.obj
+         .\Release\HFESheet.obj
+         .\Release\HFEWnd.obj
+         .\Release\iefdmdm_i.obj
+         .\Release\inetutil.obj
+         .\Release\ListCtrlEx.obj
+         .\Release\LoginDlg.obj
+         .\Release\MainFrm.obj
+         .\Release\mfchelp.obj
+         .\Release\misc.obj
+         .\Release\MyBalloon.obj
+         .\Release\MyBalloon_Content.obj
+         .\Release\MyMessageBox.obj
+         .\Release\NOWDlg.obj
+         .\Release\PlugFrame2Tabs.obj
+         .\Release\PluginFrame2.obj
+         .\Release\Prg_Data.obj
+         .\Release\Prg_GeneralPage.obj
+         .\Release\Prg_GeneralPage_FWDlg.obj
+         .\Release\Prg_HistoryPage.obj
+         .\Release\Prg_MiscPage.obj
+         .\Release\Prg_SkinsPage.obj
+         .\Release\Prg_UpdatePage.obj
+         .\Release\PrgSheet.obj
+         .\Release\Schedule_AdvancedPage.obj
+         .\Release\Schedule_HTSPage.obj
+         .\Release\Schedule_WTSPage.obj
+         .\Release\Scheduler_Log.obj
+         .\Release\ScheduleSheet.obj
+         .\Release\SCRDlg.obj
+         .\Release\Sheduler_Tasks.obj
+         .\Release\ShedulerWnd.obj
+         .\Release\shockwaveflash.obj
+         .\Release\SiteManager_GeneralPage.obj
+         .\Release\SiteManager_PasswordsPage.obj
+         .\Release\SiteManagerSheet.obj
+         .\Release\Sites_AdvancedPage.obj
+         .\Release\Sites_GeneralPage.obj
+         .\Release\SitesSheet.obj
+         .\Release\SitesWnd.obj
+         .\Release\SmallTipWnd.obj
+         .\Release\SpiderAddPageDlg.obj
+         .\Release\SpiderTasks.obj
+         .\Release\SpiderTaskTree.obj
+         .\Release\SpiderWnd.obj
+         .\Release\StdAfx.obj
+         .\Release\system.obj
+         .\Release\ToolBarEx.obj
+         .\Release\Torrents_Tasks.obj
+         .\Release\TorrentsWnd.obj
+         .\Release\TrayIconPosition.obj
+         .\Release\TreeCtrlEx.obj
+         .\Release\UIThread.obj
+         .\Release\UpdateDlg.obj
+         .\Release\UploadsWnd.obj
+         .\Release\UrlWithLoginDlg.obj
+         .\Release\UrlWnd.obj
+         .\Release\Utils.obj
+         .\Release\UtorrentSupplier.obj
+         .\Release\VideoWindow.obj
+         .\Release\vms7zipArchive.obj
+         .\Release\vms7zipArchiveExtractCallback.obj
+         .\Release\vms7zipFormatDLL.obj
+         .\Release\vmsAnimatedGIF.obj
+         .\Release\vmsAppSettingsStore.obj
+         .\Release\vmsAppTipsMgr.obj
+         .\Release\vmsAppUtil.obj
+         .\Release\vmsArchive.obj
+         .\Release\vmsArchiveCallback.obj
+         .\Release\vmsArchiveMgr.obj
+         .\Release\vmsArchiveRAR.obj
+         .\Release\vmsBatchList.obj
+         .\Release\vmsBtDownloadManager.obj
+         .\Release\vmsBtSupport.obj
+         .\Release\vmsComDLL.obj
+         .\Release\vmsDataFile.obj
+         .\Release\vmsDialogHelper.obj
+         .\Release\vmsDLL.obj
+         .\Release\vmsDocHostUIHandler.obj
+         .\Release\vmsDownloadMgrEx.obj
+         .\Release\vmsDownloadsGroupsMgr.obj
+         .\Release\vmsDownloadsListHelper.obj
+         .\Release\vmsDrawHelper.obj
+         .\Release\vmsFdmApiDownloadImpl.obj
+         .\Release\vmsFdmApiDownloadsMgrImpl.obj
+         .\Release\vmsFdmApiImpl.obj
+         .\Release\vmsFdmAppMgr.obj
+         .\Release\vmsFileExtensionInOs.obj
+         .\Release\vmsFileRecentList.obj
+         .\Release\vmsFilesToDelete.obj
+         .\Release\vmsFirefoxMonitoring.obj
+         .\Release\vmsFlvSniffInjector.obj
+         .\Release\vmsIeHelper.obj
+         .\Release\vmsImage.obj
+         .\Release\vmsImage_CtxFree.obj
+         .\Release\vmsInetUtils.obj
+         .\Release\vmsInternetSession.obj
+         .\Release\vmsIpHelper.obj
+         .\Release\vmsMaliciousDownloadChecker.obj
+         .\Release\vmsMaximumSpeedMeter.obj
+         .\Release\vmsMediaConverter.obj
+         .\Release\vmsMediaConvertMgr.obj
+         .\Release\vmsMetalinkFile.obj
+         .\Release\vmsMozillaPrefs.obj
+         .\Release\vmsNotEverywhereSupportedFunctions.obj
+         .\Release\vmsPersistableListOfDownloads.obj
+         .\Release\vmsPersistObject.obj
+         .\Release\vmsPluginSupport.obj
+         .\Release\vmsProcessesInjector.obj
+         .\Release\vmsRegisteredApp.obj
+         .\Release\vmsRenderer.obj
+         .\Release\vmsSecurity.obj
+         .\Release\vmsSimpleFileDownloader.obj
+         .\Release\vmsSingleLineTooltip.obj
+         .\Release\vmsSkinMgr.obj
+         .\Release\vmsSpeedTracker.obj
+         .\Release\vmsStringList.obj
+         .\Release\vmsStringParser.obj
+         .\Release\vmsStringRecentList.obj
+         .\Release\vmsSystem.obj
+         .\Release\vmsTheme.obj
+         .\Release\vmsTickCount.obj
+         .\Release\vmsTorrentExtension.obj
+         .\Release\vmsTrafficUsageModeMgr.obj
+         .\Release\vmsTreeCtrlHelper.obj
+         .\Release\vmsUiFonts.obj
+         .\Release\vmsUiLinkWindow.obj
+         .\Release\vmsUiStaticTextWindow.obj
+         .\Release\vmsUiWindow.obj
+         .\Release\vmsUiWindowsHoster.obj
+         .\Release\vmsUnRARDLL.obj
+         .\Release\vmsUploaderDllPersist.obj
+         .\Release\vmsUploadsDllCaller.obj
+         .\Release\vmsUploadsDllCallerSettings.obj
+         .\Release\vmsVideoMonitoringModulesUiManager.obj
+         .\Release\vmsVideoSiteHtmlCodeParser.obj
+         .\Release\vmsWebBrowserEvents.obj
+         .\Release\vmsWindowsStatusBar.obj
+         .\Release\vmsXmlHelper.obj
+         .\Release\vmsYouTubeDownloadsMgr.obj
+         .\Release\vmsYouTubeParserDllMgr.obj
+         .\Release\vmsYouTubeParserErrorSenderPOST.obj
+         .\Release\vmsYouTubePreviewIconLoader.obj
+         .\Release\vmsYouTubeURLReloadingTask.obj
+         .\Release\WaitDlg.obj
+         .\Release\WaitDlg2.obj
+         .\Release\WaitForConfirmationDlg.obj
+         .\Release\webbrowser2.obj
+         .\Release\WebBrowser2Customization.obj
+         .\Release\WgUrlListReceiver.obj
+         .\Release\WGUrlReceiver.obj
+         .\Release\Wnd_Banner.obj
+         .\Release\Wnd_DownloadProgress.obj
+         .\Release\Wnd_FDMGetCustVer_Btn.obj
+         .\Release\WndDlDoneNotification.obj
+         .\Release\WndLog.obj
+         .\Release\WndSplitter.obj
+         .\Release\WPDS_FilesPage.obj
+         .\Release\WPDS_GeneralPage.obj
+         .\Release\WPDS_ImagesPages.obj
+         .\Release\WPDS_Sheet.obj
+         .\Release\WPDS_WebPagesPage.obj
+         .\Release\XInfoTip.obj
+         .\Release\ZipPreviewDlg.obj
+         zlib.lib(deflate.obj) : MSIL .netmodule or module compiled with /GL found; restarting link with /LTCG; add /LTCG to the link command line to improve linker performance
+         Generating code
+         Finished generating code
+     9>curl_lib.lib(v3_utl.obj) : warning LNK4049: locally defined symbol _sscanf imported [C:\Users\brain\Documents\repos\MarwanOS\out\fdm-classic\source\trunc\FDM.vcxproj]
+     9>curl_lib.lib(dso_win32.obj) : warning LNK4049: locally defined symbol _sprintf imported [C:\Users\brain\Documents\repos\MarwanOS\out\fdm-classic\source\trunc\FDM.vcxproj]
+         FDM.vcxproj -> C:\Users\brain\Documents\repos\MarwanOS\out\fdm-classic\source\trunc\bin\Release\FDM.exe
+       FinalizeBuildStatus:
+         Deleting file ".\Release\FDM.tlog\unsuccessfulbuild".
+         Touching ".\Release\FDM.tlog\FDM.lastbuildstate".
+     9>Done Building Project "C:\Users\brain\Documents\repos\MarwanOS\out\fdm-classic\source\trunc\FDM.vcxproj" (default targets).
+     2>Done Building Project "C:\Users\brain\Documents\repos\MarwanOS\out\fdm-classic\source\trunc\FDM.vcxproj.metaproj" (default targets).
+     1>Done Building Project "C:\Users\brain\Documents\repos\MarwanOS\out\fdm-classic\source\trunc\FDM.sln" (FDM target(s)).
+
+Build succeeded.
+
+       "C:\Users\brain\Documents\repos\MarwanOS\out\fdm-classic\source\trunc\FDM.sln" (FDM target) (1) ->
+       "C:\Users\brain\Documents\repos\MarwanOS\out\fdm-classic\source\trunc\FDM.vcxproj.metaproj" (default target) (2) ->
+       "C:\Users\brain\Documents\repos\MarwanOS\out\fdm-classic\source\trunc\FDM.vcxproj" (default target) (9) ->
+       (ClCompile target) -> 
+         cl : command line  warning D9007: '/external:W' requires '/experimental:external'; option ignored [C:\Users\brain\Documents\repos\MarwanOS\out\fdm-classic\source\trunc\FDM.vcxproj]
+
+
+       "C:\Users\brain\Documents\repos\MarwanOS\out\fdm-classic\source\trunc\FDM.sln" (FDM target) (1) ->
+       "C:\Users\brain\Documents\repos\MarwanOS\out\fdm-classic\source\trunc\FDM.vcxproj.metaproj" (default target) (2) ->
+       "C:\Users\brain\Documents\repos\MarwanOS\out\fdm-classic\source\trunc\FDM.vcxproj" (default target) (9) ->
+       (Link target) -> 
+         curl_lib.lib(v3_utl.obj) : warning LNK4049: locally defined symbol _sscanf imported [C:\Users\brain\Documents\repos\MarwanOS\out\fdm-classic\source\trunc\FDM.vcxproj]
+         curl_lib.lib(dso_win32.obj) : warning LNK4049: locally defined symbol _sprintf imported [C:\Users\brain\Documents\repos\MarwanOS\out\fdm-classic\source\trunc\FDM.vcxproj]
+
+    3 Warning(s)
+    0 Error(s)
+
+FileLogger wrote to: C:\Users\brain\Documents\repos\MarwanOS\out\fdm-classic\build-classic.log
+
+Time Elapsed 00:00:04.52

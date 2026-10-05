@@ -1,0 +1,66 @@
+[
+  {
+    "Hash": "37079DD798F06FC029A9F6BD2AAF53C5F1DD62E22745EA4D8C2ADF0B5FB2B7D2",
+    "Path": "C:\\Users\\brain\\Documents\\repos\\MarwanOS\\out\\fdm-classic\\bench-package\\concrt140.dll"
+  },
+  {
+    "Hash": "A551809D77C5D1EC3D11002EC98B36DE88721F9B86A54DF8A66AA9E956887A4A",
+    "Path": "C:\\Users\\brain\\Documents\\repos\\MarwanOS\\out\\fdm-classic\\bench-package\\FDM.exe"
+  },
+  {
+    "Hash": "657AC69D866B672812003970E748ACEE6CD1AC19A8E97C4154695CED98CFDE13",
+    "Path": "C:\\Users\\brain\\Documents\\repos\\MarwanOS\\out\\fdm-classic\\bench-package\\fdmbtsupp.dll"
+  },
+  {
+    "Hash": "AF5570F5A1810B7AF78CAF4BC70A660F0DF51E42BAF91D4DE5B2328DE0E83DFC",
+    "Path": "C:\\Users\\brain\\Documents\\repos\\MarwanOS\\out\\fdm-classic\\bench-package\\fdmcs.dat"
+  },
+  {
+    "Hash": "4FF2B6BA2403064A02520129C9F345AB5510F79345B25E487FBB48349D13EDAB",
+    "Path": "C:\\Users\\brain\\Documents\\repos\\MarwanOS\\out\\fdm-classic\\bench-package\\icon.png"
+  },
+  {
+    "Hash": "D651B065D99E81478EF8D9B5D4DE8F7A3FAD882A393068445B9C4C2CB9231381",
+    "Path": "C:\\Users\\brain\\Documents\\repos\\MarwanOS\\out\\fdm-classic\\bench-package\\license.txt"
+  },
+  {
+    "Hash": "D2AA3452AFFB354271519B529DA375553D00A4048159E10D90277170291FDE45",
+    "Path": "C:\\Users\\brain\\Documents\\repos\\MarwanOS\\out\\fdm-classic\\bench-package\\mfc140.dll"
+  },
+  {
+    "Hash": "4ED87668F5DA41729771C33327FCE06012FB142EC10CCE62A68AB6A9F077A654",
+    "Path": "C:\\Users\\brain\\Documents\\repos\\MarwanOS\\out\\fdm-classic\\bench-package\\mfc140u.dll"
+  },
+  {
+    "Hash": "E1EFF50C03A05F022D315F721E9B58AF94E330CC9AC8DFA86F2C9EE9AA5D6639",
+    "Path": "C:\\Users\\brain\\Documents\\repos\\MarwanOS\\out\\fdm-classic\\bench-package\\mfcm140.dll"
+  },
+  {
+    "Hash": "BABBD4A6DC2B310CA7CAAE57AE6703996287B9EFE92B1B117293015062FED625",
+    "Path": "C:\\Users\\brain\\Documents\\repos\\MarwanOS\\out\\fdm-classic\\bench-package\\mfcm140u.dll"
+  },
+  {
+    "Hash": "6F590188AA839E1EE396C6B6573495F8F859A34A469632EFE6FF3D85D33664AB",
+    "Path": "C:\\Users\\brain\\Documents\\repos\\MarwanOS\\out\\fdm-classic\\bench-package\\msvcp140_1.dll"
+  },
+  {
+    "Hash": "CE5087499CBE1C748AB93094FD26D12F41BEDB9BD50A0F980A7CB7EEEE5F1F51",
+    "Path": "C:\\Users\\brain\\Documents\\repos\\MarwanOS\\out\\fdm-classic\\bench-package\\msvcp140_2.dll"
+  },
+  {
+    "Hash": "55BF6B3AD5CDAE8FE4B46B2CDC729317F1E2BE411BF7438C9EB1D073E37D71E4",
+    "Path": "C:\\Users\\brain\\Documents\\repos\\MarwanOS\\out\\fdm-classic\\bench-package\\msvcp140.dll"
+  },
+  {
+    "Hash": "6E7CCE6949D4FAB306A1E3CA404DACD285ECF861C06B25A846B2D776669741A3",
+    "Path": "C:\\Users\\brain\\Documents\\repos\\MarwanOS\\out\\fdm-classic\\bench-package\\vccorlib140.dll"
+  },
+  {
+    "Hash": "8E08575492175E042F093F325B07A5C14CA71E7C581474838DB3D48F5AAB1312",
+    "Path": "C:\\Users\\brain\\Documents\\repos\\MarwanOS\\out\\fdm-classic\\bench-package\\vcruntime140.dll"
+  },
+  {
+    "Hash": "39BABA10049E1763D455F0C3D4ECDB38173F2E53DD08AC7761DDE8E5352CE8B1",
+    "Path": "C:\\Users\\brain\\Documents\\repos\\MarwanOS\\out\\fdm-classic\\bench-package\\Language\\eng.lng"
+  }
+]

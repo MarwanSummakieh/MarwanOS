@@ -51,7 +51,7 @@ func _ready() -> void:
 	_list.add_theme_constant_override("separation", TvTheme.SETTINGS_ROW_GAP)
 	_scroll.add_child(_list)
 	var note := Label.new()
-	note.text = "Windows setup: move the pointer with the controller and press A to click. Home opens Type and Close.\nUse installers you trust. Some Windows apps are incompatible with this system."
+	note.text = "Controller setup keeps the installer's choices. Original setup uses the controller pointer."
 	note.add_theme_font_size_override("font_size", TvTheme.SIZE_SUPPLEMENTAL)
 	note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	column.add_child(note)
@@ -61,6 +61,7 @@ func _ready() -> void:
 	hints.add_child(TvTheme.hint("B", "Back"))
 	column.add_child(hints)
 	WindowsInstall.changed.connect(_refresh)
+	WindowsInstall.guided_backgrounded.connect(_on_guided_backgrounded)
 	Launcher.launch_started.connect(_on_launch_started)
 	Launcher.launch_finished.connect(_on_launch_finished)
 	Launcher.minimized.connect(_on_launch_finished)
@@ -136,7 +137,9 @@ func _refresh() -> void:
 		for source in candidates:
 			if str(source.get("path", "")) == source_path:
 				source_id = str(source.get("id", source_id))
-		_add_row(source_id, "Run Windows setup", source_name,
+		_add_row(source_id, "Resume setup" if WindowsInstall.guided_source == source_path else "Run Windows setup", source_name,
+			WindowsInstall.guided_install.bind(source_path))
+		_add_row("original", "Original Windows setup", "Use the controller pointer for unsupported setup pages.",
 			WindowsInstall.local_install.bind(source_path))
 		if source_path.get_extension().to_lower() == "exe":
 			_add_row("portable", "Add as portable app",
@@ -146,7 +149,7 @@ func _refresh() -> void:
 		_add_row("cancel", "Cancel automatic installation", "Stops the background installation", WindowsInstall.cancel)
 	_add_row("back", "Back to Files" if not source_path.is_empty() else "Back to library", "", _back)
 	TvTheme.wire_column(_rows)
-	if not is_visible_in_tree() or Launcher.is_busy():
+	if not is_visible_in_tree() or Launcher.is_busy() or (is_instance_valid(WindowsInstall._guided_screen) and WindowsInstall._guided_screen.visible):
 		return
 	var target: Control = _rows[0]
 	for row in _rows:
@@ -168,7 +171,7 @@ func _add_choices(job: Dictionary) -> void:
 func _add_source_row(source: Dictionary) -> void:
 	_add_row(str(source.get("id", "")), str(source.get("name", "")),
 		str(source.get("location", "")) + " — Run Windows setup",
-		WindowsInstall.local_install.bind(str(source.get("path", ""))))
+		WindowsInstall.guided_install.bind(str(source.get("path", ""))))
 
 
 func _add_row(key: String, title: String, detail: String, action: Callable) -> void:
@@ -183,6 +186,11 @@ func _add_row(key: String, title: String, detail: String, action: Callable) -> v
 
 func _launch(entry: Dictionary) -> void:
 	Launcher.launch(entry)
+
+
+func _on_guided_backgrounded() -> void:
+	if is_visible_in_tree() and not _rows.is_empty() and not Launcher.is_busy():
+		_rows[0].grab_focus()
 
 
 func _on_launch_started(_entry: Dictionary) -> void:
@@ -210,6 +218,8 @@ func _back() -> void:
 
 
 func _unhandled_input(event: InputEvent) -> void:
+	if is_instance_valid(WindowsInstall._guided_screen) and WindowsInstall._guided_screen.visible:
+		return
 	if event.is_action_pressed("ui_cancel"):
 		get_viewport().set_input_as_handled()
 		closed.emit()

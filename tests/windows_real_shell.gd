@@ -57,6 +57,7 @@ func _run() -> void:
 	check(screen._overlay != null, "controller opens real app overlay")
 	check(not root.get_node("ControllerRouter")._app_input, "overlay keeps application controller neutral")
 	await press(JOY_BUTTON_DPAD_DOWN)
+	await press(JOY_BUTTON_DPAD_DOWN) # Audio -> Minimize.
 	await press(JOY_BUTTON_A)
 	check(screen.visible and launcher.is_minimized() and OS.is_process_running(pid), "real app minimized with wrapper alive")
 	await create_timer(0.7).timeout
@@ -71,6 +72,7 @@ func _run() -> void:
 	for cycle in 3:
 		await press(JOY_BUTTON_BACK)
 		await press(JOY_BUTTON_DPAD_DOWN)
+		await press(JOY_BUTTON_DPAD_DOWN) # Audio -> Minimize.
 		await press(JOY_BUTTON_A)
 		await create_timer(0.7).timeout
 		check(screen.visible and launcher.is_minimized() and OS.is_process_running(pid), "repeat %d preserves minimized process" % cycle)
@@ -82,6 +84,7 @@ func _run() -> void:
 	await press(JOY_BUTTON_BACK)
 	await press(JOY_BUTTON_DPAD_DOWN)
 	await press(JOY_BUTTON_DPAD_DOWN)
+	await press(JOY_BUTTON_DPAD_DOWN) # Minimize -> Close.
 	await press(JOY_BUTTON_A)
 	for tick in 80:
 		if not launcher.is_busy():

@@ -469,6 +469,14 @@ RUN --network=none set -euxo pipefail; \
 
 
 
+FROM ${BASE_IMAGE}:${BASE_TAG}@${BASE_DIGEST} AS windows-setup-bridge
+RUN --mount=type=cache,dst=/var/cache/libdnf5,sharing=locked \
+    dnf -y install mingw64-gcc
+COPY os/files/usr/lib/marwanos/windows/setup_bridge.c /build/setup_bridge.c
+RUN mkdir -p /payload && x86_64-w64-mingw32-gcc -std=c11 -Wall -Wextra -Werror \
+    -O2 -municode -static /build/setup_bridge.c -o /payload/setup-bridge.exe \
+    -luser32 -lgdi32 -loleacc -lole32 -loleaut32 -luuid
+
 FROM ${BASE_IMAGE}:${BASE_TAG}@${BASE_DIGEST}
 
 # nvidia-open requires Turing (RTX 20 / GTX 16) or newer: the open modules lean
@@ -611,10 +619,9 @@ RUN --mount=type=cache,dst=/var/cache/libdnf5,sharing=locked \
 #
 # Deliberately NOT added, so nobody adds them later thinking it was an
 # oversight: fontconfig (Godot embeds its own UI font; only SystemFont lookups
-# need it) and any audio library (Phase 0 has no sound, so Godot selects the
-# Dummy audio driver and says so once). Both would grow an appliance whose
-# thesis is that nothing extra is reachable, and both are M4 audit questions
-# rather than things to pre-empt. Gamepad input needs neither: it goes to
+# need it). Audio now uses PipeWire, its PulseAudio compatibility server and
+# WirePlumber; the shell's audio manager controls the session through pactl.
+# Gamepad input goes to
 # /dev/input/event* directly through libudev, which systemd-libs already
 # provides, and the player account is already in the input group.
 #
@@ -1018,24 +1025,10 @@ RUN set -euxo pipefail; \
 # capture, and the login prompt it would spawn is what D6 forbids regardless of
 # whether the port exists.
 #
-# xdg-desktop-portal-gtk is masked for the same reason serial-getty@ttyS0 is: it
-# fails repeatedly at err priority in the one place this appliance can be
-# triaged. Measured on the 2026-08-05 hardware runs -- eleven consecutive
-# "Failed to start xdg-desktop-portal-gtk.service - Portal service (GTK/GNOME
-# implementation)" lines inside a single session. It is a GNOME desktop portal
-# pulled in as a transitive dependency; there is no desktop here, nothing asks it
-# for a file chooser, and it has no business starting.
-#
-# The mask is a /dev/null symlink over the unit in /usr/lib/systemd/user rather
-# than `systemctl --global mask`, which writes into /etc/systemd/user -- and /etc
-# is three-way merged on upgrade, so that would ship machine-local state where
-# image state belongs. This is a USER unit: it is the per-user systemd that was
-# failing to start it, so masking the system instance would have done nothing.
-#
-# It is masked rather than removed because the package is a dependency of things
-# that are wanted; uninstalling it would drag out more than it fixes. Note the
-# portal is also D-Bus activatable, so this stops systemd starting it but not a
-# client that asks dbus for it by name -- nothing in this image does.
+# Flatpak desktop apps such as FDM use the GTK file-picker portal. Keep its
+# D-Bus activated user service available; marwanos-session publishes the ready
+# X11 display into the user manager before launching applications. The former
+# mask prevented Browse from opening a file picker at all.
 #
 # marwanos-panel.service gets a hand-made wants symlink under /usr/lib for the
 # same reason greetd's is hand-made: `systemctl enable` and `systemctl preset`
@@ -1268,7 +1261,6 @@ RUN set -euxo pipefail; \
         /usr/lib/systemd/system/multi-user.target.wants/marwanos-devmode-sudo.service; \
     systemctl --no-reload mask getty@tty1.service autovt@tty1.service \
                                serial-getty@ttyS0.service; \
-    ln -sf /dev/null /usr/lib/systemd/user/xdg-desktop-portal-gtk.service; \
     : "Services an appliance has no use for, masked to get userspace out of the"; \
     : "way of the first frame. The 2026-08-07 boot spent 19.9s in userspace on"; \
     : "a slow USB stick with no single offender -- it is the sum of many small"; \
@@ -1647,7 +1639,9 @@ RUN set -euxo pipefail; \
     test -L /etc/systemd/system/getty@tty1.service; \
     test -L /etc/systemd/system/autovt@tty1.service; \
     test -L /etc/systemd/system/serial-getty@ttyS0.service; \
-    test "$(readlink /usr/lib/systemd/user/xdg-desktop-portal-gtk.service)" = /dev/null; \
+    test -f /usr/lib/systemd/user/xdg-desktop-portal-gtk.service; \
+    test ! -L /usr/lib/systemd/user/xdg-desktop-portal-gtk.service; \
+    test -x /usr/libexec/xdg-desktop-portal-gtk; \
     getent passwd player; \
     test "$(id -u player)" = "1000"; \
     id -nG player | grep -qw video; \
@@ -1678,13 +1672,15 @@ RUN set -euxo pipefail; \
 # preserves. If the bit is ever missing here the fix is the placement above, not
 # a chmod added underneath.
 COPY --from=shell-export /out/ /
+COPY --from=windows-setup-bridge /payload/setup-bridge.exe /usr/lib/marwanos/windows/setup-bridge.exe
 COPY --from=mowser-build /payload/ /usr/lib/marwanos/mowser/
 RUN chmod 4755 /usr/lib/marwanos/mowser/chrome-sandbox
 
 # Installers get a separate display and run as player, never root.
 RUN --mount=type=cache,dst=/var/cache/libdnf5,sharing=locked \
     set -euxo pipefail; \
-    dnf -y install python3 xorg-x11-server-Xvfb xorg-x11-server-Xorg openbox xcompmgr xset; \
+    dnf -y install python3 python3-pefile python3-pillow python3-dbus python3-gobject xorg-x11-server-Xvfb xorg-x11-server-Xorg openbox xcompmgr xset \
+        pipewire pipewire-pulseaudio pipewire-alsa wireplumber pulseaudio-utils alsa-lib; \
     dnf clean all; \
     chmod 0755 /usr/lib/marwanos/windows/manager.py; \
     chmod 0755 /usr/lib/marwanos/steamctl /usr/lib/marwanos/controller/router.py; \
@@ -1696,6 +1692,18 @@ RUN --mount=type=cache,dst=/var/cache/libdnf5,sharing=locked \
     ln -sf ../marwanos-windows.service \
         /usr/lib/systemd/system/multi-user.target.wants/marwanos-windows.service; \
     python3 -m py_compile /usr/lib/marwanos/windows/manager.py; \
+    python3 -m py_compile /usr/lib/marwanos/notifications/server.py; \
+    install -d /usr/lib/systemd/user/default.target.wants; \
+    ln -sf ../marwanos-notifications.service /usr/lib/systemd/user/default.target.wants/marwanos-notifications.service; \
+    chmod 0644 /usr/lib/systemd/user/marwanos-audio.service /usr/lib/marwanos/audio/manager.py; \
+    python3 -m py_compile /usr/lib/marwanos/audio/manager.py; \
+    ln -sf ../marwanos-audio.service /usr/lib/systemd/user/default.target.wants/marwanos-audio.service; \
+    ln -sf ../pipewire.service /usr/lib/systemd/user/default.target.wants/pipewire.service; \
+    ln -sf ../pipewire-pulse.service /usr/lib/systemd/user/default.target.wants/pipewire-pulse.service; \
+    ln -sf ../wireplumber.service /usr/lib/systemd/user/default.target.wants/wireplumber.service; \
+    command -v pactl; \
+    command -v pipewire; \
+    command -v wireplumber; \
     python3 -m json.tool /usr/lib/marwanos/windows/recipes.json >/dev/null; \
     command -v Xvfb; \
     command -v umu-run

@@ -18,7 +18,14 @@ affiliated with Sony.
 - Steam remains a supported source of games. PC1 must retain its home/overlay
   controls instead of surrendering the experience to Steam's interface.
 - An integrated browser and file manager are required product features.
+- The unified game library prioritizes Playnite-style ease of use, automatic
+  metadata, persistent play history, controller features and achievements.
+- Bluetooth pairing is required; hardware validation is waiting for the Bluetooth
+  dongle. An integrated Flathub store is outside the product scope.
 - Boot, application handoff, and recovery remain inside the console experience.
+
+See the [current roadmap](docs/roadmap.md) for priorities, dependencies and
+Tekken 8's pending metadata acceptance after installation finishes.
 
 ## Current implementation
 
@@ -88,7 +95,8 @@ script and target before using them.
 
 ## Documentation status
 
-This README describes the current product direction. The phase plans, Steam
+This README and the [current roadmap](docs/roadmap.md) describe the current product
+direction. The phase plans, Steam
 client contract, and handoff notes record earlier iterations, including removed
 features. In particular, “a console has no browser” and removing Steam entirely
 are not the current requirements. Proposed shell replacement or Steam removal

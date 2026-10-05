@@ -459,6 +459,8 @@ const FOCUSED_WINDOW_PROPERTY := "GAMESCOPE_FOCUSED_WINDOW"
 ## answers it if the answer is "neither of the two handled below".
 var _focus_parse_warned := false
 var _app_window := 0
+var _fit_app_window := false
+var _hidden_app_windows: Array[int] = []
 var _focus_request := 0
 
 
@@ -470,7 +472,7 @@ func _focus_property() -> String:
 	return "_NET_ACTIVE_WINDOW" if _x11_session() else FOCUSED_WINDOW_PROPERTY
 
 
-func remember_app_window() -> void:
+func remember_app_window(fit_to_screen: bool = false) -> void:
 	var output: Array = []
 	if DisplayServer.get_name() != "X11":
 		return
@@ -483,7 +485,31 @@ func remember_app_window() -> void:
 		var id := word.hex_to_int() if word.begins_with("0x") else word.to_int()
 		if id > 0 and id != own:
 			_app_window = id
+			_fit_app_window = fit_to_screen
+			if _fit_app_window:
+				_fit_app_to_screen()
 			return
+
+
+func _fit_app_to_screen() -> void:
+	if DisplayServer.get_name() != "X11" or _x11_session() or _app_window <= 0:
+		return
+	# gamescope can scale a Wine window without changing its backing pixels.
+	# Resize desktop applications themselves; keep dialogs and game fullscreen
+	# modes at the dimensions they request.
+	var output: Array = []
+	if OS.execute("xprop", ["-id", str(_app_window), "_NET_WM_WINDOW_TYPE", "_NET_WM_STATE", "WM_TRANSIENT_FOR"], output, true) != 0:
+		return
+	var hints := "\n".join(output)
+	if not hints.contains("_NET_WM_WINDOW_TYPE_NORMAL") or hints.contains("_NET_WM_WINDOW_TYPE_DIALOG") \
+			or hints.contains("_NET_WM_STATE_FULLSCREEN") or hints.contains("WM_TRANSIENT_FOR(WINDOW)"):
+		return
+	var size := DisplayServer.screen_get_size(DisplayServer.get_primary_screen())
+	if size.x <= 0 or size.y <= 0:
+		return
+	if OS.execute("xdotool", ["windowsize", str(_app_window), str(size.x), str(size.y)]) == 0:
+		OS.execute("xdotool", ["windowmove", str(_app_window), "0", "0"])
+		ShellLog.info("desktop app window resized to %dx%d" % [size.x, size.y])
 
 
 func _focus_override(window_id: int) -> void:
@@ -518,8 +544,33 @@ func focus_shell() -> void:
 	_focus_override(DisplayServer.window_get_native_handle(DisplayServer.WINDOW_HANDLE))
 
 
+func minimize_app_window(launcher_pid: int = -1) -> void:
+	if DisplayServer.get_name() != "X11" or _x11_session() or _app_window <= 0:
+		return
+	# Without Steam integration, gamescope ignores the base-layer window
+	# override. Remove this app's windows from its candidates while the process
+	# keeps running; mapping them again restores the same app on Resume.
+	var windows: Array[int] = [_app_window]
+	var output: Array = []
+	if launcher_pid > 0 and OS.execute("xprop", ["-root", "-notype", "GAMESCOPE_FOCUSABLE_WINDOWS"], output, true) == 0 \
+			and not output.is_empty():
+		var fields := str(output[0]).get_slice("=", 1).split(",", false)
+		for index in range(0, fields.size(), 3):
+			var window_id := str(fields[index]).strip_edges().to_int()
+			if window_id > 0 and not windows.has(window_id) and _window_belongs_to_app(window_id, launcher_pid):
+				windows.append(window_id)
+	for window_id in windows:
+		if OS.execute("xdotool", ["windowunmap", str(window_id)]) == 0:
+			_hidden_app_windows.append(window_id)
+
+
 func focus_app() -> void:
 	_focus_request += 1
+	for window_id in _hidden_app_windows:
+		OS.execute("xdotool", ["windowmap", str(window_id)])
+	_hidden_app_windows.clear()
+	if _fit_app_window:
+		_fit_app_to_screen()
 	_focus_override(_app_window)
 	# If the saved app window has closed, normal compositor selection can recover.
 
@@ -528,6 +579,8 @@ func clear_focus_override() -> void:
 	_focus_request += 1
 	_focus_override(0)
 	_app_window = 0
+	_fit_app_window = false
+	_hidden_app_windows.clear()
 
 
 func focus_app_keyboard() -> bool:

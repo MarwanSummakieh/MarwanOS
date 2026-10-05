@@ -1,0 +1,9 @@
+[Unit]
+Description=PC1 file picker portal (GTK)
+PartOf=graphical-session.target
+
+[Service]
+Type=dbus
+BusName=org.freedesktop.impl.portal.desktop.gtk
+ExecStart=/usr/libexec/xdg-desktop-portal-gtk
+Environment=GDK_BACKEND=x11

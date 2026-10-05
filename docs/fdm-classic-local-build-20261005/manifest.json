@@ -1,0 +1,18 @@
+{
+  "infoHash": "d1035926443e420bf6b6d6892db335662b252514",
+  "tracker": "http://127.0.0.1:18973/announce",
+  "pieceLength": 262144,
+  "total": 12583625,
+  "files": [
+    {
+      "name": "alpha.bin",
+      "size": 8388608,
+      "sha256": "ad8ae213f33b218b1eb413048c4b82389bbf5d0e2657281f52a1cfb10da95199"
+    },
+    {
+      "name": "beta.bin",
+      "size": 4195017,
+      "sha256": "f4e5f493e6a364431b2f0f7215ea17fbd020b9e5fced429d05f84b42ca226f27"
+    }
+  ]
+}

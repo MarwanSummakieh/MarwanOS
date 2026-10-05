@@ -1,0 +1,46 @@
+Godot Engine v4.7.1.stable.official.a13da4feb - https://godotengine.org
+WARNING: Could not set V-Sync mode, as changing V-Sync mode is not supported by the graphics driver.
+     at: set_use_vsync (platform/linuxbsd/x11/gl_manager_x11.cpp:372)
+OpenGL API 4.5 (Core Profile) Mesa 25.3.6 - Compatibility - Using Device: Mesa - llvmpipe (LLVM 21.1.8, 256 bits)
+
+<4>marwanos-shell: MARWANOS_SHELL_WINDOWED is set: windowed with a cursor, at 1600x900. Kiosk policy NOT applied.
+<4>marwanos-shell: this is a desk run; the appliance never sets that variable
+<6>marwanos-shell: display at startup: server X11, adapter llvmpipe (LLVM 21.1.8, 256 bits)
+<6>marwanos-shell: screens: 1, primary 0, keyboard focus 0
+<6>marwanos-shell: screen 0: size (1920, 1080) pos (0, 0) scale 1.00 dpi 95 refresh -nan
+<6>marwanos-shell: window: mode 0 size (1600, 900)
+<6>marwanos-shell: viewport: canvas (1920.0, 1080.0) design (1920, 1080) stretch mode 1 aspect 4
+<6>marwanos-shell: stretch: expand -- no bars; design surface is 1920x1080 (0 px wider than the 1920 base)
+<6>marwanos-shell: input map ready; joypad bindings present on all 12 required actions
+<6>marwanos-shell: player one claimed: index 0, DualSense Wireless Controller, guid 030057564c050000e60c000000016800
+<6>marwanos-shell: network is online
+<6>marwanos-shell: network link: ethernet enp4s0	192.168.50.206
+<6>marwanos-shell: installed applications: 1
+<6>marwanos-shell:   Steam (steam) [installed]
+<6>marwanos-shell: services seam watching /run/user/1000/marwanos/services
+<6>marwanos-shell: apps state: idle  
+<6>marwanos-shell: wifi state: no-device
+<6>marwanos-shell: update state: failed (error: Upgrading: Preparing import: Fetching manifest: failed to invoke method OpenImage: reading manifest controller-20261005 in ghcr.io/marwansummakieh/marwanos: manifest unknown)
+<6>marwanos-shell: display profile state: current (steady)
+<6>marwanos-shell: window profile in force this session: no-bg-steam
+<6>marwanos-shell: window profile state: current (no-bg-steam)
+<6>marwanos-shell: media state: idle
+<6>marwanos-shell: ignoring extra controller on index 1 (PC1 application controller)
+<6>marwanos-shell: display after the first frame: server X11, adapter llvmpipe (LLVM 21.1.8, 256 bits)
+<6>marwanos-shell: screens: 1, primary 0, keyboard focus 0
+<6>marwanos-shell: screen 0: size (1920, 1080) pos (0, 0) scale 1.00 dpi 95 refresh -nan
+<6>marwanos-shell: window: mode 0 size (1600, 900)
+<6>marwanos-shell: viewport: canvas (1920.0, 1080.0) design (1920, 1080) stretch mode 1 aspect 4
+<6>marwanos-shell: stretch: expand -- no bars; design surface is 1920x1080 (0 px wider than the 1920 base)
+<6>marwanos-shell: GAMESCOPE_EXTERNAL_OVERLAY=0 on window 0x200003 (verified)
+<6>marwanos-shell: top bar starts hidden; Up from the rail reveals it
+<6>marwanos-shell: home rail ready with 1 cards
+<6>marwanos-shell: selected steam
+<6>marwanos-shell: top bar revealed
+<6>marwanos-shell: info opened
+<6>marwanos-shell: info screen up with 8 rows
+Notification shell checks: 0 failure(s)
+<6>marwanos-shell: installed applications: 2
+<6>marwanos-shell:   Steam (steam) [installed]
+<6>marwanos-shell:   FDM Controller (managed.local-fdm-controller-20261005) [installed]
+<6>marwanos-shell: home rail ready with 2 cards

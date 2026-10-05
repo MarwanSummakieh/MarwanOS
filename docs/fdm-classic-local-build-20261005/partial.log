@@ -1,0 +1,8 @@
+state=3 pieces=0 bytes=0 peers=0
+state=3 pieces=0 bytes=7 peers=1
+state=3 pieces=2 bytes=524295 peers=1
+state=3 pieces=4 bytes=1048583 peers=1
+state=3 pieces=5 bytes=1310727 peers=1
+state=3 pieces=7 bytes=1835015 peers=1
+PAUSE paused=1 stable=1 before=2277376 after=2277376
+RESUME_SAVED bytes=1174 pieces=8

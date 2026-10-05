@@ -1,0 +1,16 @@
+
+  Hash.vcxproj -> C:\Users\brain\Documents\repos\MarwanOS\out\fdm-classic\source\trunc\Hash\Release\Hash.lib
+  FDMCustomized_lib.vcxproj -> C:\Users\brain\Documents\repos\MarwanOS\out\fdm-classic\source\trunc\FDMCustomized\FDMCustomized_lib\Release\FDMCustomized_lib.lib
+  cURL_lib.vcxproj -> C:\Users\brain\Documents\repos\MarwanOS\out\fdm-classic\source\trunc\InetFile\cURL_lib\Release\cURL_lib.lib
+  PartMediaPreview.vcxproj -> C:\Users\brain\Documents\repos\MarwanOS\out\fdm-classic\source\trunc\PartMediaPreview\Release\PartMediaPreview.lib
+  InetFile.vcxproj -> C:\Users\brain\Documents\repos\MarwanOS\out\fdm-classic\source\trunc\InetFile\Release\InetFile.lib
+  zlib.vcxproj -> C:\Users\brain\Documents\repos\MarwanOS\out\fdm-classic\source\trunc\zlib\Release\zlib.lib
+cl : command line  warning D9007: '/external:W' requires '/experimental:external'; option ignored [C:\Users\brain\Documents\repos\MarwanOS\out\fdm-classic\source\trunc\FDM.vcxproj]
+  FdmControllerWnd.cpp
+  zlib.lib(deflate.obj) : MSIL .netmodule or module compiled with /GL found; restarting link with /LTCG; add /LTCG to the link command line to improve linker performance
+  Generating code
+  Finished generating code
+curl_lib.lib(v3_utl.obj) : warning LNK4049: locally defined symbol _sscanf imported [C:\Users\brain\Documents\repos\MarwanOS\out\fdm-classic\source\trunc\FDM.vcxproj]
+curl_lib.lib(dso_win32.obj) : warning LNK4049: locally defined symbol _sprintf imported [C:\Users\brain\Documents\repos\MarwanOS\out\fdm-classic\source\trunc\FDM.vcxproj]
+  FDM.vcxproj -> C:\Users\brain\Documents\repos\MarwanOS\out\fdm-classic\source\trunc\bin\Release\FDM.exe
+

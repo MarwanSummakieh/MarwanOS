@@ -1,0 +1,26 @@
+state=9 pieces=0 bytes=0 peers=0
+MAGNET_METADATA_RECEIVED files=2
+state=3 pieces=2 bytes=524295 peers=1
+state=3 pieces=4 bytes=1048583 peers=1
+state=3 pieces=5 bytes=1310727 peers=1
+state=3 pieces=7 bytes=1835015 peers=1
+state=3 pieces=10 bytes=2621447 peers=1
+state=3 pieces=12 bytes=3145735 peers=1
+state=3 pieces=13 bytes=3407879 peers=1
+state=3 pieces=15 bytes=3932167 peers=1
+state=3 pieces=18 bytes=4718599 peers=1
+state=3 pieces=19 bytes=4980743 peers=1
+state=3 pieces=22 bytes=5767175 peers=1
+state=3 pieces=25 bytes=6553607 peers=1
+state=3 pieces=26 bytes=6815751 peers=1
+state=3 pieces=28 bytes=7340039 peers=1
+state=3 pieces=30 bytes=7864327 peers=1
+state=3 pieces=32 bytes=8388615 peers=1
+state=3 pieces=34 bytes=8912903 peers=1
+state=3 pieces=36 bytes=9437191 peers=1
+state=3 pieces=38 bytes=9961479 peers=1
+state=3 pieces=40 bytes=10485767 peers=1
+state=3 pieces=42 bytes=11010055 peers=1
+state=3 pieces=44 bytes=11534343 peers=1
+state=3 pieces=48 bytes=12321488 peers=1
+COMPLETE

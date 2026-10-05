@@ -11,12 +11,21 @@ apps requiring unavailable Windows services remain incompatible.
 1. Select an `.exe` or `.msi` anywhere accessible in Files and press Cross/A.
 2. Choose **Run Windows setup**. Keep any adjacent CAB/BIN installer files in
    the same folder. First-time runtime preparation can take several minutes.
-3. Complete the Windows wizard using the controller pointer. Cross/A clicks;
-   Home opens **Type**, **Minimize**, and **Close**. Close cancels the attempt.
+3. Complete the wizard in PC1's controller setup screen. D-pad selects controls;
+   Cross/A chooses them, and Back invokes the wizard's Back button when present.
+   Text fields open the shared controller keyboard. Home opens Resume, Return to
+   Files and Stop setup; returning to Files leaves setup running. Select the
+   installer again and choose Resume setup to return. Stop retains partial files.
+   **Original Windows setup** remains available for unsupported pages and uses
+   the controller pointer; stopping controller setup and choosing Original starts
+   a fresh attempt.
 4. After setup exits, choose the installed executable to add to the library.
    The list scans C: within that attempt, including Program Files and AppData,
    excluding Wine built-ins, linked directories and maintenance executables.
    Files installed outside the managed C: drive are not discovered.
+   Valid Desktop and Start Menu shortcuts provide friendly names and put their
+   target executables first in the list. Only local targets inside that attempt
+   are accepted.
 5. Launch the new card. Back from the installation screen restores Files to
    the same folder. Failed setup does not automatically publish a card; if it
    left usable executables, explicit selection is still available.
@@ -24,25 +33,99 @@ apps requiring unavailable Windows services remain incompatible.
 For a standalone EXE, **Add as portable app** creates a card without running
 setup. Keep its original file, folder and any removable drive available.
 
+Each new interactive installation owns a folder under `~/Games/<attempt-id>`.
+Its `C:\Games` directory maps to that folder, so `C:\Games\Game Name` installs
+the files in `~/Games/<attempt-id>/Game Name`. Before opening setup, the helper
+creates this folder and verifies it can write through the `C:\Games` mapping.
+Identified Inno/FitGirl installers start with `C:\Games` selected using `/DIR`,
+including controller setup, so their original drive default cannot cause an
+invalid-location prompt before the destination page. Controller setup also
+initializes the destination field if the installer replaces that launch default.
+Editing the destination remains available through the controller keyboard; returning
+to a page preserves the user's edit. The original interface also defaults to
+`C:\Games` for identified Inno installers using the documented
+[`/DIR` parameter](https://jrsoftware.org/ishelp/topic_setupcmdline.htm).
+Other Windows installers retain their own directory controls.
+The location beneath the content panel shows the actual Linux Games folder.
+Discovery, library registration, launching, removal and interrupted-attempt cleanup
+include this explicitly owned mapping. Other drive links remain excluded; removing
+an attempt keeps neighbouring games and the source installer.
+
 Home → **Minimize** returns to the shell while preserving the running process.
 Select its library card, or **Resume** in the processes menu, to return to the
 same app. The shell tracks one external app at a time; close or resume that app
 before launching another. A minimized setup remains available through the
 processes menu. **Close** stops the tracked runtime group and returns focus.
 
+On the native gamescope session, pointer applications' ordinary windows are
+resized to the display's native pixel dimensions at handover and resume. This
+prevents a small Wine window from being stretched across the screen. Dialogs,
+transient windows and application fullscreen modes retain their requested size.
+Minimize unmaps the application's windows so gamescope returns to home even
+without Steam integration; Resume maps those same windows again.
+
 Select a Windows library card and press **Options** to remove it. The confirmation
 opens on **Cancel**; **Remove app** stops it and deletes its managed prefix,
 including saved data. Portable source files and the original installer remain.
 The Install screen also offers removal and **Remove setup files** for unfinished
 attempts. Requests contain an app ID, never a deletion path; the helper validates
-the prefix as a direct real directory inside its owned `prefixes` root and rejects
-external destinations and symlinked metadata directories.
+the prefix as a direct real directory inside its owned `prefixes` root and the
+matching Games folder as a direct real directory beneath the user's `~/Games`.
+It rejects other external destinations and symlinked metadata directories.
 
 The top-bar Install screen also offers the optional automatic **7-Zip 26.03
 x64** recipe. Recipe installs run in the background with hash verification and
 known silent arguments. Back leaves those installs running; Cancel stops them.
 
 ## Interactive helper and data
+
+Controller setup uses `manager.py guided` and the image-built Windows
+`setup-bridge.exe`. The unmodified installer runs on a private Xvfb display in
+its own prefix. The helper copies the image-owned adapter into the attempt's
+private UI directory, which remains visible inside Proton's Steam runtime.
+The adapter reads visible controls from the installer's process
+family and publishes an atomic `setup-ui/<id>/page.json`. Godot presents the
+actual page copy, buttons, checked states, text fields, dropdown items and progress.
+Long text remains available in full through a controller-scrollable reader.
+Actions contain the page fingerprint and a current control ID; the adapter
+re-enumerates before accepting them and rejects stale, disabled or unknown actions.
+No silent arguments or automatic acceptance are inferred.
+
+Standard buttons, edits, combos and accessible checkbox/radio children have native
+rows. The wizard uses a page heading and scrollable content panel with a fixed
+horizontal Back / Next or Install / Cancel footer. D-pad Up/Down moves through
+options and into the footer; Left/Right moves between footer actions; A activates
+the real control, and B uses Back. FitGirl's RAM limit, language/component choices,
+runtime installers, shortcut choices, verification and finish-page actions stay in
+the live page's order and retain their actual state when present. No repack-specific
+options are invented or automatically accepted.
+The FitGirl speaker button is labelled **Installer music** in the footer. Select
+it with the D-pad and press A to mute or unmute; the button preserves the native
+speaker graphic. That graphic can lag behind playback in this installer, so it
+is not presented as a separate checked on/off switch. The bridge recognizes the verified icon-only footer
+button in FitGirl-named installer sources and uses its own mouse handler on the
+private setup display. It does not invent a switch for installers without that
+control or change system-wide volume. Unknown icon-only buttons retain their
+existing handling.
+
+A music-only acceptance test used the real TEKKEN 8 FitGirl welcome page in a
+temporary prefix and private display, without advancing into installation.
+Playback-output measurements confirmed five successive presses alternated
+between silence and audible playback. Controller fixtures also verify that A
+addresses the speaker control without pressing Next, that Left/Right includes
+it in the footer, and that music remains available on an unsupported page.
+Older Inno Setup `TNewCheckListBox` controls retain their rendered options in
+an enlarged panel: enter Edit options, use D-pad and A on the real control, then
+B to return to the page. This preserves the actual checked state without guessing
+private Delphi data layouts. Other unsupported interactive controls block native
+advancement. The original wizard is the fallback; this is not universal EXE support.
+
+The helper tracks preparation as well as the runtime so Stop works during startup.
+When the bridge reports that setup ended, the helper closes its runtime group and
+hidden display even if newly installed Windows services keep Proton waiting.
+Executable discovery and explicit library registration then use the existing flow.
+Running guided attempts can be recovered after a shell restart by checking the
+helper's recorded PID and process start time. UI data is removed with its attempt.
 
 The shell invokes `manager.py setup local-<unique-id> /absolute/source.exe` in
 the player session. MSI uses `umu-run msiexec /i Z:\\...`; EXE receives no guessed
@@ -131,6 +214,7 @@ installer; Proton selection still follows the existing umu default.
 ```bash
 python3 -m unittest discover -s tests -v
 GODOT_BIN=/path/to/pinned/godot bash scripts/check-windows-shell.sh
+GODOT_BIN=/path/to/pinned/godot bash scripts/check-window-geometry.sh
 ```
 
 Tests need Linux, Python 3 and Xvfb, with a writable X11 socket directory. Under
@@ -141,6 +225,8 @@ cancellation, retry state, duplicate installs, discovery, launch/close, stale
 PID protection, orphan cleanup, safe removal and portable-file preservation.
 The Godot controller fixture covers minimize/resume without respawning, removal
 confirmation, cancellation and focus. These are not a Proton compatibility test.
+The geometry fixture checks native backing pixels, minimize/resume of the same
+window and preservation of dialog and fullscreen dimensions on a real X11 display.
 
 Fixture overrides (development only): `MARWANOS_WINDOWS_HOME` for the state root,
 `MARWANOS_WINDOWS_RECIPES` for the worker's recipe file, and
@@ -150,6 +236,42 @@ image-owned recipe and umu. The shell and worker must share the same state root.
 `tests/test_windows_local.py` covers general setup arguments, session display,
 multipart files, invalid files, selection, portable apps and cancellation.
 The Files controller checks cover EXE/MSI routing, selection and focus restoration.
+
+`tests/windows_setup_wizard.gd` covers controller selection, Back, keyboard edits,
+stale modal revisions, dropdowns, custom options, unsupported controls and full
+license text. It runs as part of `scripts/check-windows-shell.sh`.
+
+### Controller setup bench evidence, 2026-10-05
+
+The physical NVIDIA/gamescope bench completed its existing
+`/home/player/fdm_x64_setup.exe` (FDM 6.35.1.7021) in an isolated acceptance prefix.
+Automated Godot joypad events operated the production setup controls: install mode,
+all 30 languages (Dansk and back to English), destination keyboard, Start Menu,
+Back and forward navigation, the actual desktop-shortcut checkbox, summary,
+Install and Finish. The real bridge rejected a deliberately stale action. The
+resulting FDM executable was registered and launched at 3440×1440, then closed.
+The run reported zero failures and no script/image errors. This uses simulated
+joypad events on the real bench, not physical-button or hotplug acceptance.
+
+Evidence is retained in `out/fdm-controller-*.png` and on the bench in
+`~player/.local/share/marwanos/guided-acceptance/evidence`. The optional harness is
+`tests/windows_setup_bench.gd`. The existing installed FDM app and source EXE were
+retained; disposable acceptance applications can be removed independently.
+
+The normal bench shell was refreshed using
+`scripts/install-controller-setup-bench.sh`. Its existing override unit now mounts
+the matching shell and Windows helper directory from
+`/var/marwanos/controller-setup-20261005`. The original service definition is saved
+as `/etc/systemd/system/marwanos-bench-fixes.service.before-controller-setup-20261005`.
+To roll back, stop that unit, restore its saved definition, reload systemd and start
+the unit, then terminate the supervised shell to reload the previous export.
+No OS image was published or rebooted for this test.
+The normal exported shell also recovered the same live FDM setup after a shell
+restart, retained compositor focus and displayed its native controller rows.
+Its compositor screenshot is `out/fdm-controller-normal-session.png`. Stop and
+discard removed only that disposable check and returned to home with the original
+FDM card. Godot fixtures separately verify that job updates do not steal setup
+focus, Return to Files restores focus, and Resume returns it to the wizard.
 
 Before calling this slice appliance-verified, run the real pinned installer
 on the target with only a controller:

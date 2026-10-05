@@ -1,0 +1,415 @@
+diff --git a/trunc/Bittorrent/fdmbtsupp/vmsBtDownloadImpl.cpp b/trunc/Bittorrent/fdmbtsupp/vmsBtDownloadImpl.cpp
+index 7b7c7fb..02ea400 100644
+--- a/trunc/Bittorrent/fdmbtsupp/vmsBtDownloadImpl.cpp
++++ b/trunc/Bittorrent/fdmbtsupp/vmsBtDownloadImpl.cpp
+@@ -192,6 +192,8 @@ void vmsBtDownloadImpl::Pause ()
+ {
+ 	if (m_handle.is_valid () == false)
+ 		return;
++	// Explicit pauses must survive libtorrent's automatic queue management.
++	m_handle.auto_managed(false);
+ 	m_handle.pause ();
+ }
+ 
+diff --git a/trunc/Bittorrent/fdmbtsupp/vmsBtSessionImpl.cpp b/trunc/Bittorrent/fdmbtsupp/vmsBtSessionImpl.cpp
+index 88cc50a..627d0d4 100644
+--- a/trunc/Bittorrent/fdmbtsupp/vmsBtSessionImpl.cpp
++++ b/trunc/Bittorrent/fdmbtsupp/vmsBtSessionImpl.cpp
+@@ -57,6 +57,9 @@ vmsBtSessionImpl::vmsBtSessionImpl(void)
+ 	m_session.add_dht_router(std::make_pair(std::string("dht.aelitis.com"), 6881)); 
+ 
+ 	libtorrent::session_settings ss = m_session.settings ();
++	// The controlled loopback test needs rate limits to exercise partial resume.
++	if (GetEnvironmentVariableA("FDM_LOCAL_TEST", NULL, 0))
++		ss.ignore_limits_on_local_network = false;
+ 	ss.active_downloads = ss.active_seeds = ss.active_limit = 100000;
+ 	
+ 	
+diff --git a/trunc/Bittorrent/libtorrent/include/libtorrent/export.hpp b/trunc/Bittorrent/libtorrent/include/libtorrent/export.hpp
+index cef3bbe..39bc6b5 100644
+--- a/trunc/Bittorrent/libtorrent/include/libtorrent/export.hpp
++++ b/trunc/Bittorrent/libtorrent/include/libtorrent/export.hpp
+@@ -34,14 +34,14 @@ POSSIBILITY OF SUCH DAMAGE.
+ #define TORRENT_EXPORT_HPP_INCLUDED
+ 
+ #if !defined(BOOST_COMPILER_CONFIG) && !defined(BOOST_NO_COMPILER_CONFIG)
+-#  include <boost/config/select_compiler_config.hpp>
++#  include <boost/config/detail/select_compiler_config.hpp>
+ #endif
+ #ifdef BOOST_COMPILER_CONFIG
+ #  include BOOST_COMPILER_CONFIG
+ #endif
+ 
+ #if !defined(BOOST_PLATFORM_CONFIG) && !defined(BOOST_NO_PLATFORM_CONFIG)
+-#  include <boost/config/select_platform_config.hpp>
++#  include <boost/config/detail/select_platform_config.hpp>
+ #endif
+ #ifdef BOOST_PLATFORM_CONFIG
+ #  include BOOST_PLATFORM_CONFIG
+diff --git a/trunc/FDM.sln b/trunc/FDM.sln
+index 04bbe9e..7273f40 100644
+--- a/trunc/FDM.sln
++++ b/trunc/FDM.sln
+@@ -1,4 +1,4 @@
+-﻿
++
+ Microsoft Visual Studio Solution File, Format Version 12.00
+ # Visual Studio 2013
+ VisualStudioVersion = 12.0.40629.0
+@@ -59,8 +59,6 @@ Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "FdmBrowserHelper", "FdmBrow
+ EndProject
+ Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "FdmBhSniffDllProxy", "FdmBhSniffDllProxy\FdmBhSniffDllProxy.vcxproj", "{11ECF154-E7E0-4C8B-AC07-4673C56CAC3E}"
+ EndProject
+-Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "NetworkMonitor", "NetworkMonitor\NetworkMonitor.vcxproj", "{029E59D3-810E-4E39-9BDF-35984A03B3AF}"
+-EndProject
+ Global
+ 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+ 		Debug_noCURL|Win32 = Debug_noCURL|Win32
+@@ -659,32 +657,9 @@ Global
+ 		{11ECF154-E7E0-4C8B-AC07-4673C56CAC3E}.Template|Win32.ActiveCfg = Release|Win32
+ 		{11ECF154-E7E0-4C8B-AC07-4673C56CAC3E}.Template|Win32.Build.0 = Release|Win32
+ 		{11ECF154-E7E0-4C8B-AC07-4673C56CAC3E}.Template|x64.ActiveCfg = Release|Win32
+-		{029E59D3-810E-4E39-9BDF-35984A03B3AF}.Debug_noCURL|Win32.ActiveCfg = Debug|Win32
+-		{029E59D3-810E-4E39-9BDF-35984A03B3AF}.Debug_noCURL|Win32.Build.0 = Debug|Win32
+-		{029E59D3-810E-4E39-9BDF-35984A03B3AF}.Debug_noCURL|x64.ActiveCfg = Debug|Win32
+-		{029E59D3-810E-4E39-9BDF-35984A03B3AF}.Debug|Win32.ActiveCfg = Debug|Win32
+-		{029E59D3-810E-4E39-9BDF-35984A03B3AF}.Debug|Win32.Build.0 = Debug|Win32
+-		{029E59D3-810E-4E39-9BDF-35984A03B3AF}.Debug|x64.ActiveCfg = Debug|Win32
+-		{029E59D3-810E-4E39-9BDF-35984A03B3AF}.Release_noCURL|Win32.ActiveCfg = Release|Win32
+-		{029E59D3-810E-4E39-9BDF-35984A03B3AF}.Release_noCURL|Win32.Build.0 = Release|Win32
+-		{029E59D3-810E-4E39-9BDF-35984A03B3AF}.Release_noCURL|x64.ActiveCfg = Release|Win32
+-		{029E59D3-810E-4E39-9BDF-35984A03B3AF}.Release_nossl|Win32.ActiveCfg = Release|Win32
+-		{029E59D3-810E-4E39-9BDF-35984A03B3AF}.Release_nossl|Win32.Build.0 = Release|Win32
+-		{029E59D3-810E-4E39-9BDF-35984A03B3AF}.Release_nossl|x64.ActiveCfg = Release|Win32
+-		{029E59D3-810E-4E39-9BDF-35984A03B3AF}.Release|Win32.ActiveCfg = Release|Win32
+-		{029E59D3-810E-4E39-9BDF-35984A03B3AF}.Release|Win32.Build.0 = Release|Win32
+-		{029E59D3-810E-4E39-9BDF-35984A03B3AF}.Release|x64.ActiveCfg = Release|Win32
+-		{029E59D3-810E-4E39-9BDF-35984A03B3AF}.Release-MT|Win32.ActiveCfg = Release|Win32
+-		{029E59D3-810E-4E39-9BDF-35984A03B3AF}.Release-MT|Win32.Build.0 = Release|Win32
+-		{029E59D3-810E-4E39-9BDF-35984A03B3AF}.Release-MT|x64.ActiveCfg = Release|Win32
+-		{029E59D3-810E-4E39-9BDF-35984A03B3AF}.Release-MT-dbg|Win32.ActiveCfg = Release|Win32
+-		{029E59D3-810E-4E39-9BDF-35984A03B3AF}.Release-MT-dbg|Win32.Build.0 = Release|Win32
+-		{029E59D3-810E-4E39-9BDF-35984A03B3AF}.Release-MT-dbg|x64.ActiveCfg = Release|Win32
+-		{029E59D3-810E-4E39-9BDF-35984A03B3AF}.Template|Win32.ActiveCfg = Release|Win32
+-		{029E59D3-810E-4E39-9BDF-35984A03B3AF}.Template|Win32.Build.0 = Release|Win32
+-		{029E59D3-810E-4E39-9BDF-35984A03B3AF}.Template|x64.ActiveCfg = Release|Win32
+ 	EndGlobalSection
+ 	GlobalSection(SolutionProperties) = preSolution
+ 		HideSolutionNode = FALSE
+ 	EndGlobalSection
+ EndGlobal
++
+diff --git a/trunc/FdmApp.cpp b/trunc/FdmApp.cpp
+index f96ea45..a83e047 100644
+--- a/trunc/FdmApp.cpp
++++ b/trunc/FdmApp.cpp
+@@ -88,8 +88,21 @@ vmsAppMutex _appMutex (_T ("Free Download Manager"));
+ vmsRunningAppVersionInfo g_appVersion;
+ std::unique_ptr <vmsAppCrashReporter> g_crashReporter;
+ 
++static void localTestTrace(const char *message)
++{
++	if (!GetEnvironmentVariableA("FDM_LOCAL_TEST", NULL, 0)) return;
++	char path[MAX_PATH]; GetModuleFileNameA(NULL,path,MAX_PATH);
++	char *name=strrchr(path,'\\'); if(!name) return;
++	strcpy(name+1,"startup-test.log");
++	HANDLE f=CreateFileA(path,FILE_APPEND_DATA,FILE_SHARE_READ|FILE_SHARE_WRITE,NULL,OPEN_ALWAYS,0,NULL);
++	if(f==INVALID_HANDLE_VALUE) return;
++	DWORD written; WriteFile(f,message,(DWORD)strlen(message),&written,NULL);
++	WriteFile(f,"\r\n",2,&written,NULL); CloseHandle(f);
++}
++
+ BOOL CFdmApp::InitInstance()
+ {
++	localTestTrace("InitInstance");
+ 	g_crashReporter.reset (new vmsAppCrashReporter (
+ 		g_appVersion.getVersion ()->m_tstrProductName,
+ 		L"",
+@@ -118,14 +131,17 @@ BOOL CFdmApp::InitInstance()
+ 	
+ 	SetRegistryKey (IDS_COMPANY);
+ 
+-	CheckRegistry ();
+-
+-	fsIECatchMgr::CleanIEPluginKey ();
++	const bool localTest = GetEnvironmentVariable(_T("FDM_LOCAL_TEST"), NULL, 0) != 0;
++	if (!localTest)
++	{
++		CheckRegistry ();
++		fsIECatchMgr::CleanIEPluginKey ();
++	}
+ 
+ 	
+-	CString strPath = GetProfileString (_T(""), _T("Path"), _T(""));
++	CString strPath = localTest ? _T("") : GetProfileString (_T(""), _T("Path"), _T(""));
+ 	BOOL bNeedLocalRegister = FALSE;
+-	if (strPath == _T(""))
++	if (strPath == _T("") && !localTest)
+ 	{
+ 		CRegKey key;
+ 		if (ERROR_SUCCESS == key.Open (HKEY_CURRENT_USER, _T("Software\\FreeDownloadManager.ORG\\Free Download Manager"), KEY_WRITE))
+@@ -154,6 +170,8 @@ BOOL CFdmApp::InitInstance()
+ 		strPath = tszExeDir;
+ 		SetCurrentDirectory (strPath);
+ 	}
++	if (localTest)
++		_dwAppState |= APPSTATE_PORTABLE_MODE_NOREG;
+ 
+ 	m_strAppPath = strPath;
+ 	if (m_strAppPath.IsEmpty () == FALSE)
+@@ -186,6 +204,22 @@ BOOL CFdmApp::InitInstance()
+ 		CString strStgsFile = m_strAppPath + "Data\\settings.dat";
+ 		fsBuildPathToFile (strStgsFile);
+ 		pStgs->LoadSettingsFromFile (strStgsFile);
++		if (localTest)
++		{
++			_App.Monitor_UserSwitchedOn(0);
++			_App.Monitor_IE1(FALSE);
++			_App.Monitor_IE2(FALSE);
++			_App.Monitor_Firefox(FALSE);
++			_App.Monitor_Chrome(FALSE);
++			_App.Monitor_Clipboard(FALSE);
++			_App.Bittorrent_EnableDHT(FALSE);
++			_App.Bittorrent_EnableLocalPeerDiscovery(FALSE);
++			_App.Bittorrent_EnableUPnP(FALSE);
++			_App.Bittorrent_EnableNATPMP(FALSE);
++			_App.Community_CheckIfMalBeforeDlding(FALSE);
++			_App.Community_DisplayOpinionsAtDlding(FALSE);
++			_App.Update_AutoUpdateType(AUT_TURNOFF);
++		}
+ 		_App.ApplySettingsToMutexes ();
+ 	}
+ 
+@@ -217,6 +251,7 @@ BOOL CFdmApp::InitInstance()
+ 	}
+ 
+ 	_SkinMgr.Initialize ();
++	localTestTrace("Skin initialized");
+ 
+ 	_IECatchMgr.ReadSettings ();
+ 	_NOMgr.Initialize ();
+@@ -224,6 +259,7 @@ BOOL CFdmApp::InitInstance()
+ 
+ 	
+ 	HRESULT hRes = OleInitialize (NULL);
++	localTestTrace("OLE initialized");
+ 	
+ 	if (FAILED(hRes))
+ 		return FALSE;
+@@ -236,6 +272,7 @@ BOOL CFdmApp::InitInstance()
+ 		_App.RecentVersionRun (currentVersion);
+ 
+ 	vmsAppGlobalObjects::Create2 (currentVersionFirstRun);
++	localTestTrace("Global objects created");
+ 
+ 	fsFDMCmdLineParser cmdline;
+ 
+@@ -289,12 +326,14 @@ BOOL CFdmApp::InitInstance()
+ 	}
+ 
+ 	cmdline.Parse (fsFDMCmdLineParser::Normal);
++	localTestTrace("Command line parsed");
+ 
+ 	if (CheckFdmStartedAlready (m_bForceSilentSpecified == FALSE))
+ 		return FALSE;
+ 
+ 	if (!InitATL())
+ 		return FALSE;
++	localTestTrace("ATL initialized");
+ 
+ 	_App.StartCount (_App.StartCount () + 1);
+ 
+@@ -335,6 +374,7 @@ BOOL CFdmApp::InitInstance()
+ 	vmsFlvSniffInjector::o ().Enable (_App.FlvMonitoring_Enable () != FALSE);
+ 
+ 	LoadHistory ();
++	localTestTrace("History loaded");
+ 
+ 	_Snds.ReadSettings ();
+ 
+@@ -347,6 +387,7 @@ BOOL CFdmApp::InitInstance()
+ 	auto ytdllmgr = std::make_shared <vmsYouTubeParserDllMgr> (
+ 		std::make_shared <vmsAppDataFolder> (L"FreeDownloadManager.ORG", L"Free Download Manager"),
+ 		currentVersionFirstRun);
++	localTestTrace("YouTube manager created");
+ 	vmsYouTubeParserDllMgr::reset (ytdllmgr);
+ 
+ 	auto avMerger = std::make_shared<vmsAVMergerFFMPEG>();
+@@ -362,8 +403,10 @@ BOOL CFdmApp::InitInstance()
+ 	if (FALSE == pFrame->LoadFrame(IDR_MAINFRAME, WS_OVERLAPPEDWINDOW | FWS_ADDTOTITLE, 
+ 		NULL, NULL))
+ 	{
++		localTestTrace("LoadFrame failed");
+ 		return FALSE;
+ 	}
++	localTestTrace("Main window loaded");
+ 
+ 	
+ 	BOOL bHidden = _tcscmp (m_lpCmdLine, _T ("-autorun")) == 0;
+diff --git a/trunc/Include.Add/vmsAppMutex.h b/trunc/Include.Add/vmsAppMutex.h
+index eef6651..412d157 100644
+--- a/trunc/Include.Add/vmsAppMutex.h
++++ b/trunc/Include.Add/vmsAppMutex.h
+@@ -12,6 +12,8 @@ public:
+ 	vmsAppMutex(LPCTSTR ptszMutexName)
+ 	{
+ 		m_tstrName = ptszMutexName;
++		if (GetEnvironmentVariable(_T("FDM_LOCAL_TEST"), NULL, 0))
++			m_tstrName += _T(" - local source test");
+ 		m_hmxApp = NULL;
+ 		m_bAnotherInstanceStartedAlready = false;		
+ 		Create ();
+diff --git a/trunc/InetFile/InetFile.vcxproj b/trunc/InetFile/InetFile.vcxproj
+index 8b87063..bd65d28 100644
+--- a/trunc/InetFile/InetFile.vcxproj
++++ b/trunc/InetFile/InetFile.vcxproj
+@@ -122,7 +122,7 @@
+       <SuppressStartupBanner>true</SuppressStartupBanner>
+       <WarningLevel>Level4</WarningLevel>
+       <TreatWarningAsError>false</TreatWarningAsError>
+-      <DebugInformationFormat>EditAndContinue</DebugInformationFormat>
++      <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
+       <FavorSizeOrSpeed>Speed</FavorSizeOrSpeed>
+       <AdditionalIncludeDirectories>../include.add/;../include.add/openssl;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+       <PreprocessorDefinitions>NDEBUG;WIN32;_LIB;CURL_STATICLIB;USE_SSLEAY;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+@@ -473,4 +473,4 @@
+   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+   <ImportGroup Label="ExtensionTargets">
+   </ImportGroup>
+-</Project>
+\ No newline at end of file
++</Project>
+diff --git a/trunc/common/vms_sifdm_cl/archive/errors/unzip_error.h b/trunc/common/vms_sifdm_cl/archive/errors/unzip_error.h
+index 644a6de..c8a7b6f 100644
+--- a/trunc/common/vms_sifdm_cl/archive/errors/unzip_error.h
++++ b/trunc/common/vms_sifdm_cl/archive/errors/unzip_error.h
+@@ -10,7 +10,7 @@ namespace unzip_error {
+ 		public std::error_category
+ 	{
+ 	public:
+-		virtual const char* name() const override
++		virtual const char* name() const noexcept override
+ 		{
+ 			return "unzip";
+ 		}
+@@ -20,7 +20,7 @@ namespace unzip_error {
+ 			return "unzip unknown error";
+ 		}
+ 
+-		virtual std::error_condition default_error_condition (int ev) const override
++		virtual std::error_condition default_error_condition (int ev) const noexcept override
+ 		{
+ 			return std::error_condition (ev, *this);
+ 			/*switch (ev)
+@@ -60,4 +60,4 @@ namespace std
+ 	template <>
+ 	struct is_error_code_enum <unzip_error::unzip_error>
+ 		: public true_type {};
+-}
+\ No newline at end of file
++}
+diff --git a/trunc/common/vms_sifdm_cl/error/common_error.h b/trunc/common/vms_sifdm_cl/error/common_error.h
+index 404f676..634ec7d 100644
+--- a/trunc/common/vms_sifdm_cl/error/common_error.h
++++ b/trunc/common/vms_sifdm_cl/error/common_error.h
+@@ -18,7 +18,7 @@ class category_impl :
+ 	public std::error_category
+ {
+ public:
+-	virtual const char* name() const override
++	virtual const char* name() const noexcept override
+ 	{
+ 		return "common";
+ 	}
+@@ -28,7 +28,7 @@ public:
+ 		return "common unknown error";
+ 	}
+ 
+-	virtual std::error_condition default_error_condition (int ev) const override
++	virtual std::error_condition default_error_condition (int ev) const noexcept override
+ 	{
+ 		switch (ev)
+ 		{
+@@ -70,4 +70,4 @@ namespace std
+ 	template <>
+ 	struct is_error_code_enum <common_error::common_error>
+ 		: public true_type {};
+-}
+\ No newline at end of file
++}
+diff --git a/trunc/common/vms_sifdm_cl/inet/http_error.h b/trunc/common/vms_sifdm_cl/inet/http_error.h
+index a643648..6d4675e 100644
+--- a/trunc/common/vms_sifdm_cl/inet/http_error.h
++++ b/trunc/common/vms_sifdm_cl/inet/http_error.h
+@@ -23,7 +23,7 @@ class category_impl :
+ 	public std::error_category
+ {
+ public:
+-	virtual const char* name() const override
++	virtual const char* name() const noexcept override
+ 	{
+ 		return "http";
+ 	}
+@@ -33,7 +33,7 @@ public:
+ 		return "http unknown error";
+ 	}
+ 
+-	virtual std::error_condition default_error_condition (int ev) const override
++	virtual std::error_condition default_error_condition (int ev) const noexcept override
+ 	{
+ 		switch (ev)
+ 		{
+@@ -75,4 +75,4 @@ namespace std
+ 	template <>
+ 	struct is_error_code_enum <http_error::http_error>
+ 		: public true_type {};
+-}
+\ No newline at end of file
++}
+diff --git a/trunc/common/vms_sifdm_cl/win/windows_error.h b/trunc/common/vms_sifdm_cl/win/windows_error.h
+index 644c9d5..e72bef9 100644
+--- a/trunc/common/vms_sifdm_cl/win/windows_error.h
++++ b/trunc/common/vms_sifdm_cl/win/windows_error.h
+@@ -15,7 +15,7 @@ namespace windows_error {
+ 		public std::error_category
+ 	{
+ 	public:
+-		virtual const char* name() const override
++		virtual const char* name() const noexcept override
+ 		{
+ 			return "windows";
+ 		}
+@@ -25,7 +25,7 @@ namespace windows_error {
+ 			return "windows unknown error";
+ 		}
+ 
+-		virtual std::error_condition default_error_condition (int ev) const override
++		virtual std::error_condition default_error_condition (int ev) const noexcept override
+ 		{
+ 			switch (ev)
+ 			{
+@@ -84,4 +84,4 @@ namespace std
+ 	template <>
+ 	struct is_error_code_enum <windows_error::windows_error>
+ 		: public true_type {};
+-}
+\ No newline at end of file
++}
+diff --git a/trunc/vmsVideoSiteHtmlCodeParser.h b/trunc/vmsVideoSiteHtmlCodeParser.h
+index 024c59a..9c1595b 100644
+--- a/trunc/vmsVideoSiteHtmlCodeParser.h
++++ b/trunc/vmsVideoSiteHtmlCodeParser.h
+@@ -25,10 +25,10 @@ public:
+ 	{
+ 		
+ 		#define register_site_with_subdomains(s,n)\
+-			if (_tcsicmp (pszSite, ##s) == 0)\
++			if (_tcsicmp (pszSite, s) == 0)\
+ 				return n;\
+-			if (lstrlen (pszSite) > lstrlen (_T(".")##s) && \
+-					_tcsnicmp (pszSite + lstrlen (pszSite) - lstrlen (_T(".")##s), _T(".")##s, lstrlen (_T(".")##s)) == 0)\
++			if (lstrlen (pszSite) > lstrlen (_T(".") s) && \
++					_tcsnicmp (pszSite + lstrlen (pszSite) - lstrlen (_T(".") s), _T(".") s, lstrlen (_T(".") s)) == 0)\
+ 				return n;
+ 		
+ 

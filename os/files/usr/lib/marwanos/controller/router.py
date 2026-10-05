@@ -139,7 +139,7 @@ class Router:
                     os.close(fd)
                     continue
                 fcntl.ioctl(fd, 0x40044590, 1)  # EVIOCGRAB
-                device = {"fd": fd, "name": name, "path": path, "ranges": ranges}
+                device = {"fd": fd, "name": name, "path": path, "ranges": ranges, "sync_lost": False}
                 self.devices[fd] = device
                 if self.device is None:
                     self.device = device
@@ -163,6 +163,13 @@ class Router:
         self.pad.update(self.buttons, self.axes)
 
     def event(self, kind, code, value):
+        if self.device.get("sync_lost", False):
+            # An evdev queue overrun is not a physical disconnect. Discard the
+            # incomplete frame, then query the kernel at the next SYN_REPORT.
+            if kind == 0 and code == 0:
+                self.resync()
+                self.device["sync_lost"] = False
+            return
         if kind == 1 and code in BUTTONS:
             self.buttons[BUTTONS[code]] = int(bool(value))
             if code in (314, 316) and value:
@@ -171,13 +178,68 @@ class Router:
             indices = (13, 14) if code == 16 else (11, 12)
             self.buttons[indices[0]], self.buttons[indices[1]] = int(value < 0), int(value > 0)
         elif kind == 3 and code in self.device["ranges"]:
-            index = AXES[code]
-            low, high = self.device["ranges"][code]
-            value = max(0.0, min(1.0, (value - low) / max(1, high - low)))
-            self.axes[index] = value if index >= 4 else value * 2 - 1
-        # SYN_DROPPED invalidates state. Reopen instead of leaving held controls.
+            self.event_axis(code, value)
+        # Keep the exclusive grab and identity while recovering a lost frame.
         elif kind == 0 and code == 3:
-            self.disconnect()
+            self.device["sync_lost"] = True
+            self.buttons, self.axes = [0] * 15, [0.0] * 6
+            self.pad.update(self.buttons, self.axes)
+            self.publish()
+
+    def resync(self):
+        fd = self.device["fd"]
+        keys = bytearray(96)
+        fcntl.ioctl(fd, 0x80604518, keys)  # EVIOCGKEY
+        self.buttons = [0] * 15
+        self.axes = [0.0] * 6
+        for code, index in BUTTONS.items():
+            self.buttons[index] = int(bool(keys[code // 8] & (1 << (code % 8))))
+        for code in self.device["ranges"]:
+            values = array.array("i", [0] * 6)
+            fcntl.ioctl(fd, 0x80184540 + code, values)  # EVIOCGABS
+            self.event_axis(code, values[0])
+        for code in (16, 17):
+            values = array.array("i", [0] * 6)
+            try:
+                fcntl.ioctl(fd, 0x80184540 + code, values)
+            except OSError:
+                continue  # Pads may expose the D-pad as buttons instead.
+            indices = (13, 14) if code == 16 else (11, 12)
+            self.buttons[indices[0]], self.buttons[indices[1]] = int(values[0] < 0), int(values[0] > 0)
+        # A recovered held control must not become a new application press.
+        active = self.gate.active
+        self.gate.set_active(False, self.buttons, self.axes)
+        self.gate.set_active(active, self.buttons, self.axes)
+
+    def event_axis(self, code, value):
+        index = AXES[code]
+        low, high = self.device["ranges"][code]
+        value = max(0.0, min(1.0, (value - low) / max(1, high - low)))
+        self.axes[index] = value if index >= 4 else value * 2 - 1
+
+    def read_device(self, fd):
+        try:
+            data = os.read(fd, EVENT.size * 128)
+        except BlockingIOError:
+            return  # A nonblocking read without data does not remove the pad.
+        except OSError as error:
+            print(f"Controller read failed: {error}", flush=True)
+            self.disconnect(fd)
+            return
+        if not data:
+            self.disconnect(fd)
+        elif self.device and self.device["fd"] == fd:
+            for _, _, kind, code, value in EVENT.iter_unpack(data):
+                if self.device:
+                    try:
+                        self.event(kind, code, value)
+                    except OSError as error:
+                        print(f"Controller state query failed: {error}", flush=True)
+                        self.disconnect(fd)
+                        break
+                    if kind == 0 and code == 0:
+                        self.pad.update(*self.gate.output(self.buttons, self.axes))
+                        self.publish()
 
     def receive(self):
         while True:
@@ -222,19 +284,7 @@ class Router:
                 for fd in list(self.devices):
                     if fd not in ready:
                         continue
-                    try:
-                        data = os.read(fd, EVENT.size * 128)
-                        if not data:
-                            self.disconnect(fd)
-                        elif self.device and self.device["fd"] == fd:
-                            for _, _, kind, code, value in EVENT.iter_unpack(data):
-                                if self.device:
-                                    self.event(kind, code, value)
-                                    if kind == 0 and code == 0:
-                                        self.pad.update(*self.gate.output(self.buttons, self.axes))
-                                        self.publish()
-                    except OSError:
-                        self.disconnect(fd)
+                    self.read_device(fd)
                 if now > self.lease:
                     self.gate.set_active(False, self.buttons, self.axes)
                 # Home takes effect before a shell frame can open its overlay.

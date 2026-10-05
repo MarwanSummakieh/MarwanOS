@@ -29,6 +29,9 @@ class LocalSetupTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory(prefix="local setup spaces ")
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
+        home_patch = patch.dict(os.environ, {"HOME": str(self.root)})
+        home_patch.start()
+        self.addCleanup(home_patch.stop)
         self.base = self.root / "state"
         self.source = self.root / "Game $(literal) ' Setup.EXE"
         self.source.write_bytes(pe())
@@ -37,7 +40,7 @@ class LocalSetupTests(unittest.TestCase):
         self.runner.write_text('''#!/usr/bin/env python3
 import json, os, pathlib, sys, time
 p = pathlib.Path(os.environ['WINEPREFIX'])
-(p / 'invocation.json').write_text(json.dumps({'argv': sys.argv[1:], 'cwd': os.getcwd(), 'display': os.getenv('DISPLAY'), 'wayland': os.getenv('WAYLAND_DISPLAY'), 'sibling': pathlib.Path('setup.bin').exists()}))
+(p / 'invocation.json').write_text(json.dumps({'argv': sys.argv[1:], 'cwd': os.getcwd(), 'display': os.getenv('DISPLAY'), 'wayland': os.getenv('WAYLAND_DISPLAY'), 'sibling': pathlib.Path('setup.bin').exists(), 'destination': os.getenv('MARWANOS_SETUP_DESTINATION'), 'inno': os.getenv('MARWANOS_SETUP_INNO')}))
 if os.getenv('HANG_SETUP'):
     subprocess = __import__('subprocess')
     child = subprocess.Popen(['/bin/sleep', '60'])
@@ -49,10 +52,18 @@ for name in ['Program Files/Example/Game.exe', 'Program Files/Example/unins000.e
     exe = p / 'drive_c' / name
     exe.parent.mkdir(parents=True, exist_ok=True)
     exe.write_bytes(pathlib.Path(os.environ['FIXTURE_EXE']).read_bytes())
+if os.getenv('HANG_AFTER_INSTALL'):
+    (p / 'installed.ready').write_text('ready')
+    time.sleep(60)
+if os.getenv('FINISHED_GUIDED'):
+    page = pathlib.Path(sys.argv[-2][2:].replace('\\\\', '/'))
+    page.write_text(json.dumps({'finished': True, 'exit_code': 0}))
+    time.sleep(60)  # Model an installed service retaining Proton's wrapper.
 sys.exit(int(os.getenv('SETUP_EXIT', '0')))
 ''')
         self.runner.chmod(0o755)
         self.env = dict(os.environ, MARWANOS_WINDOWS_HOME=str(self.base),
+                        HOME=str(self.root),
                         MARWANOS_WINDOWS_RUNTIME=str(self.runner), FIXTURE_EXE=str(self.source),
                         DISPLAY=":fixture-tv", WAYLAND_DISPLAY="wayland-fixture")
 
@@ -83,6 +94,53 @@ sys.exit(int(os.getenv('SETUP_EXIT', '0')))
         self.assertEqual(entry['exec'], [manager.HELPER, 'launch', 'local-test'])
         self.assertEqual(entry['prefix'], str(self.base / 'prefixes/local-test'))
 
+    def test_games_mapping_discovery_registration_launch_and_removal(self):
+        self.assertEqual(self.run_setup().returncode, 0)
+        prefix = self.base / 'prefixes/local-test'
+        games = self.root / 'Games/local-test'
+        self.assertEqual((prefix / 'drive_c/Games').resolve(), games)
+        self.assertEqual(self.job()['install_directory'], str(games))
+        game = games / 'Fixture Game/Game.exe'
+        game.parent.mkdir()
+        game.write_bytes(pe())
+        # Foreign links under the game directory must remain undiscoverable.
+        (games / 'foreign').symlink_to(self.root, target_is_directory=True)
+        choice = next(c for c in manager.local_candidates(prefix) if c['id'] == 'drive_c/Games/Fixture Game/Game.exe')
+        self.assertEqual(manager.register_local(self.base, 'local-test', choice['id']), 0)
+        entry = manager.read_json(self.base / 'apps/local-test.json', {})
+        self.assertEqual(Path(entry['executable']).resolve(), game)
+        # Exercise launch validation and actual runtime invocation.
+        with patch.object(manager.subprocess, 'Popen') as launch:
+            launch.return_value.pid = 999999
+            launch.return_value.poll.return_value = 0
+            launch.return_value.returncode = 0
+            self.assertEqual(manager.launch(self.base, 'local-test'), 0)
+            self.assertEqual(launch.call_args.args[0], [manager.RUNNER, str(game)])
+        manager.remove_app(self.base, 'local-test')
+        self.assertFalse(games.exists())
+        self.assertTrue(self.source.exists())
+        self.assertTrue((self.root / 'setup.bin').exists())
+
+    def test_games_mapping_tampering_cannot_delete_another_folder(self):
+        self.run_setup()
+        prefix = self.base / 'prefixes/local-test'
+        games = self.root / 'Games/local-test'
+        games.rmdir()
+        games.symlink_to(self.root, target_is_directory=True)
+        with self.assertRaises(manager.InstallError):
+            manager.discard_setup(self.base, 'local-test')
+        self.assertTrue(self.source.exists())
+        self.assertTrue(prefix.exists())
+
+    def test_discard_removes_only_this_attempt_in_home_games(self):
+        self.run_setup()
+        neighbour = self.root / 'Games/Existing game'
+        neighbour.mkdir()
+        (neighbour / 'keep').write_text('keep')
+        manager.discard_setup(self.base, 'local-test')
+        self.assertFalse((self.root / 'Games/local-test').exists())
+        self.assertEqual((neighbour / 'keep').read_text(), 'keep')
+
     def test_msi_uses_msiexec_and_argument_boundaries(self):
         source = self.root / 'installer with spaces.MSI'
         source.write_bytes(bytes.fromhex('d0cf11e0a1b11ae1') + b'fixture')
@@ -90,6 +148,126 @@ sys.exit(int(os.getenv('SETUP_EXIT', '0')))
         self.assertEqual(result.returncode, 0, result.stderr)
         invocation = manager.read_json(self.base / 'prefixes/local-test/invocation.json', {})
         self.assertEqual(invocation['argv'], ['msiexec', '/i', 'Z:' + str(source).replace('/', '\\')])
+
+    def test_original_inno_setup_defaults_to_mapped_games_without_skipping_pages(self):
+        self.source.write_bytes(pe() + b'Inno Setup Setup Data (6.0.0)')
+        self.assertEqual(self.run_setup().returncode, 0)
+        invocation = manager.read_json(self.base / 'prefixes/local-test/invocation.json', {})
+        self.assertEqual(invocation['argv'], [str(self.source), r'/DIR=C:\Games'])
+        self.assertEqual((self.base / 'prefixes/local-test/drive_c/Games').resolve(), self.root / 'Games/local-test')
+
+    def test_unwritable_default_fails_before_launching_installer(self):
+        with patch.object(manager.tempfile, 'TemporaryFile', side_effect=PermissionError('read-only folder')):
+            self.assertEqual(manager.local_setup(self.base, 'local-test', str(self.source)), 1)
+        self.assertEqual(self.job()['status'], 'failed')
+        self.assertIn('default installation folder is not writable', self.job()['detail'])
+        self.assertFalse((self.base / 'prefixes/local-test/invocation.json').exists())
+
+    def test_guided_inno_initializes_writable_default_before_the_first_page(self):
+        self.source.write_bytes(pe() + b'Inno Setup Setup Data (6.0.0)')
+        bridge = self.root / 'setup bridge.exe'
+        bridge.write_bytes(pe())
+        result = self.run_setup(command='guided', MARWANOS_SETUP_BRIDGE=str(bridge))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        prefix = self.base / 'prefixes/local-test'
+        invocation = manager.read_json(prefix / 'invocation.json', {})
+        self.assertEqual(invocation['destination'], r'C:\Games')
+        self.assertEqual(invocation['inno'], '1')
+        (prefix / 'drive_c/Games/write-check').write_text('writable')
+        self.assertEqual((self.root / 'Games/local-test/write-check').read_text(), 'writable')
+
+    def test_guided_setup_preserves_source_and_siblings_on_a_hidden_display(self):
+        bridge = self.root / 'setup bridge.exe'
+        bridge.write_bytes(pe())
+        result = self.run_setup(command='guided', MARWANOS_SETUP_BRIDGE=str(bridge))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        invocation = manager.read_json(self.base / 'prefixes/local-test/invocation.json', {})
+        ui = self.base / 'setup-ui/local-test'
+        win = lambda path: 'Z:' + str(path).replace('/', '\\')
+        self.assertEqual(invocation['argv'], [str(ui / 'setup-bridge.exe'), win(self.source), win(ui / 'page.json'), win(ui / 'action.bin')])
+        self.assertEqual((ui / 'setup-bridge.exe').read_bytes(), bridge.read_bytes())
+        self.assertNotEqual(invocation['display'], ':fixture-tv')
+        self.assertIsNone(invocation['wayland'])
+        self.assertTrue(invocation['sibling'])
+        self.assertEqual(invocation['inno'], '0')
+        self.assertEqual(invocation['cwd'], str(self.root))
+        self.assertTrue(self.job()['guided'])
+        self.assertEqual(self.job()['status'], 'select')
+        self.assertFalse((self.base / 'running/local-test.json').exists())
+
+    def test_guided_setup_without_bridge_fails_before_running_installer(self):
+        result = self.run_setup(command='guided', MARWANOS_SETUP_BRIDGE=str(self.root / 'missing.exe'))
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(self.job()['status'], 'failed')
+        self.assertFalse((self.base / 'prefixes/local-test/invocation.json').exists())
+
+    def test_guided_finish_does_not_wait_for_installed_background_services(self):
+        bridge = self.root / 'bridge.exe'
+        bridge.write_bytes(pe())
+        result = self.run_setup(command='guided', MARWANOS_SETUP_BRIDGE=str(bridge), FINISHED_GUIDED='1')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.job()['status'], 'select')
+        self.assertEqual(self.job()['exit_code'], 0)
+        self.assertFalse((self.base / 'running/local-test.json').exists())
+
+    def test_guided_ui_symlink_is_rejected_without_removing_external_files(self):
+        self.run_setup()
+        external = self.root / 'external-ui'
+        external.mkdir()
+        (external / 'keep').write_text('keep')
+        (self.base / 'setup-ui').symlink_to(external)
+        with self.assertRaises(manager.InstallError):
+            manager.discard_setup(self.base, 'local-test')
+        self.assertTrue((external / 'keep').exists())
+        self.assertTrue((self.base / 'prefixes/local-test').exists())
+
+    def test_closing_setup_retains_installed_program_choices(self):
+        process = subprocess.Popen([sys.executable, str(manager.__file__), 'setup', 'local-test', str(self.source)],
+                                   env=dict(self.env, HANG_AFTER_INSTALL='1'))
+        self.addCleanup(lambda: process.kill() if process.poll() is None else None)
+        ready = self.base / 'prefixes/local-test/installed.ready'
+        for _ in range(200):
+            if ready.exists():
+                break
+            time.sleep(.02)
+        self.assertTrue(ready.exists())
+        manager.stop_app(self.base, 'local-test')
+        process.wait(timeout=10)
+        self.assertEqual(self.job()['status'], 'select')
+        self.assertEqual(len(self.job()['choices']), 2)
+        self.assertFalse(list((self.base / 'apps').glob('*.json')))
+        self.assertEqual(manager.register_local(self.base, 'local-test', self.job()['choices'][0]['id']), 0)
+
+    def test_desktop_shortcut_provides_friendly_name_and_first_choice(self):
+        self.run_setup()
+        prefix = self.base / 'prefixes/local-test'
+        path = prefix / 'drive_c/users/Public/Desktop/Free Download Manager.lnk'
+        path.parent.mkdir(parents=True)
+        header = bytearray(76)
+        header[:20] = bytes.fromhex('4c0000000114020000000000c000000000000046')
+        struct.pack_into('<I', header, 20, 2)
+        target = b'C:\\Program Files\\Example\\Game.exe\0'
+        info = struct.pack('<7I', 29 + len(target), 28, 1, 0, 28, 0, 28 + len(target)) + target + b'\0'
+        path.write_bytes(header + info)
+        choices = manager.local_candidates(prefix)
+        self.assertEqual(choices[0]['title'], 'Free Download Manager')
+        self.assertTrue(choices[0]['shortcut'])
+        self.assertEqual(manager.register_local(self.base, 'local-test', choices[0]['id']), 0)
+        self.assertEqual(manager.read_json(self.base / 'apps/local-test.json', {})['title'], 'Free Download Manager')
+
+    def test_malformed_and_escaping_shortcuts_are_ignored(self):
+        path = self.root / 'bad.lnk'
+        path.write_bytes(bytes(76))
+        self.assertIsNone(manager.shortcut_target(path))
+        header = bytearray(76)
+        header[:20] = bytes.fromhex('4c0000000114020000000000c000000000000046')
+        struct.pack_into('<I', header, 20, 2)
+        for target in (b'C:\\..\\outside.exe\0', b'Z:\\outside.exe\0'):
+            info = struct.pack('<7I', 29 + len(target), 28, 1, 0, 28, 0, 28 + len(target)) + target + b'\0'
+            path.write_bytes(header + info)
+            self.assertIsNone(manager.shortcut_target(path))
+        path.write_bytes(header + struct.pack('<7I', 999999, 28, 1, 0, 28, 0, 28))
+        self.assertIsNone(manager.shortcut_target(path))
 
     def test_invalid_file_and_fifo_never_run(self):
         self.source.write_bytes(b'not a windows file')

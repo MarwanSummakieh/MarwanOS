@@ -1,0 +1,14 @@
+[
+  {
+    "file": "alpha.bin",
+    "expected": "ad8ae213f33b218b1eb413048c4b82389bbf5d0e2657281f52a1cfb10da95199",
+    "actual": "ad8ae213f33b218b1eb413048c4b82389bbf5d0e2657281f52a1cfb10da95199",
+    "pass": true
+  },
+  {
+    "file": "beta.bin",
+    "expected": "f4e5f493e6a364431b2f0f7215ea17fbd020b9e5fced429d05f84b42ca226f27",
+    "actual": "f4e5f493e6a364431b2f0f7215ea17fbd020b9e5fced429d05f84b42ca226f27",
+    "pass": true
+  }
+]

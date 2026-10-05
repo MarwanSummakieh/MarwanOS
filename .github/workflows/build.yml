@@ -41,8 +41,8 @@ jobs:
       - name: Check installation flows before publishing
         run: |
           sudo apt-get update
-          sudo apt-get install -y xvfb
-          python3 -m unittest discover -s tests -v
+          sudo apt-get install -y xvfb python3-pefile python3-pil
+          /usr/bin/python3 -m unittest discover -s tests -v
 
       - name: Check controller flows before publishing
         run: |

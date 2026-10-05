@@ -101,6 +101,18 @@ func _ready() -> void:
 	list.add_theme_constant_override("separation", TvTheme.SETTINGS_ROW_GAP)
 	list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_scroll.add_child(list)
+	var notifications_heading := Label.new()
+	notifications_heading.text = "Notifications"
+	notifications_heading.add_theme_font_size_override("font_size", TvTheme.SIZE_TOPBAR)
+	list.add_child(notifications_heading)
+	if Notifications.entries.is_empty():
+		_add_row(list, "Notifications", "No notifications")
+	else:
+		var recent: Array = Notifications.entries.duplicate()
+		recent.reverse()
+		for index in mini(recent.size(), 10):
+			var entry: Dictionary = recent[index]
+			_add_row(list, str(entry.get("summary", "")), "%s · %s" % [str(entry.get("app", "")), str(entry.get("body", ""))])
 
 	_add_row(list, "System", _system_value())
 	_add_row(list, "Engine", _engine_value())

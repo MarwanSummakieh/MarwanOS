@@ -23,6 +23,8 @@ Godot's filesystem APIs; Browser uses the Mowser GDExtension and pinned CEF
 payload. Both keep navigation and text entry inside the shell. See
 [built-in tools](../docs/built-in-tools.md) for controls and limitations.
 The Windows installation surface is described in [the installation contract](../docs/windows-installation.md).
+Audio is available in Settings and the running-app Home menu, with device,
+microphone and application volume controls. See [audio manager](../docs/audio-manager.md).
 
 ## Runtime contracts
 

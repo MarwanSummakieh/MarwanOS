@@ -1,0 +1,8 @@
+dbus-daemon[909697]: [session uid=1000 pid=909697 pidfd=5] Cannot set up inotify for '/root/.local/share/flatpak/exports/share/dbus-1/services': Permission denied
+test_dbus_and_wine_spool (__main__.InboxTests.test_dbus_and_wine_spool) ... ok
+test_replace_close_restart_and_bounds (__main__.InboxTests.test_replace_close_restart_and_bounds) ... ok
+
+----------------------------------------------------------------------
+Ran 2 tests in 0.742s
+
+OK

@@ -2054,6 +2054,14 @@ start_graphics() {
 }
 
 if start_graphics; then
+    # D-Bus activated file pickers do not inherit the shell's environment.
+    # Publish the compositor display before Flatpak apps can request a picker.
+    systemctl --user import-environment DISPLAY || warn "could not publish the portal display"
+    if [ -n "${XAUTHORITY:-}" ]; then
+        systemctl --user import-environment XAUTHORITY || warn "could not publish portal X authority"
+    else
+        systemctl --user unset-environment XAUTHORITY || true
+    fi
     # The compositor is provably up (ready fd read, process alive), so the
     # frozen splash has covered everything it can -- see release_splash. Before
     # the client starts, deliberately: the splash's frame ends at gamescope's

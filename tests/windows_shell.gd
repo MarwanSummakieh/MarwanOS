@@ -102,7 +102,8 @@ func _run() -> void:
 	await press(JOY_BUTTON_B)
 	check(screen._overlay == null and launcher.is_busy(), "back resumes application")
 	await press(JOY_BUTTON_BACK)
-	await press(JOY_BUTTON_DPAD_DOWN) # Type -> Minimize.
+	await press(JOY_BUTTON_DPAD_DOWN) # Type -> Audio.
+	await press(JOY_BUTTON_DPAD_DOWN) # Audio -> Minimize.
 	var running_pid: int = launcher._pid
 	await press(JOY_BUTTON_A)
 	check(launcher.is_minimized() and not launcher.is_busy() and screen.visible, "minimize restores home without ending app")
@@ -119,6 +120,7 @@ func _run() -> void:
 	launcher._app_is_up()
 	await press(JOY_BUTTON_BACK)
 	await press(JOY_BUTTON_DPAD_DOWN)
+	await press(JOY_BUTTON_DPAD_DOWN) # Audio -> Minimize.
 	await press(JOY_BUTTON_A)
 	screen._cards[0].grab_focus()
 	await press(JOY_BUTTON_A)
@@ -126,6 +128,7 @@ func _run() -> void:
 	launcher._app_is_up()
 	await press(JOY_BUTTON_BACK)
 	await press(JOY_BUTTON_DPAD_DOWN)
+	await press(JOY_BUTTON_DPAD_DOWN) # Audio -> Minimize.
 	await press(JOY_BUTTON_DPAD_DOWN) # Minimize -> Close.
 	await press(JOY_BUTTON_A)
 	await create_timer(0.7).timeout
@@ -142,5 +145,10 @@ func _run() -> void:
 	await press(JOY_BUTTON_DPAD_DOWN)
 	await press(JOY_BUTTON_A)
 	check(DirAccess.get_files_at(home.path_join("requests")).size() == before_remove + 1, "confirmed controller removal writes one request")
+	var owner := root.gui_get_focus_owner()
+	if owner != null:
+		owner.release_focus()
+	installs.guided_finished.emit()
+	check(root.gui_get_focus_owner() == screen._cards[0], "a recovered setup ending restores controller focus to home")
 	print("Windows shell checks: %d failure(s)" % failures)
 	quit(1 if failures else 0)

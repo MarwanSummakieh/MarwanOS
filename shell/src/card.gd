@@ -60,15 +60,21 @@ func setup(new_entry: Dictionary) -> void:
 
 func _ready() -> void:
 	focus_mode = Control.FOCUS_ALL
+	size_flags_vertical = Control.SIZE_SHRINK_BEGIN
 	# BY HAND, and it is not a style preference. Godot ignores the
 	# _get_minimum_size virtual on Button, so a Button whose children are
 	# anchored lays out zero-wide and the whole rail collapses into a point.
 	# This repo has paid for that lesson once already.
 	custom_minimum_size = Vector2(TvTheme.CARD_SIZE, TvTheme.CARD_SIZE)
 
-	add_theme_stylebox_override("normal", TvTheme.card_idle_box())
-	add_theme_stylebox_override("hover", TvTheme.card_idle_box())
-	add_theme_stylebox_override("pressed", TvTheme.row_pressed_box())
+	# Paint the accent in the rounded button itself. A full-size ColorRect
+	# child covers the rounded corners and hides the pressed background.
+	var accent := TvTheme.accent_for_id(str(entry.get("id", "")))
+	var surface := TvTheme.card_art_box(accent)
+	add_theme_stylebox_override("normal", surface)
+	add_theme_stylebox_override("hover", surface)
+	add_theme_stylebox_override("pressed", TvTheme.card_art_box(
+		accent.lerp(TvTheme.SURFACE_PRESSED, 0.35)))
 	add_theme_stylebox_override("focus", TvTheme.card_focus_ring())
 
 	_build_contents()
@@ -78,16 +84,6 @@ func _ready() -> void:
 
 
 func _build_contents() -> void:
-	# The accent wash. This used to be sampled from the card's artwork so the
-	# hero background and the card agreed; with no hero background there is
-	# nothing to agree with, so it is derived from the id -- stable across
-	# reboots, and different enough between neighbours to be a landmark.
-	var wash := ColorRect.new()
-	wash.color = TvTheme.accent_for_id(str(entry.get("id", "")))
-	wash.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	wash.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	add_child(wash)
-
 	_icon_rect = TextureRect.new()
 	_icon_rect.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	_icon_rect.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED

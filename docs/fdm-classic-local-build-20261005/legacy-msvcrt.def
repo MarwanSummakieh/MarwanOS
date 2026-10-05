@@ -1,0 +1,8 @@
+LIBRARY msvcrt.dll
+EXPORTS
+    _iob DATA
+    _pctype DATA
+    __mb_cur_max DATA
+    _vsnprintf DATA
+    fprintf DATA
+    vfprintf DATA

@@ -1,0 +1,14 @@
+PASS accept edge
+PASS held accept is not repeated
+PASS focus regain suppresses held accept
+PASS neutral re-arms input
+PASS reconnect suppresses held buttons
+PASS stick dead zone
+PASS stick navigation
+PASS repeat delay
+PASS navigation repeat
+PASS back wins over accept
+PASS torrent shortcut
+PASS link shortcut
+PASS filter shortcut
+PASS maximum stick values do not overflow

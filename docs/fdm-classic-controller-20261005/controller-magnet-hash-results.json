@@ -1,0 +1,14 @@
+[
+  {
+    "file": "alpha.bin",
+    "expected": "29f29e0b44dd17773d0c0d05cd15e04db84d983df700c202726103617aa62733",
+    "actual": "29f29e0b44dd17773d0c0d05cd15e04db84d983df700c202726103617aa62733",
+    "pass": true
+  },
+  {
+    "file": "beta.bin",
+    "expected": "215737ad2e759792a9222cc2f186100589bca59429281f8fa5d3cb4499aeba59",
+    "actual": "215737ad2e759792a9222cc2f186100589bca59429281f8fa5d3cb4499aeba59",
+    "pass": true
+  }
+]

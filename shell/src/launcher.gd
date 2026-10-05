@@ -450,7 +450,7 @@ func _app_is_up() -> void:
 	# while Steam is mapping its own.
 	_app_on_screen = true
 	ControllerRouter.set_app_input(not _pad_keys_paused and not _uses_pad_bridge())
-	Kiosk.remember_app_window()
+	Kiosk.remember_app_window(str(_current.get("input_mode", "")) == "pointer")
 	Kiosk.yield_screen(true)
 	# The one moment the bridge may start: there is now provably an application
 	# on screen to type into. Which is also why a desk run never gets one -- the
@@ -739,6 +739,7 @@ func minimize_current() -> void:
 	# Kiosk.yield_screen exists to avoid, and the honest cost of a control that
 	# backgrounds an application instead of closing it.
 	Kiosk.yield_screen(false)
+	Kiosk.minimize_app_window(_pid)
 	Kiosk.focus_shell()
 	DisplayServer.window_move_to_foreground()
 	minimized.emit(_current)

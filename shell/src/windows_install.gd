@@ -3,9 +3,12 @@ extends Node
 signal changed()
 signal opened()
 signal closed()
+signal guided_backgrounded()
+signal guided_finished()
 
 const InstallScreen = preload("res://src/windows_install_screen.gd")
 const ListMenu = preload("res://src/list_menu.gd")
+const SetupWizard = preload("res://src/windows_setup_wizard.gd")
 const ACTIVE := ["queued", "downloading", "verifying", "installing", "removing"]
 var _confirmation: Control = null
 var _confirmation_focus: Control = null
@@ -20,6 +23,12 @@ var available := false
 var home := ""
 var message := ""
 var _screen: Control = null
+var guided_key := ""
+var guided_source := ""
+var _guided_pid := -1
+var _guided_child := true
+var _guided_owner_start := ""
+var _guided_screen: Control = null
 var _signature := ""
 var _pending_until := 0
 
@@ -40,11 +49,52 @@ func _ready() -> void:
 
 
 func is_open() -> bool:
-	return is_instance_valid(_screen) or is_instance_valid(_confirmation)
+	return is_instance_valid(_screen) or is_instance_valid(_confirmation) or (is_instance_valid(_guided_screen) and _guided_screen.visible)
 
 
 func is_busy() -> bool:
-	return not _local_launch.is_empty() or (available and ACTIVE.has(str(snapshot.get("status", "")))) or Time.get_ticks_msec() < _pending_until
+	return _guided_pid > 0 or not _local_launch.is_empty() or (available and ACTIVE.has(str(snapshot.get("status", "")))) or Time.get_ticks_msec() < _pending_until
+
+
+func guided_install(path: String) -> void:
+	if path == guided_source and _guided_pid > 0:
+		resume_guided()
+		return
+	if is_busy() or not Launcher.current_entry().is_empty():
+		message = "Finish the current installation or close the running app first."
+		changed.emit()
+		return
+	guided_key = "local-%d-%d" % [Time.get_ticks_usec(), randi()]
+	guided_source = path
+	_guided_child = true
+	_guided_pid = OS.create_process(helper, ["guided", guided_key, path])
+	if _guided_pid <= 0:
+		message = "Could not start controller setup. Try again."
+		changed.emit()
+		return
+	_guided_screen = SetupWizard.new()
+	_guided_screen.job_key = guided_key
+	_guided_screen.source_name = path.get_file()
+	get_tree().root.add_child(_guided_screen)
+	changed.emit()
+
+
+func resume_guided() -> void:
+	if is_instance_valid(_guided_screen):
+		_guided_screen.show()
+		_guided_screen.restore_focus()
+
+
+func background_guided() -> void:
+	if is_instance_valid(_guided_screen):
+		_guided_screen.hide()
+		changed.emit()
+		guided_backgrounded.emit()
+
+
+func stop_guided() -> void:
+	if _guided_pid > 0:
+		OS.create_process(helper, ["stop", guided_key])
 
 
 func local_install(path: String, portable: bool = false) -> void:
@@ -146,6 +196,30 @@ func _json_files(directory: String) -> Array:
 
 func _poll_local() -> void:
 	var jobs := _json_files(home.path_join("jobs"))
+	# A shell refresh must not abandon a setup still owned by its helper.
+	if _guided_pid <= 0:
+		for job in jobs:
+			if not job.get("guided", false) or str(job.get("status", "")) != "installing":
+				continue
+			var key := str(job.get("id", ""))
+			var record: Variant = JSON.parse_string(FileAccess.get_file_as_string(home.path_join("running/" + key + ".json"))) if FileAccess.file_exists(home.path_join("running/" + key + ".json")) else null
+			var verified := false
+			if record is Dictionary:
+				var start := _process_start(int(record.get("owner", -1)))
+				verified = not start.is_empty() and start == str(record.get("owner_start", ""))
+			if verified:
+				_guided_pid = int(record["owner"])
+				_guided_child = false
+				_guided_owner_start = str(record["owner_start"])
+				guided_key = key
+				guided_source = str(job.get("source", ""))
+				_guided_screen = SetupWizard.new()
+				_guided_screen.job_key = guided_key
+				_guided_screen.source_name = guided_source.get_file()
+				# Recovery can happen during autoload startup, before the home
+				# scene is added. Place setup above it after the root is ready.
+				get_tree().root.add_child.call_deferred(_guided_screen)
+				break
 	var apps: Array = []
 	for app in _json_files(home.path_join("apps")):
 		if not str(app.get("executable", "")).is_empty() and not str(app.get("id", "")).is_empty():
@@ -221,6 +295,21 @@ func _request(request: Dictionary) -> void:
 
 
 func _poll() -> void:
+	# Godot's Unix process check only accepts its own children. A recovered
+	# helper belongs to the previous shell or systemd; verify its start identity.
+	var guided_alive := false
+	if _guided_pid > 0:
+		guided_alive = OS.is_process_running(_guided_pid) if _guided_child else _process_start(_guided_pid) == _guided_owner_start
+	if _guided_pid > 0 and not guided_alive:
+		_guided_pid = -1
+		guided_source = ""
+		if is_instance_valid(_guided_screen):
+			if _guided_screen.get_parent() != null:
+				_guided_screen.get_parent().remove_child(_guided_screen)
+			_guided_screen.queue_free()
+		_guided_screen = null
+		changed.emit()
+		guided_finished.emit()
 	_poll_local()
 	var value: Variant = null
 	var path := home.path_join("state.json")
@@ -242,6 +331,18 @@ func _poll() -> void:
 	_pending_until = 0
 	message = ""
 	changed.emit()
+
+
+func _process_start(pid: int) -> String:
+	var path := "/proc/%d/stat" % pid
+	if not FileAccess.file_exists(path):
+		return ""
+	var file := FileAccess.open(path, FileAccess.READ)
+	if file == null:
+		return ""
+	var line := file.get_line()
+	var fields := line.substr(line.rfind(")") + 1).strip_edges().split(" ", false)
+	return fields[19] if fields.size() > 19 else ""
 
 
 func library() -> Array:

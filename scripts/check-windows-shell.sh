@@ -24,3 +24,15 @@ if grep -qE 'SCRIPT ERROR|Parse Error|Failed to load script|FAIL:' "$work/import
     exit 1
 fi
 grep -q 'Windows shell checks: 0 failure(s)' "$work/check.log"
+"$godot_bin" --headless --path "$work/shell" \
+    --script "$repo_root/tests/windows_setup_wizard.gd" --audio-driver Dummy > "$work/wizard.log" 2>&1 \
+    || { cat "$work/wizard.log"; exit 1; }
+cat "$work/wizard.log"
+! grep -qE 'SCRIPT ERROR|Parse Error|FAIL:' "$work/wizard.log"
+grep -q 'Windows setup wizard checks: 0 failure(s)' "$work/wizard.log"
+"$godot_bin" --headless --path "$work/shell" \
+    --script "$repo_root/tests/windows_setup_layout.gd" --audio-driver Dummy > "$work/layout.log" 2>&1 \
+    || { cat "$work/layout.log"; exit 1; }
+cat "$work/layout.log"
+! grep -qE 'SCRIPT ERROR|Parse Error|FAIL:' "$work/layout.log"
+grep -q 'Windows setup layout checks: 0 failure(s)' "$work/layout.log"

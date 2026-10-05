@@ -12,6 +12,12 @@ PC1; additional physical pads are held inactive. Disconnect releases every contr
 and another connected pad can take over. Rumble and multiplayer routing are not
 implemented.
 
+An evdev `SYN_DROPPED` frame is recovered without disconnecting or releasing
+the physical device's exclusive grab. The broker discards events through the
+next `SYN_REPORT`, then queries current buttons and axes. Recovered held controls
+are suppressed for applications until released. A nonblocking read with no data
+also preserves the connection; actual device read failures still disconnect.
+
 The shell receives authenticated snapshots on loopback UDP. The endpoint and
 random session token live in the player's private runtime directory. Snapshots
 include a sequence number; stale packets cannot restore an old button state.
@@ -29,7 +35,8 @@ HID APIs require separate compatibility validation.
 
 ## Verification
 
-`tests/test_controller_router.py` tests routing policy. Run
+`tests/test_controller_router.py` tests routing policy, input queue overflow
+recovery and nonblocking reads. Run
 `scripts/check-controller-shell.sh` with the pinned Godot editor to verify routed
 actions, axes, player ownership and disconnect recovery in the actual shell.
 

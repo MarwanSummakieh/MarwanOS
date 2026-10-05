@@ -1,0 +1,12 @@
+{"at":"2026-10-05T16:28:48.604Z","port":18974,"left":"0","event":"started","returned":[]}
+{"at":"2026-10-05T16:30:12.722Z","port":1500,"left":"16384","event":"started","returned":[18974]}
+{"at":"2026-10-05T16:30:51.419Z","port":1500,"left":"31195849","event":"stopped","returned":[18974]}
+{"at":"2026-10-05T16:33:04.641Z","port":1500,"left":"0","event":null,"returned":[]}
+{"at":"2026-10-05T16:33:26.091Z","port":1500,"left":"0","event":"stopped","returned":[]}
+{"at":"2026-10-05T16:33:48.411Z","port":18974,"left":"0","event":null,"returned":[]}
+{"at":"2026-10-05T16:34:15.985Z","port":1500,"left":"0","event":"started","returned":[18974]}
+{"at":"2026-10-05T16:34:15.986Z","port":1500,"left":"0","event":"started","returned":[18974]}
+{"at":"2026-10-05T16:38:40.419Z","port":1500,"left":"0","event":"stopped","returned":[]}
+{"at":"2026-10-05T16:38:48.129Z","port":18974,"left":"0","event":null,"returned":[]}
+{"at":"2026-10-05T16:39:15.944Z","port":1500,"left":"0","event":null,"returned":[18974]}
+{"at":"2026-10-05T16:39:15.945Z","port":1500,"left":"0","event":null,"returned":[18974]}

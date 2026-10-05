@@ -161,6 +161,8 @@ const ICON_RASTER_PX := 512
 ## here, to the file that already owns "turn a name into something drawable",
 ## rather than moving with the presentation that happened to host it.
 static func load_icon_image(path: String) -> Image:
+	if path.is_empty() or not FileAccess.file_exists(path):
+		return null
 	if path.get_extension().to_lower() != "svg":
 		return Image.load_from_file(path)
 

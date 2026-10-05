@@ -146,6 +146,10 @@ func _ready() -> void:
 		return
 
 	_build()
+	_app_alert_timer = Timer.new()
+	_app_alert_timer.one_shot = true
+	_app_alert_timer.timeout.connect(_on_app_alert_expired)
+	add_child(_app_alert_timer)
 	_populate()
 	_wire_focus_neighbours()
 	_refresh_empty_state()
@@ -167,6 +171,8 @@ func _ready() -> void:
 	WindowsInstall.opened.connect(_on_surface_opened)
 	WindowsInstall.closed.connect(_on_surface_closed)
 	WindowsInstall.changed.connect(_on_windows_changed)
+	WindowsInstall.guided_finished.connect(_on_guided_setup_return)
+	WindowsInstall.guided_backgrounded.connect(_on_guided_setup_return)
 	Files.files_opened.connect(_on_surface_opened)
 	Files.files_closed.connect(_on_surface_closed)
 	Browser.opened.connect(_on_surface_opened)
@@ -174,6 +180,7 @@ func _ready() -> void:
 	PlayerOne.player_one_present.connect(_on_player_one_present)
 	PlayerOne.player_one_absent.connect(_on_player_one_absent)
 	SystemStatus.network_changed.connect(_on_network_changed)
+	Notifications.received.connect(_on_system_notification)
 	# A game finishing its download and an application being removed arrive
 	# through the same door, because to this screen they are the same event:
 	# the library is different now. GameArt.changed used to be a third path
@@ -746,6 +753,13 @@ func _on_launch_blocked(detail: String) -> void:
 		_bar_revealed_for_alert = true
 
 
+func _on_system_notification(entry: Dictionary) -> void:
+	# Store every notification centrally; show a brief alert only on home.
+	# Never focus or expose the shell over a running application.
+	if visible and not Launcher.is_busy() and not Info.is_open():
+		_on_launch_blocked("%s: %s" % [str(entry.get("app", "")), str(entry.get("summary", ""))])
+
+
 func _on_windows_changed() -> void:
 	var state: Dictionary = WindowsInstall.snapshot
 	var detail := WindowsInstall.message
@@ -778,6 +792,11 @@ func _on_surface_opened() -> void:
 
 func _on_surface_closed() -> void:
 	_take_screen_back()
+
+
+func _on_guided_setup_return() -> void:
+	if visible and not WindowsInstall.is_open() and not Files.is_open() and not Browser.is_open() and not Settings.is_open():
+		_ensure_focus()
 
 
 ## Shared by the launch seam and both shell surfaces: from the rail's point of
@@ -1029,7 +1048,7 @@ func _hide_bar() -> void:
 
 
 func _open_overlay() -> void:
-	Kiosk.remember_app_window()
+	Kiosk.remember_app_window(str(Launcher.current_entry().get("input_mode", "")) == "pointer")
 	Launcher.set_pad_keys_paused(true)
 	Launcher.set_splash_paused(true)
 	_overlay = AppOverlay.new()

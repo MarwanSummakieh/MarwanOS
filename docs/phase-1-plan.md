@@ -1,5 +1,12 @@
 # Phase 1 — the library
 
+> Historical plan, superseded by the [current roadmap](roadmap.md) and
+> [README](../README.md). On 2026-10-05 the owner removed the integrated Flathub
+> store from scope and prioritized Playnite-style metadata/ease of use, play
+> history, controller features and achievements. Bluetooth pairing is required
+> but waiting for the dongle. The Rust daemon and IPC design below describe the
+> earlier proposal rather than the current implementation.
+
 > **Goal:** From the couch, with only a controller: see installed apps in a grid, browse Flathub, install an app, watch it download, launch it fullscreen, quit back to the shell.
 
 **Prerequisite:** Phase 0 complete — the bootc image boots silently into gamescope (or cage, per the plan A/B decision) running the Godot shell skeleton, and `bootc upgrade` deploys new builds.
@@ -114,19 +121,11 @@ The grid becomes real.
 
 **Acceptance:** `flatpak install --user flathub org.videolan.VLC` over SSH → VLC appears in the grid within seconds, with icon, no shell restart. Uninstall → tile disappears.
 
-### M3 — the store (~2–4 weeks, the big one)
+### M3 — the store (removed from scope 2026-10-05)
 
-Browse and install without touching a keyboard.
-
-- [ ] AppStream catalog sync on schedule + on demand (equivalent of `flatpak update --appstream`); parse the compressed catalog into a local index
-- [ ] Store home: curated category rows — Games, Browsers, Media, Emulators — populated by AppStream category + a hand-maintained curation list in the daemon (MarwanOS's opinion; this is the anti-bloat filter)
-- [ ] App detail page: screenshots, description, download/installed size, install/uninstall button
-- [ ] Search with a minimal in-shell keyboard widget (grid-of-letters; throwaway quality is fine — Phase 3 replaces it)
-- [ ] Install queue: one job at a time, progress bar on the tile and detail page from `InstallProgress`, cancel support
-- [ ] Free-space check before install; readable error if insufficient
-- [ ] Updates row: pending updates via `GetUpdates`, one-button `UpdateAll`
-
-**Acceptance:** keyboard unplugged. Using only the controller: find a game in the store, read its page, install it, watch progress, launch it when done. Also: search for "firefox" via the letter grid and install from a search result.
+The owner does not want an integrated Flathub store. Its catalogue, storefront,
+search, installation-queue and store-update tasks are retired. Current library
+work is tracked in the [roadmap](roadmap.md).
 
 ### M4 — lifecycle polish (~1–2 weeks)
 

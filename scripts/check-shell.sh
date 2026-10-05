@@ -22,3 +22,4 @@ export XDG_DATA_HOME="$work/data" XDG_CONFIG_HOME="$work/config" XDG_CACHE_HOME=
 timeout 180 bash "$repo/scripts/check-tools-shell.sh"
 timeout 180 bash "$repo/scripts/check-windows-shell.sh"
 timeout 90 bash "$repo/scripts/check-controller-shell.sh"
+timeout 90 bash "$repo/scripts/check-audio-shell.sh"
