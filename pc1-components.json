@@ -5,7 +5,7 @@
   "components": {
     "shell": {
       "repository": "https://github.com/MarwanSummakieh/pc1-shell.git",
-      "commit": "c074914106afc95c2c8070bec167588871b346c1",
+      "commit": "31918cc34d5b54983a1db29f1e76b6d05edc7538",
       "files": {
         "docs/app-card-icons-bench-20261005.md": "718aa90a8420de8f10b8e0137dc99181ab5adc91",
         "docs/built-in-tools.md": "7ea67a75a2ee657ff6fd40d66d3e7ed25035b440",
@@ -24,7 +24,7 @@
         "scripts/check-browser-engine.sh": "9e97f0a245b7e4a204958bb36b196da8209e4f77",
         "scripts/check-controller-shell.sh": "a2cbccc3e9cd2a7a439663a43d190e99f8890165",
         "scripts/check-keyboard-preview.sh": "898ace49e07655260f5caa3cf929eae12716d867",
-        "scripts/check-shell.sh": "d959528a744d1b8168d2ca4ed865fc1fa68288e0",
+        "scripts/check-shell.sh": "c53556bff7b5cee920e5fb80ef1c6319ec53dbc9",
         "scripts/check-tools-shell.sh": "65ca2dcc1942d6adf771b15e03540e7ab3cec3aa",
         "scripts/check-window-geometry.sh": "6da19468b3547167b30f137cfb5d7c097bcbf3dd",
         "scripts/check-windows-shell.sh": "290f67600db3f9b31e77a3977e9ded62dfb3e038",
@@ -129,7 +129,7 @@
         "tests/windows_shell.gd": "b07dc31737c774a227b0aa1e8dfcb934f3198a74",
         "scripts/check-metadata-shell.sh": "dc496efc4b4a1a4b30ed3e6cc5282bca01ce70a4",
         "shell/src/metadata.gd": "a1004724c5c4a9450fea6c4ecefaeae16d88494a",
-        "shell/src/game_details.gd": "e320f5c8f1f80c895fa418b9e55076ac6994e091",
+        "shell/src/game_details.gd": "1834ad1b4b50f8a1c43f027c0e5e5e89be940e34",
         "tests/metadata_shell.gd": "348cf23f751db3ae9a236b48f4042132f1d90e21",
         "shell/src/game_summary.gd": "2ef79e59abb9776770c6d62e25a4074f9dc5b012",
         "scripts/check-achievements-shell.sh": "1d00a4c960b7320eebbc855dc9ea9744b5ecbaee",
@@ -147,18 +147,21 @@
         "tests/download_install_shell.gd": "4b6b35c8ae044fd2b0c4f94fffb627ba370c2033",
         "tests/play_history_shell.gd": "04792ce55d87509b642aaeb8d40baee4c990e2aa",
         "scripts/check-browser-download-directory.sh": "e7e0c94b76760e9456d4522927bf08efee8b2661",
-        "tests/browser_download_directory.gd": "a6c451dc64d41b6aaadeb3f23e2c1430d0b880a6"
+        "tests/browser_download_directory.gd": "a6c451dc64d41b6aaadeb3f23e2c1430d0b880a6",
+        "scripts/check-metadata-page-shell.sh": "41e8eeac74753a04b19f04b2d4393039ba8f83e2",
+        "shell/src/metadata_page.gd": "da7e663bcb5ce530ad17a826c8bd9f55faf21516",
+        "tests/metadata_page_shell.gd": "746723750e5991b258fb037ded7ebf2f94206b4d"
       }
     },
     "installers": {
       "repository": "https://github.com/MarwanSummakieh/pc1-installers.git",
-      "commit": "2ac3e49dc420f8373e08c695147c2c2566d2af25",
+      "commit": "39e52adfeb1683866e7cfc8de0d1e37afa869751",
       "files": {
         "docs/fitgirl-controller-bench-20261005.md": "a37fe7edced4c29be70a184a4fe909dfc1451613",
-        "docs/windows-installation.md": "9ece717047a6485543e0531c7735d467b7ba7372",
+        "docs/windows-installation.md": "c2cce7680d37d1f7d103b3afbca5d8658b923462",
         "os/files/usr/lib/marwanos/windows/manager.py": "f31b5ff56883f8eae5562b26980328b7996569c3",
         "os/files/usr/lib/marwanos/windows/recipes.json": "f9c80165c2fb82f5f0b6a4862468b6da7635e8cd",
-        "os/files/usr/lib/marwanos/windows/setup_bridge.c": "26e85e2f441ff248b3360b8e00740cc076340d21",
+        "os/files/usr/lib/marwanos/windows/setup_bridge.c": "bd98968f2548170f5be57dbf15d6af1d31e6af81",
         "os/files/usr/lib/marwanos/winrun": "7cf3b08682b39387370ea2a4abf0642fb76c5d2d",
         "scripts/install-controller-setup-bench.sh": "316fc651fb8784b1dd86ec57bc4b696d34be72df",
         "scripts/install-exe-flow-bench.sh": "dad8861bb2f2e3af0cb7f0205b1d88bc90d6bc99",
@@ -168,7 +171,9 @@
         "tests/test_windows_local.py": "cfdd8d56d90efa198c2c1e821e9839ce45d08d42",
         "docs/download-install-flow.md": "9c587cd90bab356fc69bdf505b111b65e9ce4f83",
         "os/files/usr/lib/marwanos/windows/download_flow.py": "877bcef99a8755bc1c32f7fdcf1613633591c789",
-        "tests/test_download_flow.py": "116fda872db6acf13dd8d86e2e81b74f14cbee91"
+        "tests/test_download_flow.py": "116fda872db6acf13dd8d86e2e81b74f14cbee91",
+        "tests/setup_bridge_exit.c": "39347ea264c188632c30ade5e3de4d507abb8681",
+        "tests/setup_bridge_exit.py": "f1dc56a56c2469bec0553b1994fd13a65e6c5d86"
       }
     },
     "controllers": {
@@ -186,7 +191,7 @@
     },
     "services": {
       "repository": "https://github.com/MarwanSummakieh/pc1-services.git",
-      "commit": "90720b987f1483f1448c492c812af94ba6e29d1e",
+      "commit": "b721a65b838250e8870aeaa563d6738b2c63bf5a",
       "files": {
         "docs/audio-manager.md": "5fbb703c3a0389e7c494a5747a99ec4eee47aeed",
         "os/files/usr/lib/marwanos/audio/manager.py": "8cca9e3ac18f103aa307531bbd0eba8df59286c1",
@@ -200,7 +205,7 @@
         "os/files/usr/lib/marwanos/metadata/manager.py": "28825e2008b8e0d62a52a88f8936b0fdcd012081",
         "os/files/usr/lib/systemd/user/marwanos-metadata.service": "d0434f861e485dc81e56fd05b67daa6b71703938",
         "tests/test_metadata.py": "d7908295a0f6cc44fc7feacf0a7e231acafd5b3e",
-        "docs/game-metadata.md": "929f8e8fa254385c3c3af513314398267f649edc",
+        "docs/game-metadata.md": "79a315712e15486b79bf02c0a49227af5318e4d9",
         "docs/achievements.md": "bdc60510c32c505b8a42c2887758b0af6600d7f8",
         "docs/bluetooth.md": "5dbddee116a0793c748c62c40d26ec3b52f77a93",
         "os/files/usr/lib/marwanos/achievements/manager.py": "0b50cd07d37687032f4880e14544553dfc735589",

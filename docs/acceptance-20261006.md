@@ -139,6 +139,56 @@ the three-card library at 16.480 seconds after kernel start. Firmware, bootloade
 and physical power-button/display timing remain unmeasured; this does not pass
 the original 15-second cold-boot requirement.
 
+Image-owned offline metadata acceptance also passed on candidate one: with no
+pending metadata requests, only its metadata unit was paused and the worker ran
+once as player in an isolated network namespace, bounded to 45 seconds. It exited
+successfully; provider 1778820, title, facts, full description and all artwork
+hashes/paths/sizes stayed unchanged. Status remained `ready` through intentional
+cache reuse. The normal worker was restored active, and host networking was
+unchanged. This proves cached offline availability, not a forced network-refresh
+failure. Sleep testing remains deferred at the owner's explicit request.
+
+The current shell was also rendered locally with Tekken's actual PC1 metadata,
+four hash-verified cached artwork files and recorded session at native 3440×1440
+(canvas 2580×1080). Inspection confirmed an edge-to-edge dimmed backdrop, roomy
+facts/artwork/history area, scrollable full description with L1/R1 hints and one
+Play action. This is isolated Xvfb rendering evidence, separate from physical TV
+observation. Screenshots are local ignored artifacts under
+`out/tekken-current-render/`.
+
+## Candidate three and remaining defects
+
+The final-browser candidate was published and booted as
+`ghcr.io/marwansummakieh/marwanos:pc1-candidate-20261006-3`, baked commit `b87b1ac`,
+digest `sha256:74b1ec8df6c66572d1e76e2e2021b280ddd0ad6f0d243d042526e15629706a0b`,
+OSTree `ce20b2f948eb964008fe8e822c3b61f9541720ffcc8bf6b58b365f363f20a576`.
+The tightened postboot software gate passed with zero failures, including exact
+identity, ancestor/exact/child mount override checks, image-owned unit/drop-in
+configuration and actual shell/broker process paths. Bluetooth reports a fresh,
+error-free `no-adapter`. The owner explicitly chose to continue without sleep
+testing; no suspend was performed.
+
+The embedded browser genuinely downloaded official 7-Zip 26.04 through its
+controller keyboard to `HOME/Downloads` despite absent `user-dirs.dirs`.
+The 1,664,082-byte installer has SHA-256
+`d54bf805f9f3704d1e8db2fa3498ae7ef2df0312b40b558e7c71c734430a665d`.
+Its real completion callback created a ready receipt, and Install opened guided
+setup. Installing succeeded visibly, but Close destroyed the window while the
+installer remained active. Its modeless GetMessage loop did not advance after
+the bridge's synchronous foreign-thread BM_CLICK. The owned test was stopped
+through Home → Setup options → Stop; job `local-134543796-912047650` reports exit
+241, so its source remains retained and cannot authorize successful cleanup.
+A queued-button correction and a real modeless regression are being prepared;
+the successful browser/install/cleanup lane must be repeated on its baked image.
+
+Candidate three also recorded gamescope PID 1527 SIGSEGV during the intentional
+first-boot display link scrub at 20:29:55 UTC. The compositor had already reached
+ready; the image-owned scrub stopped greetd, performed its Plymouth modeset and
+restarted the session at 20:30:03. The core stack is in CVulkanDevice teardown/
+exit handlers, matching an older boot's defect. Recovery produced a stable
+3440×1440 session, but this remains a real release/hardware risk. The passing
+read-only gate does not mean a fault-free cold boot.
+
 ## Read-only hardware inspection
 
 The physical PC1 at `192.168.50.206` was inspected without deployment, reboot,

@@ -21,9 +21,9 @@ features. An integrated Flathub store is removed from the roadmap.
 | High | Unified achievements | Persistent local/Steam providers, progress and unlock notifications implemented; genuine Tekken schema and earned-unlock acceptance pending |
 | High, waiting | Controller-operated Bluetooth pairing | Controller page and BlueZ pairing agent implemented; real private D-Bus fixture passes; physical dongle acceptance pending |
 | High | Download → install → cleanup | Completed-download receipts, controller setup and confirmed setup-file cleanup implemented; torrent/multipart payloads retained; actual FDM flow pending |
-| Release | Reliable suspend/resume | Sleep action exists; target NVIDIA/gamescope acceptance pending |
+| Release | Reliable suspend/resume | Sleep action and read-only evidence helper exist; testing explicitly deferred by the owner |
 | Release | Silent boot, hardware and compatibility acceptance | Current-image TV/controller/audio/Steam/game testing and original boot-time gate remain incomplete |
-| Release | Bake recent bench fixes into a release image | Published candidate boots image-owned payloads without application overrides; Bluetooth no-dongle correction and physical release acceptance remain |
+| Release | Bake recent bench fixes into a release image | Published candidate boots image-owned payloads without overrides; final metadata-page/setup-close bake and physical/media acceptance remain; compositor teardown defect recorded |
 
 ### Metadata and Tekken 8 acceptance
 
@@ -35,24 +35,25 @@ features. An integrated Flathub store is removed from the roadmap.
       verified real Steam Store downloads; see [metadata evidence](game-metadata.md).
 - [x] Check title, cover, background/hero, icon/logo where available, description,
       release date, genres, developer/publisher and source/platform information.
-- [ ] Compare the controller interface and effort required with Playnite: import
+- [x] Compare the controller interface and effort required with Playnite: import
       should enrich the game automatically, without visiting a desktop or manually
       collecting artwork. The owner requested Play as the only details action;
-      correction remains supported by the backend.
-- [ ] Verify metadata survives reboot and remains usable offline; failed downloads
+      Options opens a separate controller refresh/matching page.
+- [x] Verify metadata survives reboot and remains usable offline; failed downloads
       offer retry and do not prevent launching the game. Preserve manual corrections.
-- [ ] Implement missing provider/download/cache or presentation behavior discovered
+- [x] Implement missing provider/download/cache or presentation behavior discovered
       by this check, and extend the same flow to games from other sources.
 
 The 2026-10-06 [completion record](fitgirl-controller-bench-20261005.md) reports
 successful installation, verification of all 533 files and library registration.
-Reboot/offline acceptance remains pending. The inspected `appscan` helper discovers
-local icons and cached Steam art; no general Playnite-style metadata provider
-pipeline was established by the source inspection on 2026-10-05.
+Image-owned reboots and an isolated offline worker preserve the metadata/artwork.
+The older inspected `appscan` helper discovered local icons and cached Steam art;
+the new metadata worker now provides the automatic provider/download pipeline.
 The [2026-10-06 metadata implementation](game-metadata.md) now supplies automatic
 matching, downloads, persistent cache and spacious controller details. The owner
 confirmed actual controller gameplay after the saved native-input profile repair.
-Machine reboot and the new-image acceptance remain open.
+Physical release acceptance and the separate controller-page final bake remain
+open; see the current acceptance record for exact software evidence and defects.
 
 Playnite's documented model uses metadata providers and automatically enriches
 games on import, with later refresh and editing. Use that behavior as the baseline:

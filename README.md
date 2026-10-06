@@ -27,8 +27,9 @@ affiliated with Sony.
 See the [current roadmap](docs/roadmap.md) for priorities, dependencies and
 remaining hardware acceptance. Tekken installation, metadata/cache verification
 and user-confirmed physical controller gameplay completed on 2026-10-06;
-the candidate reboot preserved its artwork and history. Physical release gates
-and the Bluetooth no-dongle correction remain pending.
+image-owned candidate reboots preserve its artwork and history. Bluetooth now
+reports the missing dongle correctly. Physical release gates remain pending;
+sleep testing is deferred at the owner's request.
 
 Development is organized through the [PC1 GitHub Project](https://github.com/users/MarwanSummakieh/projects/3)
 and [six repositories](docs/repositories.md), with pinned component copies in
@@ -49,14 +50,14 @@ other documents describe their dated builds.
 | OS | Fedora 43 / Universal Blue bootc image, pinned NVIDIA open-module sidecar, Plymouth splash, supervised gamescope session and Xorg/Openbox compatibility session for VMs |
 | Shell | Godot 4.7.1, controller navigation, library rail, app overlay, compact movable keyboard with saved position, settings, Wi-Fi, updates, power and diagnostics |
 | Controller ownership | Exclusive Linux input broker, four stable player slots, Linux rumble forwarding, all-pad Home/Share, gated game input and neutral handoff/disconnect; physical rumble/two-pad acceptance pending; see [controller routing](docs/controller-routing.md) |
-| Library | Desktop applications, Steam libraries, standalone Windows executables and managed umu apps; automatic Steam Store metadata/artwork with persistent offline cache and a controller details page with Play; see [metadata evidence](docs/game-metadata.md) |
+| Library | Desktop applications, Steam libraries, standalone Windows executables and managed umu apps; automatic Steam Store metadata/artwork with persistent offline cache, a Play-only details page and separate Options → Metadata refresh/match page; see [metadata evidence](docs/game-metadata.md) |
 | History and achievements | Persistent actual foreground sessions, totals and recent sorting; per-profile local/Steam achievement providers, progress, offline viewing and first-sync-safe unlock notifications. Unsupported schemas/profiles stay explicit; see [achievements](docs/achievements.md) |
 | Bluetooth | Controller pairing page, BlueZ agent, codes/confirmation, trust/removal/reconnect; actual dongle acceptance pending; see [Bluetooth](docs/bluetooth.md) |
 | Download automation | Browser/FDM completion receipts, controller setup and explicit game/app input profiles; confirmed successful setup-file cleanup, with torrent/multipart retention; see [download flow](docs/download-install-flow.md) |
 | Windows installation | EXE/MSI setup from Files, portable apps, explicit program selection, launch, minimize/resume, close and confirmed managed-prefix removal. The final image's service and first-use runtime passed the real 7-Zip lifecycle; see [the contract and validation](docs/windows-installation.md) |
 | Steam | Native client preferred, legacy Flatpak fallback, shared launch/stop helper and controller routing; account/game compatibility requires target validation |
 | Browser and files | Embedded Chromium with tabs, history/bookmarks, downloads, controller file uploads and web dialogs; Files search/path/history, split view, previews, cancellable copy/move, rename, trash and restore. See [built-in tools](docs/built-in-tools.md). |
-| Verification | Backend tests, integrated controller suites, pinned shell export, real uinput multiplayer/rumble fixture and five PR CI checks pass. Actual PC1 Tekken history, HDMI/USB stream routing and FDM lifecycle pass. Candidate boot preserves artwork/history with no application overrides or failed units; a Bluetooth no-dongle correction and physical release gates remain. Earlier Chromium/USB/VM checks apply to their recorded builds. |
+| Verification | 175 backend tests (two optional skips), integrated controller suites, real uinput multiplayer/rumble and Win32 setup-exit fixtures pass. Actual PC1 Tekken history, HDMI/USB stream routing and FDM lifecycle pass. Candidate software checks preserve artwork/history with no application overrides or failed units. Physical release gates and the recorded compositor teardown defect remain. Earlier Chromium/USB/VM checks apply to their recorded builds. |
 
 ## Architecture
 

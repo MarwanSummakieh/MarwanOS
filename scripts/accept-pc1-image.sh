@@ -34,6 +34,7 @@ import math
 import os
 from pathlib import Path
 import pwd
+import re
 import stat
 import subprocess
 import sys
@@ -72,6 +73,62 @@ def walk_mounts(values):
         yield from walk_mounts(value.get("children", []))
 
 
+def application_override_mount(item):
+    target = item.get("target", "").rstrip("/") or "/"
+    if target == "/usr/lib/marwanos" or target.startswith("/usr/lib/marwanos/"):
+        return True
+    # / and conventional /usr filesystems belong to the OS. A distinct /usr/lib
+    # mount, or a bind of a foreign subtree over /usr, can hide all our payloads.
+    if target == "/usr/lib":
+        return True
+    if target != "/usr":
+        return False
+    options = set(item.get("options", "").split(","))
+    fsroot = item.get("fsroot", "/")
+    image_usr = re.fullmatch(r"(?:/sysroot)?/ostree/deploy/[^/]+/deploy/[a-f0-9]{64}\.\d+/usr", fsroot)
+    return bool(options & {"bind", "rbind"}) or (fsroot != "/" and not image_usr)
+
+
+def image_unit(prefix, unit, directory):
+    code, output, error = command([*prefix, "show", unit,
+                                   "--property=FragmentPath,DropInPaths"])
+    properties = dict(line.split("=", 1) for line in output.splitlines() if "=" in line)
+    fragment = properties.get("FragmentPath", "")
+    dropins = properties.get("DropInPaths", "").split()
+    valid = (code == 0 and fragment == f"{directory}/{unit}"
+             and all(path.startswith(directory + "/") for path in dropins))
+    check(unit + " uses image-owned unit configuration", valid,
+          error or (f"fragment {fragment or 'missing'}; drop-ins {', '.join(dropins) or 'none'}"))
+
+
+def image_session_processes(player_uid):
+    candidates = {"shell": [], "controller broker": []}
+    expected_shell = "/usr/lib/marwanos/shell/marwanos-shell"
+    expected_router = "/usr/lib/marwanos/controller/router.py"
+    for process in Path("/proc").glob("[0-9]*"):
+        try:
+            if process.stat().st_uid != player_uid:
+                continue
+            args = [value.decode(errors="replace") for value in
+                    (process / "cmdline").read_bytes().split(b"\0") if value]
+            if not args:
+                continue
+            executable = os.readlink(process / "exe")
+            if Path(args[0]).name == "marwanos-shell" or Path(executable).name == "marwanos-shell":
+                valid = args[0] == expected_shell and os.path.samefile(process / "exe", expected_shell)
+                candidates["shell"].append((process.name, valid, args[0]))
+            if len(args) > 1 and Path(args[1]).name == "router.py":
+                valid = (args[1] == expected_router and os.path.samefile(process / "exe", "/usr/bin/python3"))
+                candidates["controller broker"].append((process.name, valid, args[1]))
+        except (OSError, ValueError):
+            # A process may exit while /proc is read; a missing live owner still
+            # fails below. No process is signalled or endpoint lease refreshed.
+            continue
+    for label, processes in candidates.items():
+        check(label + " runs the image payload as player", len(processes) == 1 and processes[0][1],
+              "; ".join(f"PID {pid}: {path}" for pid, _, path in processes) or "no live process; rerun after startup settles")
+
+
 def main():
     if os.geteuid() != 0:
         check("run as root to read release/boot state", False)
@@ -98,12 +155,12 @@ def main():
     check("baked expected source commit", actual_commit == expected_commit and "dirty" not in actual_commit,
           actual_commit or "build-info missing")
     check("development shell disabled", not Path("/var/marwanos/devmode").exists())
-    code, output, error = command(["findmnt", "--json", "--output", "TARGET,SOURCE"])
+    code, output, error = command(["findmnt", "--json", "--output", "TARGET,SOURCE,FSTYPE,FSROOT,OPTIONS"])
     try:
         mounts = list(walk_mounts(json.loads(output).get("filesystems", []))) if code == 0 else []
     except (ValueError, AttributeError):
         mounts = []
-    overrides = [item.get("target", "") for item in mounts if item.get("target", "").startswith("/usr/lib/marwanos/")]
+    overrides = [item.get("target", "") for item in mounts if application_override_mount(item)]
     check("baked application files have no bind overrides", code == 0 and not overrides,
           ", ".join(overrides) or error)
     code, output, _ = command(["systemctl", "is-active", "marwanos-bench-fixes.service"])
@@ -111,14 +168,17 @@ def main():
     for unit in ["greetd.service", "marwanos-windows.service", "marwanos-update.service"]:
         code, output, error = command(["systemctl", "is-active", unit])
         check(unit + " active", code == 0 and output == "active", output or error)
+        image_unit(["systemctl"], unit, "/usr/lib/systemd/system")
     user_prefix = ["runuser", "-u", "player", "--", "env", f"XDG_RUNTIME_DIR={runtime}",
                    f"DBUS_SESSION_BUS_ADDRESS=unix:path={runtime}/bus", "systemctl", "--user"]
     for unit in ["marwanos-metadata.service", "marwanos-audio.service", "marwanos-achievements.service", "marwanos-bluetooth.service", "marwanos-notifications.service"]:
         code, output, error = command([*user_prefix, "is-active", unit])
         check(unit + " active", code == 0 and output == "active", output or error)
+        image_unit(user_prefix, unit, "/usr/lib/systemd/user")
         code, output, error = command([*user_prefix, "show", unit, "--property=ExecStart", "--value"])
         check(unit + " executes image payload", code == 0 and "/usr/lib/marwanos/" in output and "/var/marwanos/" not in output,
               "override or missing payload" if code != 0 or "/var/marwanos/" in output else "")
+    image_session_processes(player.pw_uid)
     for prefix, label in [(["systemctl"], "system"), (user_prefix, "player")]:
         code, output, error = command([*prefix, "--failed", "--no-legend", "--no-pager"])
         check(label + " has no failed units", code == 0 and not output, output or error)
@@ -137,6 +197,7 @@ def main():
         audio_age = float("inf")
     check("audio state fresh and available", audio.get("available") is True and 0 <= audio_age < 12)
     check("audio output is selectable", bool(audio.get("outputs")) and bool(audio.get("default_output")))
+    print("INFO: Audio enumeration does not certify audible output, recording or saved-choice recovery.")
     bluetooth = read_json(runtime / "marwanos/bluetooth/state.json")
     try:
         bluetooth_age = time.time() - float(bluetooth.get("updated_at", 0))
@@ -161,6 +222,11 @@ def main():
         except (OSError, KeyError, TypeError, ValueError):
             pass
         check("verified cached " + kind, valid)
+    if game_id.startswith("managed."):
+        installed = read_json(home / ".local/share/marwanos/windows/apps" / (game_id.removeprefix("managed.") + ".json"))
+        check("reference Windows game retains native controller profile",
+              installed.get("state") == "installed" and installed.get("input_mode") in ("", "gamepad")
+              and isinstance(installed.get("executable"), str) and Path(installed["executable"]).is_file())
     history = read_json(home / ".local/share/marwanos/play-history/state.json")
     played = history.get("games", {}).get(game_id, {})
     try:
