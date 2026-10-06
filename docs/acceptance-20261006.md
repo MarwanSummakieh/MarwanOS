@@ -86,6 +86,23 @@ physical button-by-button FDM navigation and minimized download continuation rem
 pending. The read-only release gate correctly rejects the old booted image and
 active overrides, while passing live artwork, history, audio and four-pad checks.
 
+The published candidate is staged for the next PC1 boot:
+
+- Source/build commit: `ac66747` (later documentation/helpers do not change its payload).
+- Image: `ghcr.io/marwansummakieh/marwanos:pc1-candidate-20261006`.
+- Immutable digest: `sha256:0ae9a9c19e5d10d96ac4dc306c254b07f4695cdde28e23aa429f8d602e7e9673`.
+- Staged OSTree checksum: `7c206512db997b5774ea5cc7c78e37faaabe11cc5cd954a031c0950a04e6c52d`.
+
+The staged root's build-info, shell/browser library, controller, Windows/download,
+audio, metadata, achievements, Bluetooth, notification and appscan payloads exist.
+All five image-owned user service units/default-wants links are present. The
+[retirement helper](../scripts/retire-pc1-bench.sh) passed its actual target preview
+without changing anything. It defaults to read-only; `--apply ac66747` backs up
+and disables bench startup configuration while retaining current running services.
+Use only immediately before the approved candidate reboot. The
+[restore helper](../scripts/restore-pc1-bench.sh) restores those recorded overrides
+before an approved rollback if needed. No machine reboot has been performed yet.
+
 ## Read-only hardware inspection
 
 The physical PC1 at `192.168.50.206` was inspected without deployment, reboot,

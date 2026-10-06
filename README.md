@@ -25,8 +25,9 @@ affiliated with Sony.
 - Boot, application handoff, and recovery remain inside the console experience.
 
 See the [current roadmap](docs/roadmap.md) for priorities, dependencies and
-Tekken 8's pending metadata acceptance; installation and library registration
-completed on 2026-10-06.
+remaining hardware acceptance. Tekken installation, metadata/cache verification
+and user-confirmed physical controller gameplay completed on 2026-10-06;
+the new-image reboot/offline check remains pending.
 
 Development is organized through the [PC1 GitHub Project](https://github.com/users/MarwanSummakieh/projects/3)
 and [six repositories](docs/repositories.md), with pinned component copies in
@@ -37,20 +38,24 @@ this OS integration repository.
 This is a bootable development distro. The current build runs in a UEFI VM
 with its integrated browser, Files, controller input and Windows application
 lifecycle verified. Physical NVIDIA/controller/TV acceptance remains necessary.
-See the [current acceptance record](docs/acceptance-2026-10-05.md) for evidence,
-artifact details and supported feature boundaries. Historical observations in
+See the [current acceptance record](docs/acceptance-20261006.md) for software,
+bench and candidate-image evidence, and the [earlier media record](docs/acceptance-2026-10-05.md)
+for dated VM/USB artifact details. Historical observations in
 other documents describe their dated builds.
 
 | Area | State |
 |---|---|
 | OS | Fedora 43 / Universal Blue bootc image, pinned NVIDIA open-module sidecar, Plymouth splash, supervised gamescope session and Xorg/Openbox compatibility session for VMs |
 | Shell | Godot 4.7.1, controller navigation, library rail, app overlay, compact movable keyboard with saved position, settings, Wi-Fi, updates, power and diagnostics |
-| Controller ownership | Exclusive Linux input broker, shell-owned Home/Share, gated virtual application controller, neutral controls on handoff/disconnect; see [controller routing](docs/controller-routing.md) |
+| Controller ownership | Exclusive Linux input broker, four stable player slots, Linux rumble forwarding, all-pad Home/Share, gated game input and neutral handoff/disconnect; physical rumble/two-pad acceptance pending; see [controller routing](docs/controller-routing.md) |
 | Library | Desktop applications, Steam libraries, standalone Windows executables and managed umu apps; automatic Steam Store metadata/artwork with persistent offline cache and a controller details page with Play; see [metadata evidence](docs/game-metadata.md) |
+| History and achievements | Persistent actual foreground sessions, totals and recent sorting; per-profile local/Steam achievement providers, progress, offline viewing and first-sync-safe unlock notifications. Unsupported schemas/profiles stay explicit; see [achievements](docs/achievements.md) |
+| Bluetooth | Controller pairing page, BlueZ agent, codes/confirmation, trust/removal/reconnect; actual dongle acceptance pending; see [Bluetooth](docs/bluetooth.md) |
+| Download automation | Browser/FDM completion receipts, controller setup and explicit game/app input profiles; confirmed successful setup-file cleanup, with torrent/multipart retention; see [download flow](docs/download-install-flow.md) |
 | Windows installation | EXE/MSI setup from Files, portable apps, explicit program selection, launch, minimize/resume, close and confirmed managed-prefix removal. The final image's service and first-use runtime passed the real 7-Zip lifecycle; see [the contract and validation](docs/windows-installation.md) |
 | Steam | Native client preferred, legacy Flatpak fallback, shared launch/stop helper and controller routing; account/game compatibility requires target validation |
 | Browser and files | Embedded Chromium with tabs, history/bookmarks, downloads, controller file uploads and web dialogs; Files search/path/history, split view, previews, cancellable copy/move, rename, trash and restore. See [built-in tools](docs/built-in-tools.md). |
-| Verification | 55 Python regressions, controller shell suites, real Chromium workflows, kernel input routing, Windows-app lifecycle, controller-only USB installation and installed-system cold boot. Physical controller/TV/NVIDIA acceptance remains separate |
+| Verification | 171 backend tests pass with two optional skips; all integrated controller suites, pinned shell export, real uinput multiplayer/rumble fixture and five PR CI checks pass. Actual PC1 Tekken history, HDMI/USB stream routing and FDM lifecycle pass. Candidate image is staged; physical release gates remain separate. Earlier Chromium/USB/VM checks apply to their recorded builds. |
 
 ## Architecture
 
