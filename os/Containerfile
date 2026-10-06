@@ -1698,6 +1698,8 @@ RUN --mount=type=cache,dst=/var/cache/libdnf5,sharing=locked \
     chmod 0644 /usr/lib/systemd/user/marwanos-audio.service /usr/lib/marwanos/audio/manager.py; \
     python3 -m py_compile /usr/lib/marwanos/audio/manager.py; \
     ln -sf ../marwanos-audio.service /usr/lib/systemd/user/default.target.wants/marwanos-audio.service; \
+    chmod 0644 /usr/lib/systemd/user/marwanos-metadata.service /usr/lib/marwanos/metadata/manager.py; \
+    ln -sf ../marwanos-metadata.service /usr/lib/systemd/user/default.target.wants/marwanos-metadata.service; \
     ln -sf ../pipewire.service /usr/lib/systemd/user/default.target.wants/pipewire.service; \
     ln -sf ../pipewire-pulse.service /usr/lib/systemd/user/default.target.wants/pipewire-pulse.service; \
     ln -sf ../wireplumber.service /usr/lib/systemd/user/default.target.wants/wireplumber.service; \

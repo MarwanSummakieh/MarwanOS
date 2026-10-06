@@ -15,7 +15,7 @@ features. An integrated Flathub store is removed from the roadmap.
 
 | Priority | Work | Status / dependency |
 | --- | --- | --- |
-| High | Automatic game metadata and library presentation | Pending; Tekken 8 is installed and registered, ready for metadata acceptance |
+| High | Automatic game metadata and library presentation | First provider implemented and deployed; Tekken 8 downloads/rendered cache verified; physical launch/reboot acceptance pending |
 | High | Play history and recently played ordering | Not implemented |
 | High | Controller rumble, multiplayer routing and reliable hotplug | Rumble/multiplayer not implemented; physical acceptance also required |
 | High | Unified achievements | Research and implementation required; choose integrations supported by each game/source |
@@ -30,7 +30,8 @@ features. An integrated Flathub store is removed from the roadmap.
       target are correct, including its actual installation source.
 - [ ] Trace which providers supply its metadata and verify actual downloads and
       persisted cache files. Cached Steam artwork or an extracted EXE icon alone
-      does not prove automatic metadata enrichment.
+      does not prove automatic metadata enrichment. The 2026-10-06 implementation
+      verified real Steam Store downloads; see [metadata evidence](game-metadata.md).
 - [ ] Check title, cover, background/hero, icon/logo where available, description,
       release date, genres, developer/publisher and source/platform information.
 - [ ] Compare the controller interface and effort required with Playnite: import
@@ -46,6 +47,9 @@ successful installation, verification of all 533 files and library registration.
 Metadata acceptance remains pending. The inspected `appscan` helper discovers
 local icons and cached Steam art; no general Playnite-style metadata provider
 pipeline was established by the source inspection on 2026-10-05.
+The [2026-10-06 metadata implementation](game-metadata.md) now supplies automatic
+matching, downloads, persistent cache and controller details/refresh/correction.
+Real gameplay, physical details-screen operation and machine reboot remain open.
 
 Playnite's documented model uses metadata providers and automatically enriches
 games on import, with later refresh and editing. Use that behavior as the baseline:

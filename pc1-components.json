@@ -5,7 +5,7 @@
   "components": {
     "shell": {
       "repository": "https://github.com/MarwanSummakieh/pc1-shell.git",
-      "commit": "974b49962fa5a92fb839389e52a29742b2ea8077",
+      "commit": "44285cb94a61d352a73c9225a96f8bd006242b77",
       "files": {
         "docs/app-card-icons-bench-20261005.md": "718aa90a8420de8f10b8e0137dc99181ab5adc91",
         "docs/built-in-tools.md": "7ea67a75a2ee657ff6fd40d66d3e7ed25035b440",
@@ -24,7 +24,7 @@
         "scripts/check-browser-engine.sh": "e88a867c00ca216897f193c77cb264a686a7f2e2",
         "scripts/check-controller-shell.sh": "a2cbccc3e9cd2a7a439663a43d190e99f8890165",
         "scripts/check-keyboard-preview.sh": "898ace49e07655260f5caa3cf929eae12716d867",
-        "scripts/check-shell.sh": "b2ce3993a5c682cce43ed9dc9a26b0c1aacac87c",
+        "scripts/check-shell.sh": "e9589a565ab6f98af57a8474e869d04f4d3dad2c",
         "scripts/check-tools-shell.sh": "65ca2dcc1942d6adf771b15e03540e7ab3cec3aa",
         "scripts/check-window-geometry.sh": "6da19468b3547167b30f137cfb5d7c097bcbf3dd",
         "scripts/check-windows-shell.sh": "290f67600db3f9b31e77a3977e9ded62dfb3e038",
@@ -43,7 +43,7 @@
         "shell/assets/phosphor/Phosphor.ttf": "7c1b8a7ad06519d3e61ddb1ef128dfce7df3b9d9",
         "shell/bin/mowser.gdextension": "64f3390ca47417fa06bf0c48da8e87c31c076bd5",
         "shell/export_presets.cfg": "a0687937381eef01ae6634b5aed4e8da0f7c22f7",
-        "shell/project.godot": "0c18e22f7ecdce7f21a8e23a19d743a000f83cd4",
+        "shell/project.godot": "2f7a84b386ee73c5e4279a1f3e9cfe964b6cc62a",
         "shell/scenes/shell_root.tscn": "9ae66c2a5ef2100aa132884ba7b00cd136e98ea7",
         "shell/src/action_row.gd": "2a8b5b95d7d041e4c229cf0055862884bc0dc8c6",
         "shell/src/app_menu_row.gd": "ee31148618559e0242ee035b660fafbf0976b460",
@@ -53,7 +53,7 @@
         "shell/src/audio_screen.gd": "e2461a9bed05c88606541b0a6aed4d735f909846",
         "shell/src/browser.gd": "392088ac9a7e3adadd9e905656bd9e424879bc28",
         "shell/src/browser_screen.gd": "8842f6f8c1e02c90a2325ee34ebcdba02bf99cc3",
-        "shell/src/card.gd": "7f1478eb61991b1e8fa7ac0e9259f4af03d29afb",
+        "shell/src/card.gd": "4686fa56bebd5cbd1ae477cf72a420883e0eb7db",
         "shell/src/controller_router.gd": "0c36b24bca1b6e1da423dc67440d6ef913dc1cc2",
         "shell/src/display.gd": "6b2dde72b876e34cb3eb3bd1c0952dcc06467ad1",
         "shell/src/error_screen.gd": "b56105686d95eb432c7cec2adc6b330358df30f0",
@@ -73,7 +73,7 @@
         "shell/src/image_viewer.gd": "b51a22ca0c6326437f01247efb7835d2a1c8cef6",
         "shell/src/info.gd": "0df685b09293f13698c3991336ae9bffb388b160",
         "shell/src/info_screen.gd": "6bba1fe2316d4266d0b7598f98a8b0d5a9b67b90",
-        "shell/src/installed.gd": "80be91759687bd2fb655cb32edf170e995c80b85",
+        "shell/src/installed.gd": "78691b4c68889407e48d81b255f2918bd2643ce7",
         "shell/src/keyboard.gd": "a195ce45e067f497367d68bf83d55ebb72032bbf",
         "shell/src/kiosk.gd": "82764cc178d7011f110328d6cf406d8a7c3361b3",
         "shell/src/launch_placeholder.gd": "9ffea62d1c589363ea2806ebb30a38d3d042000d",
@@ -97,7 +97,7 @@
         "shell/src/setup_screen.gd": "ca1ac3c825d3e31c04bbc9351bf39928c9afa271",
         "shell/src/shell_input.gd": "a3080a352a5d9ad7813217af318688d08fa0687f",
         "shell/src/shell_log.gd": "e6c9351f23852d923e5fae498b9dacf3c7586fcf",
-        "shell/src/shell_root.gd": "dde93058ae1356cba8b473a0348b83879853c1ac",
+        "shell/src/shell_root.gd": "255bc3b4dc13bd477fe932e3b0d0f8ccd56560ea",
         "shell/src/status_corner.gd": "931255a1c2d9c3cfcf3e3a2063496f95a27f85c6",
         "shell/src/system_status.gd": "a831ce8e89644ec714c98fdd083cb1fa7cf4c4dd",
         "shell/src/tv_theme.gd": "498f169114bcfcb42b80faa87a5c7ac665c2f29e",
@@ -126,7 +126,11 @@
         "tests/windows_setup_bench.gd": "47c0314a1f0681a292eff23763aff03c929f89f0",
         "tests/windows_setup_layout.gd": "2f0ca54071b7b1e3823b4c1a40516a7f4d3adcfa",
         "tests/windows_setup_wizard.gd": "d1c82b49d6a14bd16c9edfd33c96e9c21738df0f",
-        "tests/windows_shell.gd": "b07dc31737c774a227b0aa1e8dfcb934f3198a74"
+        "tests/windows_shell.gd": "b07dc31737c774a227b0aa1e8dfcb934f3198a74",
+        "scripts/check-metadata-shell.sh": "dc496efc4b4a1a4b30ed3e6cc5282bca01ce70a4",
+        "shell/src/metadata.gd": "a1004724c5c4a9450fea6c4ecefaeae16d88494a",
+        "shell/src/game_details.gd": "420e01b1a40ff0b6758e1c971163f8ffa425e4a0",
+        "tests/metadata_shell.gd": "5c8432fef6fcd4912d254b9614d9abb71380d49e"
       }
     },
     "installers": {
@@ -162,7 +166,7 @@
     },
     "services": {
       "repository": "https://github.com/MarwanSummakieh/pc1-services.git",
-      "commit": "719fe2a079b9636e85eedae713fb305533fbc5c2",
+      "commit": "68da6f1d5f47bcc481a598ff5c40235d08c22f54",
       "files": {
         "docs/audio-manager.md": "5fbb703c3a0389e7c494a5747a99ec4eee47aeed",
         "os/files/usr/lib/marwanos/audio/manager.py": "8cca9e3ac18f103aa307531bbd0eba8df59286c1",
@@ -172,7 +176,11 @@
         "os/files/usr/share/dbus-1/services/org.freedesktop.Notifications.service": "5b4bda046ad4445c38501dec12dad50adc4221de",
         "tests/test_audio.py": "619dbde7e02434d41182345b36dba0a92f45ff2d",
         "tests/test_audio_integration.py": "f5c01e0421043fb05c0888281b695120b42ca433",
-        "tests/test_notifications.py": "b844375d28bc831f09d273eceba7f4f1bc635030"
+        "tests/test_notifications.py": "b844375d28bc831f09d273eceba7f4f1bc635030",
+        "os/files/usr/lib/marwanos/metadata/manager.py": "28825e2008b8e0d62a52a88f8936b0fdcd012081",
+        "os/files/usr/lib/systemd/user/marwanos-metadata.service": "d0434f861e485dc81e56fd05b67daa6b71703938",
+        "tests/test_metadata.py": "d7908295a0f6cc44fc7feacf0a7e231acafd5b3e",
+        "docs/game-metadata.md": "914ff1db4dd1469be33141b9d078c98d8f8387df"
       }
     },
     "fdm": {
