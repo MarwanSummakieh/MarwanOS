@@ -178,8 +178,18 @@ installer remained active. Its modeless GetMessage loop did not advance after
 the bridge's synchronous foreign-thread BM_CLICK. The owned test was stopped
 through Home → Setup options → Stop; job `local-134543796-912047650` reports exit
 241, so its source remains retained and cannot authorize successful cleanup.
-A queued-button correction and a real modeless regression are being prepared;
-the successful browser/install/cleanup lane must be repeated on its baked image.
+The queued-button correction and real modeless regression now pass on PC1's
+installed UMU-Proton runtime in an isolated prefix/display, including the actual
+production bridge's finished state and genuine child/bridge exit zero. The
+successful browser/install/cleanup lane must still be repeated on its baked image.
+
+Candidate four's pre-build Tools check exposed a fixture race: its fake native
+pad was not registered with SDL, so normal PlayerOne reconciliation released it
+before the keyboard-movement assertion. The production disconnect guard remains
+intact. The fixture now uses real broker snapshot dispatch and explicitly checks
+identity, held-axis movement/focus and release across the reconciliation interval.
+The separate metadata page's heading was also checked visually at supported
+resolutions and corrected before the replacement bake.
 
 Candidate three also recorded gamescope PID 1527 SIGSEGV during the intentional
 first-boot display link scrub at 20:29:55 UTC. The compositor had already reached

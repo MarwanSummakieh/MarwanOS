@@ -5,7 +5,7 @@
   "components": {
     "shell": {
       "repository": "https://github.com/MarwanSummakieh/pc1-shell.git",
-      "commit": "31918cc34d5b54983a1db29f1e76b6d05edc7538",
+      "commit": "12b43c263d659a44f1cbca8ed0b1f5b1ffa407be",
       "files": {
         "docs/app-card-icons-bench-20261005.md": "718aa90a8420de8f10b8e0137dc99181ab5adc91",
         "docs/built-in-tools.md": "7ea67a75a2ee657ff6fd40d66d3e7ed25035b440",
@@ -117,10 +117,10 @@
         "tests/browser_workflows.gd": "455a3d9fb72f340a969cdc6fbb126c2d05f936cb",
         "tests/controller_shell.gd": "44d365a89be98280d4fbcc76caa96b0773c5311e",
         "tests/download_server.py": "3ab0e3a7630b0f5c1c63fc7e198e7ab8916af294",
-        "tests/file_keyboard_checks.gd": "ff99c1fb89c328d1668f9d3a5bd6523be2255090",
+        "tests/file_keyboard_checks.gd": "584aafd254e6425632e2325b0e1e017e711d62f2",
         "tests/keyboard_preview.gd": "85ccd6aa8ac46f301445e6f0f1ffe1315cecc009",
         "tests/notifications_shell.gd": "bcff5746e4b6c818895e5a13efc4820924bf50b9",
-        "tests/tools_shell.gd": "92f32ea813630c2afa2bec01cafdc842907d090a",
+        "tests/tools_shell.gd": "f792987226e67ed99fe750138d214fc9222aae95",
         "tests/window_geometry.gd": "d67fdd7f9d9f255896df64a0f7a337e35932611b",
         "tests/windows_real_shell.gd": "a67dcdce9c156d560ee67c6e177572e836305fa5",
         "tests/windows_setup_bench.gd": "47c0314a1f0681a292eff23763aff03c929f89f0",
@@ -149,8 +149,8 @@
         "scripts/check-browser-download-directory.sh": "e7e0c94b76760e9456d4522927bf08efee8b2661",
         "tests/browser_download_directory.gd": "a6c451dc64d41b6aaadeb3f23e2c1430d0b880a6",
         "scripts/check-metadata-page-shell.sh": "41e8eeac74753a04b19f04b2d4393039ba8f83e2",
-        "shell/src/metadata_page.gd": "da7e663bcb5ce530ad17a826c8bd9f55faf21516",
-        "tests/metadata_page_shell.gd": "746723750e5991b258fb037ded7ebf2f94206b4d"
+        "shell/src/metadata_page.gd": "34609408b6383f3492d9780b2645d27e13926a77",
+        "tests/metadata_page_shell.gd": "dc3c9e4c51ae3e151580fd0fed8631b5e0bd42c3"
       }
     },
     "installers": {
