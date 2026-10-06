@@ -5,7 +5,7 @@
   "components": {
     "shell": {
       "repository": "https://github.com/MarwanSummakieh/pc1-shell.git",
-      "commit": "9af3d781167912069e83ddab4a749121686fb41d",
+      "commit": "186c95193c756f23744ab080737acc49d2f8acb3",
       "files": {
         "docs/app-card-icons-bench-20261005.md": "718aa90a8420de8f10b8e0137dc99181ab5adc91",
         "docs/built-in-tools.md": "7ea67a75a2ee657ff6fd40d66d3e7ed25035b440",
@@ -129,8 +129,8 @@
         "tests/windows_shell.gd": "b07dc31737c774a227b0aa1e8dfcb934f3198a74",
         "scripts/check-metadata-shell.sh": "dc496efc4b4a1a4b30ed3e6cc5282bca01ce70a4",
         "shell/src/metadata.gd": "a1004724c5c4a9450fea6c4ecefaeae16d88494a",
-        "shell/src/game_details.gd": "1a5277b78d59798916c8d75e801818530e7dcfe6",
-        "tests/metadata_shell.gd": "2b09b1393427a20ee0bb85da1e32b46cff5284ee",
+        "shell/src/game_details.gd": "4033ef13abfad47f80606ed37cd0fc0c9803ba38",
+        "tests/metadata_shell.gd": "baf8c3a3ef190d110da85a7ac45ab37e284d2503",
         "shell/src/game_summary.gd": "9915bfcd8aa8c3eaacb1197192309c41af2b93e5"
       }
     },
@@ -167,7 +167,7 @@
     },
     "services": {
       "repository": "https://github.com/MarwanSummakieh/pc1-services.git",
-      "commit": "68da6f1d5f47bcc481a598ff5c40235d08c22f54",
+      "commit": "b1d243df99a99e5b4d1b2e1e28212e1a103d3000",
       "files": {
         "docs/audio-manager.md": "5fbb703c3a0389e7c494a5747a99ec4eee47aeed",
         "os/files/usr/lib/marwanos/audio/manager.py": "8cca9e3ac18f103aa307531bbd0eba8df59286c1",
@@ -181,7 +181,7 @@
         "os/files/usr/lib/marwanos/metadata/manager.py": "28825e2008b8e0d62a52a88f8936b0fdcd012081",
         "os/files/usr/lib/systemd/user/marwanos-metadata.service": "d0434f861e485dc81e56fd05b67daa6b71703938",
         "tests/test_metadata.py": "d7908295a0f6cc44fc7feacf0a7e231acafd5b3e",
-        "docs/game-metadata.md": "914ff1db4dd1469be33141b9d078c98d8f8387df"
+        "docs/game-metadata.md": "f30fafab77d1dab54f3bea302a01537f71e54ff2"
       }
     },
     "fdm": {
