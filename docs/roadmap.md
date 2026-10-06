@@ -18,7 +18,7 @@ features. An integrated Flathub store is removed from the roadmap.
 | Complete | Automatic game metadata and library presentation | Final candidate's real Tekken artwork, fullscreen Play-only Details, Options metadata refresh, offline cache and reboot persistence pass; prior physical controller gameplay confirmed |
 | Complete | Play history and recently played ordering | Real Tekken foreground/Home/minimize/resume/exit session and recent ordering pass; final candidate reboot and actual metadata refresh preserve the single 122.453-second session |
 | High | Controller rumble, multiplayer routing and reliable hotplug | Four slots and real force-feedback forwarding implemented; kernel/controller checks pass; physical rumble/two-pad acceptance pending |
-| High | Unified achievements | Persistent local/Steam providers, progress and unlock notifications implemented; genuine Tekken schema and earned-unlock acceptance pending |
+| High | Unified achievements | Persistent local/Steam providers, progress and unlock notifications implemented; automatic public catalog supplies Tekken's 47 genuine definitions without credentials; baked-image catalog and earned-unlock acceptance pending |
 | High, waiting | Controller-operated Bluetooth pairing | Controller page and BlueZ pairing agent implemented; real private D-Bus fixture passes; physical dongle acceptance pending |
 | High | Download → install → cleanup | Final candidate's actual browser download, successful guided Close, app registration, explicit cleanup and installed-app lifecycle pass; torrent/multipart payloads retained; physical FDM lane pending |
 | Release | Reliable suspend/resume | Sleep action and read-only evidence helper exist; testing explicitly deferred by the owner |

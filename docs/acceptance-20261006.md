@@ -293,6 +293,36 @@ FDM's physical-button completion/continuing-transfer lane remains separate;
 no physical controller, sound or suspend acceptance is inferred from these
 keyboard-equivalent events. Final media installation is recorded separately.
 
+## Candidate six preparation: source checks, not runtime acceptance
+
+The official anonymous Steam catalog returned Tekken's 47 unique internal IDs,
+names, descriptions and colored/gray icons. The automatic fallback validates
+complete rows and declared per-group totals, caches the catalog, and keeps public
+bounds separate from genuine personal progress. PC1's schema cache remained absent
+before this change; its real RUNE record still contained only `Count=0`. No schema
+or earned achievement was seeded. The next image must fetch it automatically and
+prove the page's names/icons/total; an earned unlock remains a separate test.
+
+The NVIDIA-only gamescope launch now trials the upstream loader-library lifetime
+option. The session removes it from inherited client environments, preserves
+ordinary SIGTERM/core reporting and leaves the display reset intact. Three real
+child-process tests pass. This establishes scope and argument/PID handling, not a
+successful physical Vulkan teardown. See [display teardown](display-teardown.md).
+
+The candidate-five branded installer VM exposed inaccessible runtime directories:
+a private builder-config umask leaked into SquashFS extraction, making shared
+directories mode 0700 and preventing D-Bus startup after privilege dropping.
+The failed ISO, journal and VM evidence are retained. Remastering now uses 022 and
+rejects inaccessible critical directories while preserving private SSH modes.
+Two tests using actual SquashFS tools pass, including an intentionally inaccessible
+source. CI installs those tools before running the regressions. A corrected
+diagnostic remaster and final committed-source media still need real installation
+and installed-disk boot acceptance.
+
+The integrated Linux backend suite passes **192 tests, with two optional skips**.
+These source checks do not replace the pending next-image runtime/media checks.
+Suspend/resume testing remains explicitly deferred by the owner.
+
 ## Earlier read-only hardware inspection
 
 Before candidate deployment, the physical PC1 at `192.168.50.206` was inspected without deployment, reboot,

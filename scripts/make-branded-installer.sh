@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 # Remaster a bootc Anaconda ISO while preserving its boot records and OCI payload.
 set -euo pipefail
+# Extraction and new runtime files must remain accessible to D-Bus/desktop
+# users even when a caller used a private umask for its administrator config.
+umask 022
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SOURCE="$(realpath "${1:?usage: make-branded-installer.sh source.iso output.iso}")"
 OUTPUT="$(realpath -m "${2:?output ISO required}")"
@@ -17,7 +20,7 @@ xorriso -osirrox on -indev "$SOURCE" \
     -extract /images/pxeboot/initrd.img "$WORK/source/initrd.img" \
     -extract /images/efiboot.img "$WORK/patch/images/efiboot.img" \
     -extract /EFI/BOOT/grub.cfg "$WORK/source/grub.cfg"
-unsquashfs -d "$WORK/root" "$WORK/source/install.img"
+python3 "$REPO_ROOT/scripts/extract-installer-runtime.py" "$WORK/source/install.img" "$WORK/root"
 python3 "$REPO_ROOT/scripts/brand-installer.py" "$WORK/root"
 python3 "$REPO_ROOT/scripts/brand-installer.py" kickstart-pair \
     "$WORK/source/osbuild.ks" "$WORK/source/osbuild-base.ks" \

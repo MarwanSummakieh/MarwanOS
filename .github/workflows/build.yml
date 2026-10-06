@@ -46,7 +46,7 @@ jobs:
       - name: Check installation flows before publishing
         run: |
           sudo apt-get update
-          sudo apt-get install -y xvfb python3-pefile python3-pil python3-dbus python3-gi dbus-daemon
+          sudo apt-get install -y xvfb python3-pefile python3-pil python3-dbus python3-gi dbus-daemon squashfs-tools
           /usr/bin/python3 -m unittest discover -s tests -v
 
       - name: Check controller flows before publishing

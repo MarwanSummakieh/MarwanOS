@@ -21,7 +21,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Install hidden-display and app-icon test dependencies
-        run: sudo apt-get update && sudo apt-get install -y xvfb python3-pefile python3-pil python3-dbus python3-gi dbus-daemon
+        run: sudo apt-get update && sudo apt-get install -y xvfb python3-pefile python3-pil python3-dbus python3-gi dbus-daemon squashfs-tools
       - name: Exercise installation and process lifecycle
         run: /usr/bin/python3 -m unittest discover -s tests -v
   controller-shell:

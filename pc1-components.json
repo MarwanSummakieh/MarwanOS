@@ -191,7 +191,7 @@
     },
     "services": {
       "repository": "https://github.com/MarwanSummakieh/pc1-services.git",
-      "commit": "f73ca8470abcac04eede480bdae54497fe717e7c",
+      "commit": "dc7ce23d1756cc1415e047116f580f16ed1aebf8",
       "files": {
         "docs/audio-manager.md": "5fbb703c3a0389e7c494a5747a99ec4eee47aeed",
         "os/files/usr/lib/marwanos/audio/manager.py": "8cca9e3ac18f103aa307531bbd0eba8df59286c1",
@@ -206,15 +206,16 @@
         "os/files/usr/lib/systemd/user/marwanos-metadata.service": "d0434f861e485dc81e56fd05b67daa6b71703938",
         "tests/test_metadata.py": "d7908295a0f6cc44fc7feacf0a7e231acafd5b3e",
         "docs/game-metadata.md": "9c595b5d1f15e962a15a9a6306f193daf8a6ecb2",
-        "docs/achievements.md": "bdc60510c32c505b8a42c2887758b0af6600d7f8",
+        "docs/achievements.md": "c68357bb40752b1d6dc3419a609043b01d001381",
         "docs/bluetooth.md": "5dbddee116a0793c748c62c40d26ec3b52f77a93",
-        "os/files/usr/lib/marwanos/achievements/manager.py": "0b50cd07d37687032f4880e14544553dfc735589",
+        "os/files/usr/lib/marwanos/achievements/manager.py": "9921903554e9011645f8b1b79a26f2185c3bc70a",
         "os/files/usr/lib/marwanos/bluetooth/manager.py": "4b95ab4f80114dc9be887b76911d14ee4bc8dee7",
         "os/files/usr/lib/systemd/user/marwanos-achievements.service": "d48e159feaa1f27d13dc97ea75591b1a49292721",
         "os/files/usr/lib/systemd/user/marwanos-bluetooth.service": "67078fdaf34b4c9253a31ed69b27fae6389e630e",
         "tests/bluetooth_dbus_fixture.py": "88a37d59768466f61615fb934a7d35eeb4786ada",
-        "tests/test_achievements.py": "3c7cdba7a7574a6d8d51992ff54c8b7c7b4cac14",
-        "tests/test_bluetooth.py": "0c58b5f300fe56e0ea583fb5f14b55254b922f20"
+        "tests/test_achievements.py": "dc6df7347193f5d6a698460690226a896c558cc0",
+        "tests/test_bluetooth.py": "0c58b5f300fe56e0ea583fb5f14b55254b922f20",
+        "os/files/usr/lib/marwanos/achievements/providers.py": "90b5804344b299f4addf0aa0cb3d1df5acdf2a53"
       }
     },
     "fdm": {
