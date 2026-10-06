@@ -5,7 +5,7 @@
   "components": {
     "shell": {
       "repository": "https://github.com/MarwanSummakieh/pc1-shell.git",
-      "commit": "44285cb94a61d352a73c9225a96f8bd006242b77",
+      "commit": "9af3d781167912069e83ddab4a749121686fb41d",
       "files": {
         "docs/app-card-icons-bench-20261005.md": "718aa90a8420de8f10b8e0137dc99181ab5adc91",
         "docs/built-in-tools.md": "7ea67a75a2ee657ff6fd40d66d3e7ed25035b440",
@@ -97,7 +97,7 @@
         "shell/src/setup_screen.gd": "ca1ac3c825d3e31c04bbc9351bf39928c9afa271",
         "shell/src/shell_input.gd": "a3080a352a5d9ad7813217af318688d08fa0687f",
         "shell/src/shell_log.gd": "e6c9351f23852d923e5fae498b9dacf3c7586fcf",
-        "shell/src/shell_root.gd": "255bc3b4dc13bd477fe932e3b0d0f8ccd56560ea",
+        "shell/src/shell_root.gd": "bc1d4e1387be58ada20d17ad4d5d2342ab37d82a",
         "shell/src/status_corner.gd": "931255a1c2d9c3cfcf3e3a2063496f95a27f85c6",
         "shell/src/system_status.gd": "a831ce8e89644ec714c98fdd083cb1fa7cf4c4dd",
         "shell/src/tv_theme.gd": "498f169114bcfcb42b80faa87a5c7ac665c2f29e",
@@ -129,8 +129,9 @@
         "tests/windows_shell.gd": "b07dc31737c774a227b0aa1e8dfcb934f3198a74",
         "scripts/check-metadata-shell.sh": "dc496efc4b4a1a4b30ed3e6cc5282bca01ce70a4",
         "shell/src/metadata.gd": "a1004724c5c4a9450fea6c4ecefaeae16d88494a",
-        "shell/src/game_details.gd": "420e01b1a40ff0b6758e1c971163f8ffa425e4a0",
-        "tests/metadata_shell.gd": "5c8432fef6fcd4912d254b9614d9abb71380d49e"
+        "shell/src/game_details.gd": "1a5277b78d59798916c8d75e801818530e7dcfe6",
+        "tests/metadata_shell.gd": "2b09b1393427a20ee0bb85da1e32b46cff5284ee",
+        "shell/src/game_summary.gd": "9915bfcd8aa8c3eaacb1197192309c41af2b93e5"
       }
     },
     "installers": {
