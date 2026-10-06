@@ -39,6 +39,53 @@ physical sound, vibration, local multiplayer or a cold power-on.
 These are source/fixture results for the current checkout. They are not a claim
 that the final immutable image has been booted or that every acceptance item passed.
 
+## Integrated bench deployment and real session
+
+The tested `ac66747` source was deployed reversibly on the existing PC1 bench.
+Prior shell, router, Windows worker and user units are backed up under
+`/var/marwanos/features-bench-20261006/backup/`. The existing router bind inode
+was preserved during replacement. The Windows worker and notification, audio,
+achievements and Bluetooth user workers start successfully, with zero failed
+player units. Metadata remains active. This still uses bench overrides.
+
+Tekken was launched from its actual library card under the new broker. It reached
+foreground after 11 seconds. Home paused time at 85.928 seconds; minimize kept
+that value while the game process remained PID 339285. Resume continued the same
+session/process. Closing the coordinator-launched test through Home persisted
+one completed session with `end_reason=exited` and **122.453 seconds** total.
+A subsequent shell restart preserved that session and recent ordering: Tekken,
+Steam, FDM. FDM has no play-history record.
+
+The live audio worker moved all **four** existing playback streams to NVIDIA
+HDMI and then DualSense USB audio, acknowledging each default/mute change and
+reporting the corresponding stream output. Original mute states and the original
+DualSense default were restored. This confirms live routing on actual devices;
+audible output and physical headset/hotplug remain unconfirmed.
+
+A modest one-second rumble effect was uploaded to physical slot one's virtual
+pad `/dev/input/event22`, played, stopped, erased and closed with Tekken foreground.
+The upload succeeded; human confirmation of vibration remains pending. Four
+virtual pads enumerate, and the physical DualSense identity persists in slot one.
+
+The actual achievements worker identifies Tekken's RUNE profile and reports zero
+observed unlocks with an unavailable total/schema, preserving an honest partial
+state. No unlock was fabricated. The old image cannot activate BlueZ; the new
+candidate installs/enables it. Physical Bluetooth remains dependent on the dongle.
+
+All five component/integration PR CI checks pass. Candidate build for `ac66747`:
+[GitHub build](https://github.com/MarwanSummakieh/MarwanOS/actions/runs/37516255658),
+tag `pc1-candidate-20261006`. Its publication/boot status must be checked separately
+before claiming release acceptance.
+
+The candidate build completed successfully. The exact installed FDM Controller
+fork was then launched through PC1, reached foreground in seven seconds, opened
+Home, minimized, resumed with the same PID 363128 and closed through Home. Tekken's
+single 122.453-second history record remained unchanged throughout FDM activity.
+These actions used the shell's keyboard equivalent for lifecycle verification;
+physical button-by-button FDM navigation and minimized download continuation remain
+pending. The read-only release gate correctly rejects the old booted image and
+active overrides, while passing live artwork, history, audio and four-pad checks.
+
 ## Read-only hardware inspection
 
 The physical PC1 at `192.168.50.206` was inspected without deployment, reboot,
