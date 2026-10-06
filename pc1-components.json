@@ -1,11 +1,11 @@
 {
   "schema_version": 1,
   "source_repository": "https://github.com/MarwanSummakieh/MarwanOS",
-  "source_commit": "a634e6ce3001f197524daa8cf357b160383890db",
+  "source_commit": "d0fcbb5ea202446202523b01a837fe88fd5fa49c",
   "components": {
     "shell": {
       "repository": "https://github.com/MarwanSummakieh/pc1-shell.git",
-      "commit": "9ae5767b1057182cdf7cf823d501ba8b21ceba1f",
+      "commit": "974b49962fa5a92fb839389e52a29742b2ea8077",
       "files": {
         "docs/app-card-icons-bench-20261005.md": "718aa90a8420de8f10b8e0137dc99181ab5adc91",
         "docs/built-in-tools.md": "7ea67a75a2ee657ff6fd40d66d3e7ed25035b440",
@@ -108,7 +108,7 @@
         "shell/src/window_profile.gd": "878f13a94a159950b510ff058f94cc202e6a44d4",
         "shell/src/windows_install.gd": "21f4725b0f7c6ba6ac29f60261ecfc30deeddc77",
         "shell/src/windows_install_screen.gd": "4d07fb951dba14fa074612aaba9c6aeb1881c7b4",
-        "shell/src/windows_setup_wizard.gd": "07f68eb46d741c915ff7bc84f0ec6e41b8829e67",
+        "shell/src/windows_setup_wizard.gd": "c306ec14152d40237dd2904c3af634946b228d69",
         "tests/audio_shell.gd": "510e5f16e6a3900f35a84d4033c62a0bc10f3054",
         "tests/browser-fixture.html": "ca322d365a53cf278715573b5be89359b34c20a2",
         "tests/browser_downloads.gd": "e72f2cb302ffa2874b021ea065f19f2e753f93fb",
@@ -125,23 +125,23 @@
         "tests/windows_real_shell.gd": "a67dcdce9c156d560ee67c6e177572e836305fa5",
         "tests/windows_setup_bench.gd": "47c0314a1f0681a292eff23763aff03c929f89f0",
         "tests/windows_setup_layout.gd": "2f0ca54071b7b1e3823b4c1a40516a7f4d3adcfa",
-        "tests/windows_setup_wizard.gd": "2e3aa370bc4072b05110f6fc25f8955ed124cac5",
+        "tests/windows_setup_wizard.gd": "d1c82b49d6a14bd16c9edfd33c96e9c21738df0f",
         "tests/windows_shell.gd": "b07dc31737c774a227b0aa1e8dfcb934f3198a74"
       }
     },
     "installers": {
       "repository": "https://github.com/MarwanSummakieh/pc1-installers.git",
-      "commit": "3f59191438ffa817a2167b9c1c28f94b58982706",
+      "commit": "2a9e5260c8359fcdd9fd4ad2b16bea5495ccd445",
       "files": {
-        "docs/fitgirl-controller-bench-20261005.md": "1ec778a424211a33439cd4b54bfaf55e4e9d26bd",
+        "docs/fitgirl-controller-bench-20261005.md": "a37fe7edced4c29be70a184a4fe909dfc1451613",
         "docs/windows-installation.md": "9ece717047a6485543e0531c7735d467b7ba7372",
         "os/files/usr/lib/marwanos/windows/manager.py": "ac634b926dd919ccd38f1ac41b687b9ee0d2cfa4",
         "os/files/usr/lib/marwanos/windows/recipes.json": "f9c80165c2fb82f5f0b6a4862468b6da7635e8cd",
-        "os/files/usr/lib/marwanos/windows/setup_bridge.c": "e7472e7e4098e02a1091f5f65382e0ecee44d7a8",
+        "os/files/usr/lib/marwanos/windows/setup_bridge.c": "26e85e2f441ff248b3360b8e00740cc076340d21",
         "os/files/usr/lib/marwanos/winrun": "7cf3b08682b39387370ea2a4abf0642fb76c5d2d",
         "scripts/install-controller-setup-bench.sh": "316fc651fb8784b1dd86ec57bc4b696d34be72df",
         "scripts/install-exe-flow-bench.sh": "dad8861bb2f2e3af0cb7f0205b1d88bc90d6bc99",
-        "tests/setup_bridge_destination.c": "ab3f2bdfc81e1f46bc99c07b9173369dd7e72ef3",
+        "tests/setup_bridge_destination.c": "72e5940c9f4f453b2b28e450118aa1429f564a84",
         "tests/test_windows_icons.py": "3f0ed62d76b4917d2e5cceb64deb26e077f3415e",
         "tests/test_windows_installation.py": "90632d8ea437ecc00d8b4150fda5f94f3f1d698c",
         "tests/test_windows_local.py": "bae6a91c13e16798e1220cee29f5f4e27895d8b4"
