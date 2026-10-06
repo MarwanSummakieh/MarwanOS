@@ -7,7 +7,7 @@ original dates and evidence.
 | Implementation | Delivered | Verification / boundary |
 | --- | --- | --- |
 | Controller Windows setup | Native setup bridge, shell-rendered actual pages, options, keyboard and navigation, executable discovery and registration | Real FDM setup on the bench and controller/helper suites; unsupported controls retain original setup fallback |
-| FitGirl setup | Scrollable options, RAM/component/language controls, music action and writable Games destination selected before the destination page | Native Tekken 8 music/destination checks and fixtures; fresh game install completion remains pending |
+| FitGirl setup | Scrollable options, RAM/component/language controls, music action and writable Games destination selected before the destination page | Native Tekken 8 music/destination checks and fixtures; the 6 October follow-up confirms installation, all 533 integrity checks and library registration |
 | FDM Controller | Modified GPLv3 Classic source, controller download/torrent UI, magnet keyboard, file/folder selection, pause/resume and seeding | Local transfer/hash/restart checks and bench torrent completion; full physical controller/overlay acceptance remains pending |
 | System notifications | Persistent Linux D-Bus inbox and Wine/FDM completion bridge; controller-visible history | Real D-Bus and FDM bench delivery plus shell fixtures; no in-game action buttons or popup overlay |
 | Audio manager | Device/port selection, volume, microphone, application mixer and reconnect handling | Service/controller/private PipeWire checks; ready for image integration, physical audio acceptance pending |

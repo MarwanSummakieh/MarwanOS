@@ -1,6 +1,6 @@
 # PC1 / MarwanOS roadmap
 
-Updated 2026-10-05 from the owner's priorities. This is the current backlog;
+Updated 2026-10-06 from the owner's priorities and installation record. This is the current backlog;
 older phase plans and ADRs remain historical context where they disagree.
 
 ## Product priority
@@ -15,7 +15,7 @@ features. An integrated Flathub store is removed from the roadmap.
 
 | Priority | Work | Status / dependency |
 | --- | --- | --- |
-| High | Automatic game metadata and library presentation | Pending; Tekken 8 is the next real-game acceptance case after its installation finishes |
+| High | Automatic game metadata and library presentation | Pending; Tekken 8 is installed and registered, ready for metadata acceptance |
 | High | Play history and recently played ordering | Not implemented |
 | High | Controller rumble, multiplayer routing and reliable hotplug | Rumble/multiplayer not implemented; physical acceptance also required |
 | High | Unified achievements | Research and implementation required; choose integrations supported by each game/source |
@@ -26,7 +26,7 @@ features. An integrated Flathub store is removed from the roadmap.
 
 ### Metadata and Tekken 8 acceptance
 
-- [ ] After Tekken 8 finishes installing, confirm its library entry and launch
+- [ ] Verify the completed Tekken 8 installation's library entry and launch
       target are correct, including its actual installation source.
 - [ ] Trace which providers supply its metadata and verify actual downloads and
       persisted cache files. Cached Steam artwork or an extracted EXE icon alone
@@ -41,8 +41,9 @@ features. An integrated Flathub store is removed from the roadmap.
 - [ ] Implement missing provider/download/cache or presentation behavior discovered
       by this check, and extend the same flow to games from other sources.
 
-This is a pending acceptance task, not a claim that the installation has finished
-or that its metadata has been verified. The inspected `appscan` helper discovers
+The 2026-10-06 [completion record](fitgirl-controller-bench-20261005.md) reports
+successful installation, verification of all 533 files and library registration.
+Metadata acceptance remains pending. The inspected `appscan` helper discovers
 local icons and cached Steam art; no general Playnite-style metadata provider
 pipeline was established by the source inspection on 2026-10-05.
 

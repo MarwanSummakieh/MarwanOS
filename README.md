@@ -25,7 +25,8 @@ affiliated with Sony.
 - Boot, application handoff, and recovery remain inside the console experience.
 
 See the [current roadmap](docs/roadmap.md) for priorities, dependencies and
-Tekken 8's pending metadata acceptance after installation finishes.
+Tekken 8's pending metadata acceptance; installation and library registration
+completed on 2026-10-06.
 
 Development is organized through the [PC1 GitHub Project](https://github.com/users/MarwanSummakieh/projects/3)
 and [six repositories](docs/repositories.md), with pinned component copies in
