@@ -23,7 +23,7 @@ features. An integrated Flathub store is removed from the roadmap.
 | High | Download → install → cleanup | Final candidate's actual browser download, successful guided Close, app registration, explicit cleanup and installed-app lifecycle pass; torrent/multipart payloads retained; physical FDM lane pending |
 | Release | Reliable suspend/resume | Sleep action and read-only evidence helper exist; testing explicitly deferred by the owner |
 | Release | Silent boot, hardware and compatibility acceptance | Current-image TV/controller/audio/Steam/game testing and original boot-time gate remain incomplete |
-| Release | Bake recent bench fixes into a release image | Candidate6 70faf40 passes override-free software checks and automatic achievement catalog acquisition; exact-source offline media acceptance is underway. Its NVIDIA teardown fault persists; a source-owned dispatch lifetime patch requires a new baked boot. Physical gates remain |
+| Release | Bake recent bench fixes into a release image | Candidate6 70faf40 passes override-free software/catalog checks and offline installation/USB-absent boot, but fails the full-audit Plymouth gate and physical NVIDIA teardown. Source-owned fixes require new baked hardware/media acceptance. Physical gates remain |
 
 ### Metadata and Tekken 8 acceptance
 

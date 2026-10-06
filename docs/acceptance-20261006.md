@@ -368,9 +368,19 @@ actual offline installation through evdev controller input and booted its
 installed target with the USB/ISO absent. Its 13 runtime checks pass with SELinux
 enforcing, zero failed units, image-owned workers, a fresh shell and successful
 boot flags. This validates the installer permission remedy on that diagnostic
-build. Candidate6 raw/ISO media were then generated from a clean exact `70faf40`
-checkout and immutable image; their own offline installation and installed-disk
-boot checks remain separate. None of these VM checks establishes NVIDIA physical
+build. Its earlier kernel-only AVC query is insufficient to establish a clean
+full-journal AVC gate; preserved candidate5 evidence now marks that claim
+unverified. Candidate6 raw/ISO media were generated from a clean exact `70faf40`
+checkout and immutable image. Their actual offline controller installation,
+USB-absent installed-disk boot, exact identity, fresh shell/Settings, healthy
+workers and GRUB successful-boot flags pass. Full audit review caught an enforcing
+Plymouth `dac_override` denial, so its final media health gate is **12 pass / 1
+fail**, not a validated release. The normal final quit reopens `/dev/tty1` after
+greetd changes its owner to player/0600. An actual Enforcing VM comparison proves
+`quit --retain-splash` exits without that terminal reopen or new denial, while
+preserving greetd/readiness. The narrow source change and two lifecycle regressions
+require a new baked image; no terminal permission or SELinux policy is loosened.
+See [Plymouth cleanup](plymouth-cleanup.md). None of these VM checks establishes NVIDIA physical
 teardown, physical vibration/audio, cold-power timing or Secure Boot acceptance.
 
 Suspend/resume remains explicitly deferred: the owner chose **Continue without
