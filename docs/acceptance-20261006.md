@@ -169,6 +169,12 @@ for those mounts instead of assuming the visible `/usr/lib` file changed.
    controller navigation/Home, audio and game launch. Compare `/sys/power/suspend_stats`
    and the journal before/after. Repeat three cycles for hardware repeatability.
    Controller wake remains a separate test.
+   The read-only [resume evidence helper](../scripts/inspect-pc1-resume.sh) passed
+   its actual target preflight with zero failures. Before an approved sleep,
+   `--before FILE` creates a private, exclusive baseline; after physical wake,
+   `--after FILE` compares suspend counters, boot continuity, GPU/session processes,
+   fresh workers, audio and controller slots without changing them. A baseline
+   alone does not establish any successful sleep/wake cycle.
 5. **Cold boot/release:** build and publish a candidate tied to the final commit
    and immutable digest, stage it, and retire bench overrides only once replacement
    payloads and a recovery route are available. Physically power off/on. Verify

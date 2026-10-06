@@ -27,7 +27,7 @@ userdir=/var/home/player/.config/systemd/user
 for directory in "$userdir" /etc/systemd/user; do
     for service in audio metadata achievements bluetooth notifications; do
         file="$directory/marwanos-$service.service"
-        if test -e "$file"; then
+        if test -e "$file" || test -L "$file"; then
             test ! -L "$file"
             grep -q '/var/marwanos/' "$file" || { echo "Unrecognized $file override" >&2; exit 1; }
         fi
@@ -40,7 +40,7 @@ if [[ "$apply" == 0 ]]; then
     echo 'Preview complete; nothing changed.'; exit 0
 fi
 backup="/var/marwanos/candidate-boot-backup-$expected"
-test ! -e "$backup"
+test ! -e "$backup" && test ! -L "$backup"
 install -d -m 0700 "$backup/system" "$backup/user" "$backup/etc-user"
 for service in marwanos-bench-fixes marwanos-app-icons; do
     if test -f "/etc/systemd/system/$service.service"; then
