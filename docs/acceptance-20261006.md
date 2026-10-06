@@ -199,9 +199,103 @@ exit handlers, matching an older boot's defect. Recovery produced a stable
 3440×1440 session, but this remains a real release/hardware risk. The passing
 read-only gate does not mean a fault-free cold boot.
 
-## Read-only hardware inspection
+## Candidate five: final postboot and metadata acceptance
 
-The physical PC1 at `192.168.50.206` was inspected without deployment, reboot,
+The replacement build succeeded in [run 37529881962](https://github.com/MarwanSummakieh/MarwanOS/actions/runs/37529881962).
+The published and booted image is
+`ghcr.io/marwansummakieh/marwanos:pc1-candidate-20261006-5`, source
+`0be4ae6b5ccef16a13691644c0e9cbf5da66c648`, immutable digest
+`sha256:f37a5d2ed8fa795dde5fc1235e19da5d76d7deeaae9bf8c6bd6bc767d44c0cbd`,
+OSTree `422e9bd8f2f5810c9ec863fdf99be7e711a0a2c70df6e580796781f4eb3ff513`.
+After the already-approved idle reboot, boot ID was
+`3491f18f-b63f-47d0-ae9c-2ba908c23638`; shell PID 2107 and controller broker
+PID 1963 execute their image-owned files. The tightened postboot gate passed
+with **zero failures**. The initial check preceded the normal boot-success
+timer and reported only pending GRUB success; the completed timer check passed.
+All workers, their unit configuration, cached assets, native Tekken input,
+history and four virtual controller identities passed without bench overrides.
+Bluetooth correctly reports `no-adapter`. No suspend was performed; the owner
+explicitly deferred that test.
+
+Native gamescope output captures at **3440 × 1440** were inspected on this
+actual image. Tekken's library and Details show the cached artwork and history;
+the backdrop fills the screen, facts have room, and **Play is the sole Details
+action**. Options opens the separate **TEKKEN 8 · Metadata** page, displaying
+Steam Store app 1778820 and a focused Refresh action. The heading and controls
+are visible; Back restores the Play action and then the same library card.
+These are actual PC1 rendered frames, observed using keyboard-equivalent input
+through the controller-oriented UI, rather than a new physical-pad test.
+
+Activating Refresh created actual atomic request `2107-158876926.json` for
+`managed.local-tekken8-fresh-1791234744`. The read-only observer captured that
+request and the transition from loading (`attempted_at` 1791321468.7333775)
+to ready (`fetched_at` 1791321469.755908). The image-owned worker freshly fetched
+the provider data and four artwork files; all recorded sizes and SHA-256 values
+matched. Provider 1778820, the full native-controller Windows manifest and the
+one completed **122.453-second** session remained unchanged. The reboot and
+manual refresh therefore preserve the installed game's identity and history.
+
+Ignored evidence files are `out/candidate5-postboot-gate.log`,
+`out/candidate5-metadata-refresh.log` and the
+`out/pc1-candidate5-*-native.png` / `*-restored.png` captures. The earlier offline
+cache reuse and supported-resolution render tests remain separate evidence.
+The passing software gate does not certify the known compositor teardown
+defect or the remaining physical release gates.
+
+The existing teardown defect reproduced on this boot: first gamescope PID 1513
+segfaulted at 21:14:59.934 UTC after link-scrub stopped greetd. Its stack again
+contains the Vulkan-device destructor and exit handlers. The scrub completed
+and the replacement session returned at 21:15:09.204. No failed units or kernel
+GPU Xid/fallen/AER errors were observed in the independent 21:20:39 inspection.
+This recovered boot is not a crash-free or physically timed cold-boot pass.
+
+## Candidate five: genuine download, installation and cleanup
+
+The actual embedded browser received the official 7-Zip 26.04 installer URL
+through its controller-oriented keyboard UI using keyboard-equivalent input.
+With no `user-dirs.dirs` workaround, its genuine completion callback saved
+`/var/home/player/Downloads/7z2604-x64 (1).exe`, preserving the cancelled
+canonical download. The new file was 1,664,082 bytes with official SHA-256
+`d54bf805f9f3704d1e8db2fa3498ae7ef2df0312b40b558e7c71c734430a665d`.
+Receipt `37812078250bcea37eb0fe46eaae6b7339e431976b3e19bd72ddfc63aa3677da`
+was created at 1791321617.4770527. The real Download ready → Install choice
+started new guided job `local-396346430-3825640790` at 1791321705.4516664.
+
+The actual setup Install button reached 107/107 progress. Close then returned
+the genuine installer exit **0**; the same-job bridge published
+`finished=true`, `exit_code=0`, without a blank-window success heuristic or
+process kill. The controller setup offered its three executables. Explicit
+**Add 7zFM as app** registered an application with pointer input in the new
+isolated prefix, and the receipt became installed with that new job ID.
+
+Returning Home offered **Keep downloaded files** by default. The distinct
+**Remove downloaded installer files** action was selected and explicitly
+confirmed through the UI. Read-only verification passed with **zero failures**:
+the exact new source was removed, while the installed `7zFM.exe`, old cancelled
+canonical installer and all recorded Tekken/FDM files remained intact. The
+historical exit-241 job stayed distinct and unsuccessful; it never authorized
+cleanup. Tekken kept its native controller profile and exact one-session
+122.453-second history; the 7-Zip application created no game-history record.
+
+After cleanup, the registered app launched through its library card into a
+real foreground 7-Zip window. Home → Minimize preserved `7zFM.exe` PID 27646;
+the card resumed the same process, and Home → Close ended launch wrapper
+PID 27319 and returned to the shell. The pointer bridge activated for this
+application. Preservation and history checks passed again after that cycle.
+The installed test app remains available in the library for review.
+
+Evidence is under ignored `out/candidate5-browser-keyboard-download.log`,
+`candidate5-genuine-setup-close.log`, `candidate5-genuine-download-cleanup.log`,
+`candidate5-post-cleanup-app-lifecycle.log`,
+`candidate5-cleanup-after-lifecycle.log` and native setup/registration/cleanup
+captures. This validates the actual **browser** lane on the baked image.
+FDM's physical-button completion/continuing-transfer lane remains separate;
+no physical controller, sound or suspend acceptance is inferred from these
+keyboard-equivalent events. Final media installation is recorded separately.
+
+## Earlier read-only hardware inspection
+
+Before candidate deployment, the physical PC1 at `192.168.50.206` was inspected without deployment, reboot,
 suspend, changing audio routes, or sending synthetic controller input.
 
 | Area | Observed state | Acceptance implication |

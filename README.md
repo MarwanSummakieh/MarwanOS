@@ -27,7 +27,8 @@ affiliated with Sony.
 See the [current roadmap](docs/roadmap.md) for priorities, dependencies and
 remaining hardware acceptance. Tekken installation, metadata/cache verification
 and user-confirmed physical controller gameplay completed on 2026-10-06;
-image-owned candidate reboots preserve its artwork and history. Bluetooth now
+the final candidate's actual Metadata Refresh and image-owned reboot preserve
+its native input profile, artwork and history. Bluetooth now
 reports the missing dongle correctly. Physical release gates remain pending;
 sleep testing is deferred at the owner's request.
 

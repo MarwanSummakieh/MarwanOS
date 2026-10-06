@@ -155,10 +155,10 @@
     },
     "installers": {
       "repository": "https://github.com/MarwanSummakieh/pc1-installers.git",
-      "commit": "39e52adfeb1683866e7cfc8de0d1e37afa869751",
+      "commit": "139ce9d4de80155b41839a81d4c98c9a32216136",
       "files": {
         "docs/fitgirl-controller-bench-20261005.md": "a37fe7edced4c29be70a184a4fe909dfc1451613",
-        "docs/windows-installation.md": "c2cce7680d37d1f7d103b3afbca5d8658b923462",
+        "docs/windows-installation.md": "67e7b1a4b52297a86d071c973e19237264ddd133",
         "os/files/usr/lib/marwanos/windows/manager.py": "f31b5ff56883f8eae5562b26980328b7996569c3",
         "os/files/usr/lib/marwanos/windows/recipes.json": "f9c80165c2fb82f5f0b6a4862468b6da7635e8cd",
         "os/files/usr/lib/marwanos/windows/setup_bridge.c": "bd98968f2548170f5be57dbf15d6af1d31e6af81",
@@ -169,7 +169,7 @@
         "tests/test_windows_icons.py": "3f0ed62d76b4917d2e5cceb64deb26e077f3415e",
         "tests/test_windows_installation.py": "90632d8ea437ecc00d8b4150fda5f94f3f1d698c",
         "tests/test_windows_local.py": "cfdd8d56d90efa198c2c1e821e9839ce45d08d42",
-        "docs/download-install-flow.md": "9c587cd90bab356fc69bdf505b111b65e9ce4f83",
+        "docs/download-install-flow.md": "096c72c09084555166bcafe13226d4bcf1ca64e4",
         "os/files/usr/lib/marwanos/windows/download_flow.py": "877bcef99a8755bc1c32f7fdcf1613633591c789",
         "tests/test_download_flow.py": "116fda872db6acf13dd8d86e2e81b74f14cbee91",
         "tests/setup_bridge_exit.c": "39347ea264c188632c30ade5e3de4d507abb8681",
@@ -191,7 +191,7 @@
     },
     "services": {
       "repository": "https://github.com/MarwanSummakieh/pc1-services.git",
-      "commit": "b721a65b838250e8870aeaa563d6738b2c63bf5a",
+      "commit": "f73ca8470abcac04eede480bdae54497fe717e7c",
       "files": {
         "docs/audio-manager.md": "5fbb703c3a0389e7c494a5747a99ec4eee47aeed",
         "os/files/usr/lib/marwanos/audio/manager.py": "8cca9e3ac18f103aa307531bbd0eba8df59286c1",
@@ -205,7 +205,7 @@
         "os/files/usr/lib/marwanos/metadata/manager.py": "28825e2008b8e0d62a52a88f8936b0fdcd012081",
         "os/files/usr/lib/systemd/user/marwanos-metadata.service": "d0434f861e485dc81e56fd05b67daa6b71703938",
         "tests/test_metadata.py": "d7908295a0f6cc44fc7feacf0a7e231acafd5b3e",
-        "docs/game-metadata.md": "79a315712e15486b79bf02c0a49227af5318e4d9",
+        "docs/game-metadata.md": "9c595b5d1f15e962a15a9a6306f193daf8a6ecb2",
         "docs/achievements.md": "bdc60510c32c505b8a42c2887758b0af6600d7f8",
         "docs/bluetooth.md": "5dbddee116a0793c748c62c40d26ec3b52f77a93",
         "os/files/usr/lib/marwanos/achievements/manager.py": "0b50cd07d37687032f4880e14544553dfc735589",

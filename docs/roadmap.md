@@ -15,15 +15,15 @@ features. An integrated Flathub store is removed from the roadmap.
 
 | Priority | Work | Status / dependency |
 | --- | --- | --- |
-| High | Automatic game metadata and library presentation | Implemented/deployed; actual Tekken artwork, offline cache, candidate reboot persistence and user-confirmed controller gameplay pass; final physical presentation acceptance pending |
-| High | Play history and recently played ordering | Real Tekken session, Home pause/minimize/resume, recent sorting and candidate reboot persistence pass; current-image physical acceptance pending |
+| Complete | Automatic game metadata and library presentation | Final candidate's real Tekken artwork, fullscreen Play-only Details, Options metadata refresh, offline cache and reboot persistence pass; prior physical controller gameplay confirmed |
+| Complete | Play history and recently played ordering | Real Tekken foreground/Home/minimize/resume/exit session and recent ordering pass; final candidate reboot and actual metadata refresh preserve the single 122.453-second session |
 | High | Controller rumble, multiplayer routing and reliable hotplug | Four slots and real force-feedback forwarding implemented; kernel/controller checks pass; physical rumble/two-pad acceptance pending |
 | High | Unified achievements | Persistent local/Steam providers, progress and unlock notifications implemented; genuine Tekken schema and earned-unlock acceptance pending |
 | High, waiting | Controller-operated Bluetooth pairing | Controller page and BlueZ pairing agent implemented; real private D-Bus fixture passes; physical dongle acceptance pending |
-| High | Download → install → cleanup | Completed-download receipts, controller setup and confirmed setup-file cleanup implemented; torrent/multipart payloads retained; actual FDM flow pending |
+| High | Download → install → cleanup | Final candidate's actual browser download, successful guided Close, app registration, explicit cleanup and installed-app lifecycle pass; torrent/multipart payloads retained; physical FDM lane pending |
 | Release | Reliable suspend/resume | Sleep action and read-only evidence helper exist; testing explicitly deferred by the owner |
 | Release | Silent boot, hardware and compatibility acceptance | Current-image TV/controller/audio/Steam/game testing and original boot-time gate remain incomplete |
-| Release | Bake recent bench fixes into a release image | Published candidate boots image-owned payloads without overrides; final metadata-page/setup-close bake and physical/media acceptance remain; compositor teardown defect recorded |
+| Release | Bake recent bench fixes into a release image | Final candidate 0be4ae6 passes override-free postboot, metadata refresh and real browser-install-cleanup/app lifecycle checks; media installation underway; physical gates and compositor teardown defect remain |
 
 ### Metadata and Tekken 8 acceptance
 
