@@ -24,12 +24,14 @@ if pgrep -u player -f 'TEKKEN 8.exe|TekkenGame|setup.exe|FDM.exe|manager.py (lau
     echo 'An application or installer is running; nothing changed.' >&2; exit 1
 fi
 userdir=/var/home/player/.config/systemd/user
-for service in audio metadata achievements bluetooth notifications; do
-    file="$userdir/marwanos-$service.service"
-    if test -e "$file"; then
-        test ! -L "$file"
-        grep -q '/var/marwanos/' "$file" || { echo "Unrecognized $file override" >&2; exit 1; }
-    fi
+for directory in "$userdir" /etc/systemd/user; do
+    for service in audio metadata achievements bluetooth notifications; do
+        file="$directory/marwanos-$service.service"
+        if test -e "$file"; then
+            test ! -L "$file"
+            grep -q '/var/marwanos/' "$file" || { echo "Unrecognized $file override" >&2; exit 1; }
+        fi
+    done
 done
 printf 'Verified staged %s, baked commit %s.\n' "$staged" "$expected"
 echo 'Plan: back up/disable bench bind units; retire development flag and five bench user overrides.'
@@ -39,7 +41,7 @@ if [[ "$apply" == 0 ]]; then
 fi
 backup="/var/marwanos/candidate-boot-backup-$expected"
 test ! -e "$backup"
-install -d -m 0700 "$backup/system" "$backup/user"
+install -d -m 0700 "$backup/system" "$backup/user" "$backup/etc-user"
 for service in marwanos-bench-fixes marwanos-app-icons; do
     if test -f "/etc/systemd/system/$service.service"; then
         cp -a "/etc/systemd/system/$service.service" "$backup/system/"
@@ -48,10 +50,14 @@ for service in marwanos-bench-fixes marwanos-app-icons; do
     fi
 done
 if test -e /var/marwanos/devmode; then mv /var/marwanos/devmode "$backup/devmode"; fi
-for service in audio metadata achievements bluetooth notifications; do
-    file="$userdir/marwanos-$service.service"
-    if test -e "$file"; then mv "$file" "$backup/user/"; fi
-    link="$userdir/default.target.wants/marwanos-$service.service"
-    if test -L "$link"; then mv "$link" "$backup/user/$service.wants"; fi
+for location in user etc-user; do
+    directory="$userdir"
+    if [[ "$location" == etc-user ]]; then directory=/etc/systemd/user; fi
+    for service in audio metadata achievements bluetooth notifications; do
+        file="$directory/marwanos-$service.service"
+        if test -e "$file"; then mv "$file" "$backup/$location/"; fi
+        link="$directory/default.target.wants/marwanos-$service.service"
+        if test -L "$link"; then mv "$link" "$backup/$location/$service.wants"; fi
+    done
 done
 printf 'Bench configuration saved in %s. Candidate is ready for the approved reboot.\n' "$backup"

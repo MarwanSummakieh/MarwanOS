@@ -36,8 +36,8 @@ physical sound, vibration, local multiplayer or a cold power-on.
   setup, library registration, an installed executable and unchanged source
   identity, followed by the controller's explicit cleanup choice.
 
-These are source/fixture results for the current checkout. They are not a claim
-that the final immutable image has been booted or that every acceptance item passed.
+These are source/fixture results. The candidate boot evidence below is separate;
+physical acceptance remains incomplete.
 
 ## Integrated bench deployment and real session
 
@@ -86,7 +86,7 @@ physical button-by-button FDM navigation and minimized download continuation rem
 pending. The read-only release gate correctly rejects the old booted image and
 active overrides, while passing live artwork, history, audio and four-pad checks.
 
-The published candidate is staged for the next PC1 boot:
+The published candidate was staged and booted after the user approved the reboot:
 
 - Source/build commit: `ac66747` (later documentation/helpers do not change its payload).
 - Image: `ghcr.io/marwansummakieh/marwanos:pc1-candidate-20261006`.
@@ -101,7 +101,28 @@ without changing anything. It defaults to read-only; `--apply ac66747` backs up
 and disables bench startup configuration while retaining current running services.
 Use only immediately before the approved candidate reboot. The
 [restore helper](../scripts/restore-pc1-bench.sh) restores those recorded overrides
-before an approved rollback if needed. No machine reboot has been performed yet.
+before an approved rollback if needed. The candidate reboot completed at approximately
+19:34 UTC. An additional old notification override under `/etc/systemd/user` was
+backed up to `candidate-boot-backup-ac66747/etc-user` and retired; the worker then
+ran `/usr/lib/marwanos/notifications/server.py`. Retirement/restoration helpers now
+cover both user-local and `/etc` user units.
+
+The original read-only postboot gate passed with **zero failures** after the
+boot-success timer elapsed: exact digest/build-info, no application bind mounts,
+development flag absent, image-owned workers, no failed system/player units,
+fresh shell/audio state, all four artwork hashes, Tekken's single 122.453-second
+session, partial achievement provider state and four persistent controller slots.
+The RTX 3070 runs gamescope at 3440×1440; this boot has no controller failures,
+GPU fault matches or coredumps. This was a reboot, not a physical cold power-on.
+
+Further inspection found a Bluetooth no-dongle edge case: BlueZ's hardware
+condition skips its system service, and the pairing worker reports D-Bus service
+activation failure instead of `no-adapter`. The software gate now checks Bluetooth
+freshness/errors too. The backend correction passes all 15 Bluetooth tests,
+including actual private-D-Bus pairing and missing-service/hotplug regression
+coverage. The complete backend suite passes **175 tests**, with two optional skips.
+It must be baked into a replacement candidate before the extended gate
+can pass. Hardware pairing still waits for the dongle.
 
 ## Read-only hardware inspection
 

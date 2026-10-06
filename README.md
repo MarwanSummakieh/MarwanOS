@@ -27,7 +27,8 @@ affiliated with Sony.
 See the [current roadmap](docs/roadmap.md) for priorities, dependencies and
 remaining hardware acceptance. Tekken installation, metadata/cache verification
 and user-confirmed physical controller gameplay completed on 2026-10-06;
-the new-image reboot/offline check remains pending.
+the candidate reboot preserved its artwork and history. Physical release gates
+and the Bluetooth no-dongle correction remain pending.
 
 Development is organized through the [PC1 GitHub Project](https://github.com/users/MarwanSummakieh/projects/3)
 and [six repositories](docs/repositories.md), with pinned component copies in
@@ -55,7 +56,7 @@ other documents describe their dated builds.
 | Windows installation | EXE/MSI setup from Files, portable apps, explicit program selection, launch, minimize/resume, close and confirmed managed-prefix removal. The final image's service and first-use runtime passed the real 7-Zip lifecycle; see [the contract and validation](docs/windows-installation.md) |
 | Steam | Native client preferred, legacy Flatpak fallback, shared launch/stop helper and controller routing; account/game compatibility requires target validation |
 | Browser and files | Embedded Chromium with tabs, history/bookmarks, downloads, controller file uploads and web dialogs; Files search/path/history, split view, previews, cancellable copy/move, rename, trash and restore. See [built-in tools](docs/built-in-tools.md). |
-| Verification | 171 backend tests pass with two optional skips; all integrated controller suites, pinned shell export, real uinput multiplayer/rumble fixture and five PR CI checks pass. Actual PC1 Tekken history, HDMI/USB stream routing and FDM lifecycle pass. Candidate image is staged; physical release gates remain separate. Earlier Chromium/USB/VM checks apply to their recorded builds. |
+| Verification | Backend tests, integrated controller suites, pinned shell export, real uinput multiplayer/rumble fixture and five PR CI checks pass. Actual PC1 Tekken history, HDMI/USB stream routing and FDM lifecycle pass. Candidate boot preserves artwork/history with no application overrides or failed units; a Bluetooth no-dongle correction and physical release gates remain. Earlier Chromium/USB/VM checks apply to their recorded builds. |
 
 ## Architecture
 

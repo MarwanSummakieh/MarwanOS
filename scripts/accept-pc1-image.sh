@@ -113,7 +113,7 @@ def main():
         check(unit + " active", code == 0 and output == "active", output or error)
     user_prefix = ["runuser", "-u", "player", "--", "env", f"XDG_RUNTIME_DIR={runtime}",
                    f"DBUS_SESSION_BUS_ADDRESS=unix:path={runtime}/bus", "systemctl", "--user"]
-    for unit in ["marwanos-metadata.service", "marwanos-audio.service", "marwanos-achievements.service", "marwanos-notifications.service"]:
+    for unit in ["marwanos-metadata.service", "marwanos-audio.service", "marwanos-achievements.service", "marwanos-bluetooth.service", "marwanos-notifications.service"]:
         code, output, error = command([*user_prefix, "is-active", unit])
         check(unit + " active", code == 0 and output == "active", output or error)
         code, output, error = command([*user_prefix, "show", unit, "--property=ExecStart", "--value"])
@@ -137,6 +137,14 @@ def main():
         audio_age = float("inf")
     check("audio state fresh and available", audio.get("available") is True and 0 <= audio_age < 12)
     check("audio output is selectable", bool(audio.get("outputs")) and bool(audio.get("default_output")))
+    bluetooth = read_json(runtime / "marwanos/bluetooth/state.json")
+    try:
+        bluetooth_age = time.time() - float(bluetooth.get("updated_at", 0))
+    except (ValueError, TypeError):
+        bluetooth_age = float("inf")
+    check("Bluetooth state fresh without service errors", bluetooth.get("available") is True
+          and bluetooth.get("status") in ("ready", "no-adapter") and not bluetooth.get("error")
+          and 0 <= bluetooth_age < 12, str(bluetooth.get("status", "missing")))
     metadata = read_json(home / ".local/share/marwanos/metadata/state.json")
     record = metadata.get("games", {}).get(game_id, {})
     check("installed game metadata cached", record.get("status") in ("ready", "partial", "offline") and bool(record.get("provider_id")), game_id)

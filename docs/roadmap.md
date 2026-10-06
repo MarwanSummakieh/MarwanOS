@@ -15,15 +15,15 @@ features. An integrated Flathub store is removed from the roadmap.
 
 | Priority | Work | Status / dependency |
 | --- | --- | --- |
-| High | Automatic game metadata and library presentation | Implemented/deployed; actual Tekken artwork and user-confirmed controller gameplay pass; reboot/offline acceptance pending |
-| High | Play history and recently played ordering | Persistent foreground sessions, totals and recent sorting implemented; automated checks pass; current-image physical acceptance pending |
+| High | Automatic game metadata and library presentation | Implemented/deployed; actual Tekken artwork, offline cache, candidate reboot persistence and user-confirmed controller gameplay pass; final physical presentation acceptance pending |
+| High | Play history and recently played ordering | Real Tekken session, Home pause/minimize/resume, recent sorting and candidate reboot persistence pass; current-image physical acceptance pending |
 | High | Controller rumble, multiplayer routing and reliable hotplug | Four slots and real force-feedback forwarding implemented; kernel/controller checks pass; physical rumble/two-pad acceptance pending |
 | High | Unified achievements | Persistent local/Steam providers, progress and unlock notifications implemented; genuine Tekken schema and earned-unlock acceptance pending |
 | High, waiting | Controller-operated Bluetooth pairing | Controller page and BlueZ pairing agent implemented; real private D-Bus fixture passes; physical dongle acceptance pending |
 | High | Download → install → cleanup | Completed-download receipts, controller setup and confirmed setup-file cleanup implemented; torrent/multipart payloads retained; actual FDM flow pending |
 | Release | Reliable suspend/resume | Sleep action exists; target NVIDIA/gamescope acceptance pending |
 | Release | Silent boot, hardware and compatibility acceptance | Current-image TV/controller/audio/Steam/game testing and original boot-time gate remain incomplete |
-| Release | Bake recent bench fixes into a release image | Some latest fixes use bench overrides; rebuild, reboot-test and publish the validated image |
+| Release | Bake recent bench fixes into a release image | Published candidate boots image-owned payloads without application overrides; Bluetooth no-dongle correction and physical release acceptance remain |
 
 ### Metadata and Tekken 8 acceptance
 
