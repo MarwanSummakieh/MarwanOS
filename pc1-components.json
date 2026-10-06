@@ -167,7 +167,7 @@
     },
     "services": {
       "repository": "https://github.com/MarwanSummakieh/pc1-services.git",
-      "commit": "b1d243df99a99e5b4d1b2e1e28212e1a103d3000",
+      "commit": "f8aa8c9ae1b332c3d9953bb45897412bd272280b",
       "files": {
         "docs/audio-manager.md": "5fbb703c3a0389e7c494a5747a99ec4eee47aeed",
         "os/files/usr/lib/marwanos/audio/manager.py": "8cca9e3ac18f103aa307531bbd0eba8df59286c1",
@@ -181,7 +181,7 @@
         "os/files/usr/lib/marwanos/metadata/manager.py": "28825e2008b8e0d62a52a88f8936b0fdcd012081",
         "os/files/usr/lib/systemd/user/marwanos-metadata.service": "d0434f861e485dc81e56fd05b67daa6b71703938",
         "tests/test_metadata.py": "d7908295a0f6cc44fc7feacf0a7e231acafd5b3e",
-        "docs/game-metadata.md": "f30fafab77d1dab54f3bea302a01537f71e54ff2"
+        "docs/game-metadata.md": "21e46a31128887aa420243d28611966781f82463"
       }
     },
     "fdm": {
