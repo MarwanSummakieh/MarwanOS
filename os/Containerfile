@@ -1680,7 +1680,7 @@ RUN chmod 4755 /usr/lib/marwanos/mowser/chrome-sandbox
 RUN --mount=type=cache,dst=/var/cache/libdnf5,sharing=locked \
     set -euxo pipefail; \
     dnf -y install python3 python3-pefile python3-pillow python3-dbus python3-gobject xorg-x11-server-Xvfb xorg-x11-server-Xorg openbox xcompmgr xset \
-        pipewire pipewire-pulseaudio pipewire-alsa wireplumber pulseaudio-utils alsa-lib; \
+        pipewire pipewire-pulseaudio pipewire-alsa wireplumber pulseaudio-utils alsa-lib bluez; \
     dnf clean all; \
     chmod 0755 /usr/lib/marwanos/windows/manager.py; \
     chmod 0755 /usr/lib/marwanos/steamctl /usr/lib/marwanos/controller/router.py; \
@@ -1691,7 +1691,7 @@ RUN --mount=type=cache,dst=/var/cache/libdnf5,sharing=locked \
     install -d /usr/lib/systemd/system/multi-user.target.wants; \
     ln -sf ../marwanos-windows.service \
         /usr/lib/systemd/system/multi-user.target.wants/marwanos-windows.service; \
-    python3 -m py_compile /usr/lib/marwanos/windows/manager.py; \
+    python3 -m py_compile /usr/lib/marwanos/windows/manager.py /usr/lib/marwanos/windows/download_flow.py; \
     python3 -m py_compile /usr/lib/marwanos/notifications/server.py; \
     install -d /usr/lib/systemd/user/default.target.wants; \
     ln -sf ../marwanos-notifications.service /usr/lib/systemd/user/default.target.wants/marwanos-notifications.service; \
@@ -1700,6 +1700,11 @@ RUN --mount=type=cache,dst=/var/cache/libdnf5,sharing=locked \
     ln -sf ../marwanos-audio.service /usr/lib/systemd/user/default.target.wants/marwanos-audio.service; \
     chmod 0644 /usr/lib/systemd/user/marwanos-metadata.service /usr/lib/marwanos/metadata/manager.py; \
     ln -sf ../marwanos-metadata.service /usr/lib/systemd/user/default.target.wants/marwanos-metadata.service; \
+    python3 -m compileall -q /usr/lib/marwanos/achievements /usr/lib/marwanos/bluetooth; \
+    chmod 0644 /usr/lib/systemd/user/marwanos-achievements.service /usr/lib/systemd/user/marwanos-bluetooth.service; \
+    ln -sf ../marwanos-achievements.service /usr/lib/systemd/user/default.target.wants/marwanos-achievements.service; \
+    ln -sf ../marwanos-bluetooth.service /usr/lib/systemd/user/default.target.wants/marwanos-bluetooth.service; \
+    ln -sf ../bluetooth.service /usr/lib/systemd/system/multi-user.target.wants/bluetooth.service; \
     ln -sf ../pipewire.service /usr/lib/systemd/user/default.target.wants/pipewire.service; \
     ln -sf ../pipewire-pulse.service /usr/lib/systemd/user/default.target.wants/pipewire-pulse.service; \
     ln -sf ../wireplumber.service /usr/lib/systemd/user/default.target.wants/wireplumber.service; \

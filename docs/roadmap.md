@@ -15,28 +15,30 @@ features. An integrated Flathub store is removed from the roadmap.
 
 | Priority | Work | Status / dependency |
 | --- | --- | --- |
-| High | Automatic game metadata and library presentation | First provider implemented and deployed; Tekken 8 downloads/rendered cache verified; physical launch/reboot acceptance pending |
-| High | Play history and recently played ordering | Not implemented |
-| High | Controller rumble, multiplayer routing and reliable hotplug | Rumble/multiplayer not implemented; physical acceptance also required |
-| High | Unified achievements | Research and implementation required; choose integrations supported by each game/source |
-| High, waiting | Controller-operated Bluetooth pairing | Waiting for the owner's Bluetooth dongle to arrive |
+| High | Automatic game metadata and library presentation | Implemented/deployed; actual Tekken artwork and user-confirmed controller gameplay pass; reboot/offline acceptance pending |
+| High | Play history and recently played ordering | Persistent foreground sessions, totals and recent sorting implemented; automated checks pass; current-image physical acceptance pending |
+| High | Controller rumble, multiplayer routing and reliable hotplug | Four slots and real force-feedback forwarding implemented; kernel/controller checks pass; physical rumble/two-pad acceptance pending |
+| High | Unified achievements | Persistent local/Steam providers, progress and unlock notifications implemented; genuine Tekken schema and earned-unlock acceptance pending |
+| High, waiting | Controller-operated Bluetooth pairing | Controller page and BlueZ pairing agent implemented; real private D-Bus fixture passes; physical dongle acceptance pending |
+| High | Download → install → cleanup | Completed-download receipts, controller setup and confirmed setup-file cleanup implemented; torrent/multipart payloads retained; actual FDM flow pending |
 | Release | Reliable suspend/resume | Sleep action exists; target NVIDIA/gamescope acceptance pending |
 | Release | Silent boot, hardware and compatibility acceptance | Current-image TV/controller/audio/Steam/game testing and original boot-time gate remain incomplete |
 | Release | Bake recent bench fixes into a release image | Some latest fixes use bench overrides; rebuild, reboot-test and publish the validated image |
 
 ### Metadata and Tekken 8 acceptance
 
-- [ ] Verify the completed Tekken 8 installation's library entry and launch
+- [x] Verify the completed Tekken 8 installation's library entry and launch
       target are correct, including its actual installation source.
-- [ ] Trace which providers supply its metadata and verify actual downloads and
+- [x] Trace which providers supply its metadata and verify actual downloads and
       persisted cache files. Cached Steam artwork or an extracted EXE icon alone
       does not prove automatic metadata enrichment. The 2026-10-06 implementation
       verified real Steam Store downloads; see [metadata evidence](game-metadata.md).
-- [ ] Check title, cover, background/hero, icon/logo where available, description,
+- [x] Check title, cover, background/hero, icon/logo where available, description,
       release date, genres, developer/publisher and source/platform information.
 - [ ] Compare the controller interface and effort required with Playnite: import
       should enrich the game automatically, without visiting a desktop or manually
-      collecting artwork. Provide controller-accessible refresh and match correction.
+      collecting artwork. The owner requested Play as the only details action;
+      correction remains supported by the backend.
 - [ ] Verify metadata survives reboot and remains usable offline; failed downloads
       offer retry and do not prevent launching the game. Preserve manual corrections.
 - [ ] Implement missing provider/download/cache or presentation behavior discovered
@@ -44,12 +46,13 @@ features. An integrated Flathub store is removed from the roadmap.
 
 The 2026-10-06 [completion record](fitgirl-controller-bench-20261005.md) reports
 successful installation, verification of all 533 files and library registration.
-Metadata acceptance remains pending. The inspected `appscan` helper discovers
+Reboot/offline acceptance remains pending. The inspected `appscan` helper discovers
 local icons and cached Steam art; no general Playnite-style metadata provider
 pipeline was established by the source inspection on 2026-10-05.
 The [2026-10-06 metadata implementation](game-metadata.md) now supplies automatic
-matching, downloads, persistent cache and controller details/refresh/correction.
-Real gameplay, physical details-screen operation and machine reboot remain open.
+matching, downloads, persistent cache and spacious controller details. The owner
+confirmed actual controller gameplay after the saved native-input profile repair.
+Machine reboot and the new-image acceptance remain open.
 
 Playnite's documented model uses metadata providers and automatically enriches
 games on import, with later refresh and editing. Use that behavior as the baseline:
@@ -57,33 +60,33 @@ games on import, with later refresh and editing. Use that behavior as the baseli
 
 ### Play history
 
-- [ ] Persist last played, session history and total play time under stable game IDs.
-- [ ] Offer recently played ordering and show play time in game details.
-- [ ] Record actual game sessions; failed launches and installer activity must not
+- [x] Persist last played, session history and total play time under stable game IDs.
+- [x] Offer recently played ordering and show play time in game details.
+- [x] Record actual game sessions; failed launches and installer activity must not
       count. Minimize/resume must retain one session rather than create duplicates.
-- [ ] Define idle/suspend accounting and recover history safely after shell crashes
+- [x] Define idle/suspend accounting and recover history safely after shell crashes
       or reboot, without resetting history when metadata changes.
 
 ### Controllers
 
-- [ ] Forward supported game rumble through the virtual controller to its physical pad.
-- [ ] Route multiple pads to distinct player slots for local multiplayer, retaining
+- [x] Forward supported game rumble through the virtual controller to its physical pad.
+- [x] Route multiple pads to distinct player slots for local multiplayer, retaining
       PC1's Home controls and preventing application input while menus own the pad.
 - [ ] Validate physical disconnect/reconnect, held-button suppression and stable
       player assignment. Use Tekken 8 as a two-player acceptance case when ready.
-- [ ] Once the Bluetooth dongle arrives, implement and verify controller-operated
-      discovery, pairing, removal, connection status and reconnect after reboot.
+- [ ] Verify the implemented controller-operated discovery, pairing, removal,
+      connection status and reconnect after reboot once the dongle arrives.
 
 ### Achievements
 
-- [ ] Investigate available achievement data for the installed Tekken 8 edition and
+- [x] Investigate available achievement data for the installed Tekken 8 edition and
       other supported sources, including authentication and refresh requirements.
-- [ ] Define a provider interface and persistent per-game, per-profile achievement
+- [x] Define a provider interface and persistent per-game, per-profile achievement
       cache. Evaluate Steam first for Steam-owned games; investigate other sources
       and supported local game data separately.
-- [ ] Add a controller-accessible game achievements page with names, descriptions,
+- [x] Add a controller-accessible game achievements page with names, descriptions,
       icons, locked/unlocked state, completion totals and unlock times when supplied.
-- [ ] Show newly observed unlock notifications without replaying the entire history
+- [x] Show newly observed unlock notifications without replaying the entire history
       during the first sync; support offline cached viewing and later synchronization.
 - [ ] Validate a real earned unlock end to end. Unsupported achievement sources must
       have an explicit unavailable state; identifying a game does not supply its
