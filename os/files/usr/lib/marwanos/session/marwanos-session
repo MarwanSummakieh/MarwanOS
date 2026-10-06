@@ -39,10 +39,6 @@
 
 set -u
 
-# This workaround belongs to gamescope, never shell, Steam or Proton children.
-# Clear inherited settings before either session re-exec or client supervision.
-unset VK_LOADER_DISABLE_DYNAMIC_LIBRARY_UNLOADING
-
 readonly TAG="marwanos-session"
 
 # Hardcoded rather than taken from $0 so the path is the same however the script
@@ -1395,14 +1391,7 @@ detect_native_mode() {
 
 
 launch_gamescope_process() {
-    # Upstream #1526 matches PC1's NVIDIA exit-time Vulkan destructor crash.
-    # Retain loader libraries through ordinary teardown; keep SIGTERM and core
-    # reporting intact. This remains a trial until the baked boot exits cleanly.
-    # https://github.com/ValveSoftware/gamescope/issues/1526#issuecomment-5980390505
-    case "${VK_DEVICE:-}" in
-        10de:*) VK_LOADER_DISABLE_DYNAMIC_LIBRARY_UNLOADING=1 gamescope "$@" & ;;
-        *) env -u VK_LOADER_DISABLE_DYNAMIC_LIBRARY_UNLOADING gamescope "$@" & ;;
-    esac
+    gamescope "$@" &
     GAMESCOPE_PID=$!
 }
 

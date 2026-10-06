@@ -1,0 +1,22 @@
+--- a/src/rendervulkan.cpp
++++ b/src/rendervulkan.cpp
+@@ -11,6 +11,7 @@
+ #include <bitset>
+ #include <thread>
+ #include <dlfcn.h>
++#include "nvidia_dispatch_lifetime.hpp"
+ #include "vulkan_include.h"
+ #include "Utils/Algorithm.h"
+ 
+@@ -685,6 +686,11 @@ bool CVulkanDevice::createDevice()
+ 	VULKAN_DEVICE_FUNCTIONS
+ 	#undef VK_FUNC
+ 
++	VkPhysicalDeviceProperties dispatchProperties = {};
++	vk.GetPhysicalDeviceProperties(physDev(), &dispatchProperties);
++	retain_nvidia_dispatch_owner(dispatchProperties.vendorID,
++		reinterpret_cast<const void *>(vk.FreeCommandBuffers));
++
+ 	vk.GetDeviceQueue(device(), m_queueFamily, 0, &m_queue);
+ 	if ( m_queueFamily == m_generalQueueFamily )
+ 		m_generalQueue = m_queue;

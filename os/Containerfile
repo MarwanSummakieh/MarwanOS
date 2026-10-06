@@ -469,6 +469,14 @@ RUN --network=none set -euxo pipefail; \
 
 
 
+# Keep the Fedora toolchain and patched source RPM outside the appliance image.
+FROM ${BASE_IMAGE}:${BASE_TAG}@${BASE_DIGEST} AS gamescope-build
+RUN --mount=type=cache,dst=/var/cache/libdnf5,sharing=locked \
+    dnf -y install rpm-build dnf5-plugins python3 patch
+COPY scripts/build-gamescope-rpm.sh /build/scripts/build-gamescope-rpm.sh
+COPY os/gamescope/ /build/os/gamescope/
+RUN bash /build/scripts/build-gamescope-rpm.sh --output /payload
+
 FROM ${BASE_IMAGE}:${BASE_TAG}@${BASE_DIGEST} AS windows-setup-bridge
 RUN --mount=type=cache,dst=/var/cache/libdnf5,sharing=locked \
     dnf -y install mingw64-gcc
@@ -688,11 +696,12 @@ RUN --mount=type=cache,dst=/var/cache/libdnf5,sharing=locked \
 #                            it is running on. The RULE is not shipped here --
 #                            marwanos-devmode-sudo.service installs it per boot
 #                            off the same flag.
+COPY --from=gamescope-build /payload/gamescope-3.16.23-1.pc1.1.fc43.x86_64.rpm /tmp/pc1-gamescope/
 RUN --mount=type=cache,dst=/var/cache/libdnf5,sharing=locked \
     set -euxo pipefail; \
     dnf -y install \
         greetd \
-        gamescope \
+        /tmp/pc1-gamescope/gamescope-3.16.23-1.pc1.1.fc43.x86_64.rpm \
         cage \
         xdotool \
         xterm \
@@ -710,6 +719,8 @@ RUN --mount=type=cache,dst=/var/cache/libdnf5,sharing=locked \
         libXi \
         libxkbcommon; \
     dnf clean all; \
+    test "$(rpm -q --qf '%{VERSION}-%{RELEASE}' gamescope)" = 3.16.23-1.pc1.1.fc43; \
+    rm -rf /tmp/pc1-gamescope; \
     : "xterm's launcher entry, removed -- see the xterm note above. uxterm's"; \
     : "is named too in case a future Fedora ships one (Debian's package"; \
     : "does); rm -f on a file that does not exist is the cheap way to keep"; \

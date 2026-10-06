@@ -323,6 +323,59 @@ The integrated Linux backend suite passes **192 tests, with two optional skips**
 These source checks do not replace the pending next-image runtime/media checks.
 Suspend/resume testing remains explicitly deferred by the owner.
 
+## Candidate six: automatic catalog passes; NVIDIA teardown still fails
+
+The actual PC1 reboot booted source `70faf40b94991afd88b3574ffe803cb5e5b85bb2`,
+version `0.0.202610062158`, from candidate6 digest
+`sha256:c0f9eea14bcfafe507bacf745644f8d041cf627474e605acfaf406572fea6f47`.
+Its OSTree checksum is
+`a739cb941d07239b24afcee224443cc9d868c4ec670b34a6d11633427a44ac56`.
+The tightened postboot software gate passes with zero failures after the boot
+success timer. The gate compares the embedded short source literally: use
+`--commit 70faf40`; the full commit is independently tied to the published build.
+No application overrides, development flags or failed units are present.
+
+From an observed absent schema cache, the image-owned achievement worker
+automatically fetched Tekken's 47 official definitions during its normal retry.
+No explicit UI Refresh or schema seeding supplied them. Verification compares
+all 47 unique IDs, names/descriptions and decoded cached icons with the genuine
+official response. The existing RUNE `Count=0` save is byte-for-byte unchanged;
+there are zero observed unlocks and no schema-only achievement notifications.
+Actual 3440×1440 captures show the separate **0/47 unlocked · RUNE local** page,
+All/Locked/Unlocked filters, and the roomy Play-only Details page. A genuine
+earned unlock/notification remains unverified.
+
+The scoped Vulkan-loader environment trial **failed**. Original gamescope
+PID1468 had the flag set but produced a SIGSEGV/core at 22:20:01 UTC during the
+first link scrub. Display release, splash and replacement PID2035 succeeded.
+There are no NVIDIA Xid/fallen-off-bus/AER matches. Recovery and the normal
+software gate do not certify a crash-free boot.
+
+Matching executable disassembly and core/live mappings identify the saved
+`FreeCommandBuffers` target in NVIDIA's `libnvidia-eglcore.so.610.43.03`; that
+library had disappeared from the first process at the fault. The next source
+patch retains that specific already-loaded dispatch owner inside gamescope
+using `dladdr` and `RTLD_NOLOAD | RTLD_NODELETE`. It removes the failed loader
+environment trial, keeps file capabilities, normal shutdown and core reporting,
+and changes no client loader environment. Five real ELF regressions pass,
+including a negative control that actually faults after library unload and a
+retained case that exits normally. Exact Fedora source RPM preparation applies
+the patch with zero fuzz. A new baked NVIDIA boot is still required; see
+[the teardown investigation](display-teardown.md).
+
+The separately labeled corrected candidate5 diagnostic installer completed an
+actual offline installation through evdev controller input and booted its
+installed target with the USB/ISO absent. Its 13 runtime checks pass with SELinux
+enforcing, zero failed units, image-owned workers, a fresh shell and successful
+boot flags. This validates the installer permission remedy on that diagnostic
+build. Candidate6 raw/ISO media were then generated from a clean exact `70faf40`
+checkout and immutable image; their own offline installation and installed-disk
+boot checks remain separate. None of these VM checks establishes NVIDIA physical
+teardown, physical vibration/audio, cold-power timing or Secure Boot acceptance.
+
+Suspend/resume remains explicitly deferred: the owner chose **Continue without
+sleep testing**. No sleep cycle was performed or reported as passing.
+
 ## Earlier read-only hardware inspection
 
 Before candidate deployment, the physical PC1 at `192.168.50.206` was inspected without deployment, reboot,

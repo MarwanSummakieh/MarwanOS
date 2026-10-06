@@ -1,4 +1,4 @@
-"""Exercise the actual session launch seam with disposable child processes."""
+"""Verify ordinary compositor launch behavior using the production shell seam."""
 import json
 import os
 from pathlib import Path
@@ -9,11 +9,12 @@ import unittest
 
 
 SESSION = Path(__file__).resolve().parents[1] / 'os/files/usr/lib/marwanos/session/marwanos-session'
-SETTING = 'VK_LOADER_DISABLE_DYNAMIC_LIBRARY_UNLOADING'
+SETTING = 'LD_LIBRARY_PATH'
 
 
 class SessionVulkanLifetimeTests(unittest.TestCase):
-    def run_launch(self, device):
+    def test_ordinary_launch_preserves_argv_pid_status_and_client_environment(self):
+        device = '10de:2488'
         source = SESSION.read_text()
         # Execute the production preamble and production launch function, without
         # entering the real session, invoking DRM or changing any user services.
@@ -39,13 +40,13 @@ class SessionVulkanLifetimeTests(unittest.TestCase):
                 'launch_gamescope_process "$@"\n'
                 'wait "$GAMESCOPE_PID"\nstatus=$?\n'
                 'printf "%s %s\\n" "$GAMESCOPE_PID" "$status"\n'
-                # Two separately launched clients model the actual shell/Steam/
-                # Proton sibling environment, not gamescope-owned Xwayland.
+                # Separately launched clients retain the same ordinary loader
+                # environment as their session parent.
                 f'/usr/bin/python3 -c \'import os; print(repr(os.environ.get("{SETTING}")))\'\n'
                 f'/usr/bin/python3 -c \'import os; print(repr(os.environ.get("{SETTING}")))\'\n')
             environment = dict(os.environ, PATH=str(root) + ':' + os.environ['PATH'],
                                CAPTURE=str(root / 'capture.json'))
-            environment[SETTING] = 'inherited-poison'
+            environment[SETTING] = '/existing/library path:/usr/lib64'
             arguments = ['--backend', 'drm', '--ready-fd', '/tmp/path with spaces',
                          '--prefer-vk-device', device, '--force-composition']
             completed = subprocess.run(['/bin/sh', str(script), device, *arguments],
@@ -53,18 +54,10 @@ class SessionVulkanLifetimeTests(unittest.TestCase):
                                        timeout=10, check=True)
             capture = json.loads((root / 'capture.json').read_text())
             lines = completed.stdout.splitlines()
-            self.assertEqual(lines, [f'{capture["pid"]} 17', 'None', 'None'])
+            self.assertEqual(lines, [f'{capture["pid"]} 17',
+                                     repr(environment[SETTING]), repr(environment[SETTING])])
             self.assertEqual(capture['args'], arguments)
-            return capture['setting']
-
-    def test_nvidia_receives_workaround_only_in_compositor(self):
-        self.assertEqual(self.run_launch('10de:2488'), '1')
-
-    def test_other_gpu_never_receives_inherited_workaround(self):
-        self.assertIsNone(self.run_launch('1002:73bf'))
-
-    def test_unselected_gpu_never_receives_inherited_workaround(self):
-        self.assertIsNone(self.run_launch(''))
+            self.assertEqual(capture['setting'], environment[SETTING])
 
 
 if __name__ == '__main__':

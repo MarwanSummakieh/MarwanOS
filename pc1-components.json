@@ -191,7 +191,7 @@
     },
     "services": {
       "repository": "https://github.com/MarwanSummakieh/pc1-services.git",
-      "commit": "dc7ce23d1756cc1415e047116f580f16ed1aebf8",
+      "commit": "e57d4d1fbfc50e11d36451bab2bfc2810a38c167",
       "files": {
         "docs/audio-manager.md": "5fbb703c3a0389e7c494a5747a99ec4eee47aeed",
         "os/files/usr/lib/marwanos/audio/manager.py": "8cca9e3ac18f103aa307531bbd0eba8df59286c1",
@@ -206,7 +206,7 @@
         "os/files/usr/lib/systemd/user/marwanos-metadata.service": "d0434f861e485dc81e56fd05b67daa6b71703938",
         "tests/test_metadata.py": "d7908295a0f6cc44fc7feacf0a7e231acafd5b3e",
         "docs/game-metadata.md": "9c595b5d1f15e962a15a9a6306f193daf8a6ecb2",
-        "docs/achievements.md": "c68357bb40752b1d6dc3419a609043b01d001381",
+        "docs/achievements.md": "df9c25e0242b5b1e28e6ae55b40ff5a63e7726f3",
         "docs/bluetooth.md": "5dbddee116a0793c748c62c40d26ec3b52f77a93",
         "os/files/usr/lib/marwanos/achievements/manager.py": "9921903554e9011645f8b1b79a26f2185c3bc70a",
         "os/files/usr/lib/marwanos/bluetooth/manager.py": "4b95ab4f80114dc9be887b76911d14ee4bc8dee7",

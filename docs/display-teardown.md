@@ -11,21 +11,60 @@ is to test `VK_LOADER_DISABLE_DYNAMIC_LIBRARY_UNLOADING=1`.
 that this retains dynamic libraries through instance destruction; it is supported
 since loader 1.3.259. PC1 has loader 1.4.341 and its binary contains the option.
 
-The session removes any inherited setting before launching clients, then assigns
-it only to gamescope when the selected GPU is NVIDIA. Shell, Steam and Proton
-launched by the session retain their ordinary environment. SIGTERM, core capture
-and the link-scrub display-reset sequence stay intact. Driver libraries can remain
-mapped until compositor process exit.
+That historical trial assigned the setting only to NVIDIA gamescope and removed
+it from clients. It is now retired: the production session launches gamescope
+normally and leaves existing client loader environments intact.
 
-This is a **trial workaround until the baked image's real boot proves it**.
-Acceptance requires no compositor SEGV/core, normal DRM release, successful
-splash/session return, fresh shell/controller workers and gameplay regression.
-Physical flicker and cold-boot timing require separate observation. If the fault
-persists, preserve its core and inspect mapped libraries and Vulkan function
-pointers with matching debug symbols before attempting a cleanup-order patch.
+The loader-only trial **failed on the real candidate6 boot**. The first
+compositor's core confirms the flag was present. Its saved `FreeCommandBuffers`
+pointer is `0x7f8b3acd1d40`, which was unmapped at the fault; the return address is
+the matching binary's `CVulkanCmdBuffer` destructor. In the recovered compositor,
+the equivalent dispatch pointer belongs to `libnvidia-eglcore.so.610.43.03`.
+The 32 bytes at that address match the installed library at file offset
+`0xbd0d40`. The initial core lacks that mapping while the Vulkan loader and
+other NVIDIA libraries remain mapped. This identifies the dispatch owner
+unloading; retaining only the loader's ICD handles did not retain it.
 
-`tests/test_session_vulkan_lifetime.py` exercises the production launch function
-with disposable executables. It checks NVIDIA/non-NVIDIA/unselected GPU handling,
-arguments containing spaces, tracked child PID and exit status, and removal of an
-inherited setting from separately launched clients. It establishes environment
-scope and launch behavior, not physical Vulkan teardown correctness.
+`os/gamescope/gamescope-3.16.23-nvidia-lifetime.patch` adds a gamescope-only
+retention call immediately after its Vulkan device dispatch table is populated.
+For vendor `0x10de`, the helper uses `dladdr(FreeCommandBuffers)` to identify the
+already-loaded owner, accepts only the diagnosed numbered NVIDIA eglcore library,
+and promotes it with `RTLD_NOLOAD | RTLD_NODELETE`. The extra reference is closed;
+NODELETE keeps the code available through subsequent driver `dlclose` calls.
+Unexpected owners or retention failures emit a warning and remain visible to
+ordinary core reporting. This does not fix an invalid driver-internal object
+state, if a subsequent real boot reveals one.
+
+This is a **source-owned trial until the baked image's real boot proves it**.
+Acceptance requires the retention log (with its actual PID) from the first compositor, no compositor
+SEGV/core, normal DRM release, successful splash/session return, fresh shell and
+controller workers, and gameplay regression. Physical flicker and cold-boot timing
+require separate observation. No suspend testing is performed.
+
+The patch preserves the exact Fedora `gamescope-3.16.23-1.fc43.src.rpm` source,
+its dependency pins and packaging, with release `1.pc1.1.fc43`. The build helper
+fetches it from [Fedora Koji](https://kojipkgs.fedoraproject.org/packages/gamescope/3.16.23/1.fc43/src/gamescope-3.16.23-1.fc43.src.rpm)
+and verifies SHA256 `d224583dc3e62752f0e74afd19631742a173f18d3b42277b2af5ba6b459427ee`.
+This source RPM has no package signature; the pin and HTTPS provenance are the
+source integrity evidence. Fedora's build dependencies and their normal repository
+verification stay in a disposable build stage. The final image installs the RPM
+and retains `cap_sys_nice=ep`. That capability makes an ordinary `LD_PRELOAD`
+wrapper unsuitable because secure execution strips the preload setting.
+
+The helper follows the [glibc/Linux dynamic loading contract](https://man7.org/linux/man-pages/man3/dlopen.3.html).
+It adds no client environment variables or dynamic-loader configuration and
+changes no SIGTERM, link-scrub, core policy or process-exit behavior.
+
+`tests/test_session_vulkan_lifetime.py` now verifies ordinary launch behavior
+with a disposable executable: arguments containing spaces, tracked child PID,
+actual exit status, and preservation of an existing loader environment in the
+compositor and separately launched clients. The failed environment-trial checks
+were retired. This establishes launch behavior, not physical Vulkan teardown.
+
+`tests/test_gamescope_driver_lifetime.py` builds a tiny real ELF library and client
+using the production retention header. A driver's exit handler closes the library
+before a global client destructor invokes a saved function pointer. The unretained
+negative control exits with SIGSEGV; the retained case reaches actual exit 0, calls
+the saved function, and still runs the library finalizer. Other GPUs, unrelated
+libraries and malformed version names retain ordinary unloading. These tests
+prove the dynamic-loader lifetime mechanism, not NVIDIA hardware correctness.
