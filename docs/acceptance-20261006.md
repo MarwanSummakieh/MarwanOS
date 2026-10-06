@@ -124,6 +124,21 @@ coverage. The complete backend suite passes **175 tests**, with two optional ski
 It must be baked into a replacement candidate before the extended gate
 can pass. Hardware pairing still waits for the dongle.
 
+The genuine embedded-browser 7-Zip download then exposed a separate destination
+gap: without `user-dirs.dirs`, Godot returned the player's home instead of
+Downloads. CEF saved the correct installer there, and the worker correctly
+rejected that path outside its Downloads boundary. The browser now uses the
+same `HOME/Downloads` root as FDM and the installer worker, including Open Downloads.
+Missing/custom desktop-folder checks pass, and the real CEF fixture passes with
+correct downloaded bytes and no destination override. A final candidate must
+include this shell correction before genuine download/setup/cleanup acceptance.
+
+Candidate one's software timing was 12.910 seconds from kernel start through
+systemd startup. The explicit first shell frame occurred at 14.545 seconds and
+the three-card library at 16.480 seconds after kernel start. Firmware, bootloader
+and physical power-button/display timing remain unmeasured; this does not pass
+the original 15-second cold-boot requirement.
+
 ## Read-only hardware inspection
 
 The physical PC1 at `192.168.50.206` was inspected without deployment, reboot,

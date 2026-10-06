@@ -5,7 +5,7 @@
   "components": {
     "shell": {
       "repository": "https://github.com/MarwanSummakieh/pc1-shell.git",
-      "commit": "b36a2c5e7ef4de5dba3bfdcb6b38d6f9ad5ca53b",
+      "commit": "c074914106afc95c2c8070bec167588871b346c1",
       "files": {
         "docs/app-card-icons-bench-20261005.md": "718aa90a8420de8f10b8e0137dc99181ab5adc91",
         "docs/built-in-tools.md": "7ea67a75a2ee657ff6fd40d66d3e7ed25035b440",
@@ -21,10 +21,10 @@
         "mowser/src/subprocess.cpp": "8be2ba182eaea04a8cad0edb478ee4413512114e",
         "scripts/build-tools-local.sh": "a4733ac3c688c8c3ae05e8cc6060d2afeee36ac8",
         "scripts/check-audio-shell.sh": "d341e65c995af27bfdaaf0fb4913f0a2417fbefe",
-        "scripts/check-browser-engine.sh": "e88a867c00ca216897f193c77cb264a686a7f2e2",
+        "scripts/check-browser-engine.sh": "9e97f0a245b7e4a204958bb36b196da8209e4f77",
         "scripts/check-controller-shell.sh": "a2cbccc3e9cd2a7a439663a43d190e99f8890165",
         "scripts/check-keyboard-preview.sh": "898ace49e07655260f5caa3cf929eae12716d867",
-        "scripts/check-shell.sh": "0fa013e9ebbee50f5309cf1cc5afad7654a42ff0",
+        "scripts/check-shell.sh": "d959528a744d1b8168d2ca4ed865fc1fa68288e0",
         "scripts/check-tools-shell.sh": "65ca2dcc1942d6adf771b15e03540e7ab3cec3aa",
         "scripts/check-window-geometry.sh": "6da19468b3547167b30f137cfb5d7c097bcbf3dd",
         "scripts/check-windows-shell.sh": "290f67600db3f9b31e77a3977e9ded62dfb3e038",
@@ -52,7 +52,7 @@
         "shell/src/audio.gd": "ad7c6c6bbdb7af2f64acb4d604bec280873d2039",
         "shell/src/audio_screen.gd": "e2461a9bed05c88606541b0a6aed4d735f909846",
         "shell/src/browser.gd": "392088ac9a7e3adadd9e905656bd9e424879bc28",
-        "shell/src/browser_screen.gd": "742a0ff8441705893390b7a026ee50baba27a988",
+        "shell/src/browser_screen.gd": "5b9dd07f00e821c71123d13352678f9fe1cdf24e",
         "shell/src/card.gd": "4686fa56bebd5cbd1ae477cf72a420883e0eb7db",
         "shell/src/controller_router.gd": "a6870e70651243f043f17bcb8e47fdf6a589b3bb",
         "shell/src/display.gd": "6b2dde72b876e34cb3eb3bd1c0952dcc06467ad1",
@@ -111,7 +111,7 @@
         "shell/src/windows_setup_wizard.gd": "c306ec14152d40237dd2904c3af634946b228d69",
         "tests/audio_shell.gd": "510e5f16e6a3900f35a84d4033c62a0bc10f3054",
         "tests/browser-fixture.html": "ca322d365a53cf278715573b5be89359b34c20a2",
-        "tests/browser_downloads.gd": "e72f2cb302ffa2874b021ea065f19f2e753f93fb",
+        "tests/browser_downloads.gd": "cd8f0265ca28ee3da12f17cf2813a7b940701a72",
         "tests/browser_engine.gd": "1a2ee2eb2759d44db0a8467959517ad726264962",
         "tests/browser_internet.gd": "e22c9b0f71744af69144f4c6f6b97e5ab6aa9fe9",
         "tests/browser_workflows.gd": "455a3d9fb72f340a969cdc6fbb126c2d05f936cb",
@@ -145,7 +145,9 @@
         "tests/achievements_shell.gd": "71cb96151b581427a80cbe1e72204262f679041e",
         "tests/bluetooth_shell.gd": "123f68aaab0c1784c1487e2ecbd1a240de5f88a0",
         "tests/download_install_shell.gd": "4b6b35c8ae044fd2b0c4f94fffb627ba370c2033",
-        "tests/play_history_shell.gd": "04792ce55d87509b642aaeb8d40baee4c990e2aa"
+        "tests/play_history_shell.gd": "04792ce55d87509b642aaeb8d40baee4c990e2aa",
+        "scripts/check-browser-download-directory.sh": "e7e0c94b76760e9456d4522927bf08efee8b2661",
+        "tests/browser_download_directory.gd": "a6c451dc64d41b6aaadeb3f23e2c1430d0b880a6"
       }
     },
     "installers": {

@@ -169,6 +169,12 @@ def main():
     if not isinstance(baseline, dict) or baseline.get("version") != 1:
         check("valid before snapshot", False, filename)
         return
+    observed = baseline.get("observed_at")
+    if (not all(isinstance(baseline.get(key), dict) for key in ("suspend", "audio", "processes"))
+            or not isinstance(observed, (int, float)) or isinstance(observed, bool)
+            or not math.isfinite(observed) or not 0 < observed <= time.time()):
+        check("valid before snapshot fields", False, filename)
+        return
     state = snapshot()
     same_boot = bool(state["boot_id"]) and state["boot_id"] == baseline.get("boot_id")
     check("same boot ID (no intervening reboot)", same_boot)
@@ -183,7 +189,6 @@ def main():
           "A deliberate route or hardware change needs separate assessment.")
     for label, pids in state["processes"].items():
         check(label + " survived without restart", bool(pids) and pids == baseline.get("processes", {}).get(label), str(pids))
-    observed = baseline.get("observed_at", 0)
     if isinstance(observed, (int, float)) and math.isfinite(observed):
         since = datetime.datetime.fromtimestamp(observed, datetime.timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
         code, output, error = command(["journalctl", "-b", "--since", since, "--no-pager", "-n", "60", "-g",
