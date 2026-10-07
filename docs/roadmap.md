@@ -1,6 +1,6 @@
 # PC1 / MarwanOS roadmap
 
-Updated 2026-10-06 from the owner's priorities and installation record. This is the current backlog;
+Updated 2026-10-07 from the owner's priorities and installation record. This is the current backlog;
 older phase plans and ADRs remain historical context where they disagree.
 
 ## Product priority
@@ -18,12 +18,12 @@ features. An integrated Flathub store is removed from the roadmap.
 | Complete | Automatic game metadata and library presentation | Final candidate's real Tekken artwork, fullscreen Play-only Details, Options metadata refresh, offline cache and reboot persistence pass; prior physical controller gameplay confirmed |
 | Complete | Play history and recently played ordering | Real Tekken foreground/Home/minimize/resume/exit session and recent ordering pass; final candidate reboot and actual metadata refresh preserve the single 122.453-second session |
 | High | Controller rumble, multiplayer routing and reliable hotplug | Four slots and real force-feedback forwarding implemented; kernel/controller checks pass; physical rumble/two-pad acceptance pending |
-| High | Unified achievements | Candidate6 fetched all 47 genuine definitions/icons and detected an actually earned Practice unlock with one persistent notification; native 1/47 page and restart deduplication pass. Gameplay suppresses toast presentation; its passive overlay correction needs baked acceptance |
+| High | Unified achievements | All 47 genuine definitions/icons and an actually earned Practice unlock with one persistent notification are verified; native 1/47 page and restart deduplication pass. Candidate9's passive overlay passes local headless/native tests at three resolutions; genuine baked gameplay toast remains pending |
 | High, waiting | Controller-operated Bluetooth pairing | Controller page and BlueZ pairing agent implemented; real private D-Bus fixture passes; physical dongle acceptance pending |
 | High | Download → install → cleanup | Final candidate's actual browser download, successful guided Close, app registration, explicit cleanup and installed-app lifecycle pass; torrent/multipart payloads retained; physical FDM lane pending |
 | Release | Reliable suspend/resume | Sleep action and read-only evidence helper exist; testing explicitly deferred by the owner |
-| Release | Silent boot, hardware and compatibility acceptance | Current-image TV/controller/audio/Steam/game testing and original boot-time gate remain incomplete |
-| Release | Bake recent bench fixes into a release image | Candidate6 70faf40 has verified image-owned payloads/catalog and functional offline installation/USB-absent boot, but the strict gate fails on a compositor core, enforcing Plymouth AVC and automatic-update origin error. Candidate9 corrections require fresh baked hardware/media acceptance. Physical gates remain |
+| Release | Silent boot, hardware and compatibility acceptance | Candidate9 automated audit passes both NVMe SMART checks and finds zero kernel hardware faults; software boot is 9.922s. NVIDIA probe is partial without nvidia-smi. Physical TV/controller/audio/Steam/game and filmed cold-boot acceptance remain unclaimed; owner requested automated checks only |
+| Release | Bake recent bench fixes into a release image | Published candidate9 3ff89cf passes full SELinux audit and actual updater-stage execution, but strict gate FAIL1 records current-boot NVIDIA teardown core1508. Candidate10 .pc1.2 early cleanup has 10 focused regression passes and exact SRPM zero-fuzz preparation; full compile, baked boot and fresh media pending. Candidate6 functional media evidence remains scoped; candidate9 media is on hold |
 
 ### Metadata and Tekken 8 acceptance
 

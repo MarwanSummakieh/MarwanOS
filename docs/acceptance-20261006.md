@@ -513,7 +513,7 @@ services. It exits nonzero on missing or mismatched evidence. Its success certif
 the listed software checks only; the physical checklist remains independently
 pending until observed.
 
-## Candidate9 preparation
+## Candidate9 outcome and candidate10 cleanup preparation
 
 A later read of candidate6 accepted its full source SHA while correctly reporting
 three failures: the existing compositor core, the enforcing Plymouth denial, and
@@ -525,12 +525,43 @@ the container parser. No failed state was cleared to obtain a passing gate.
 Five regressions run its actual entrypoint with a disposable image-builder boundary;
 they verify the resulting arguments, registry ports/namespaces, unchanged tag-only
 behavior and rejection of malformed pins before privileged operations. These tests
-passed, but do not establish an installed image's origin. Candidate9 staging and
-fresh release media must use the published digest-only reference, then verify the
-actual booted origin and successful update checks separately.
+passed, but alone do not establish an installed image's origin. Candidate9 was
+subsequently staged with a digest-only reference; actual updater-stage execution
+passed. Future staging and fresh release media must preserve this origin form.
 
 The postboot helper now also rejects journal-query errors and timeouts instead of
 mistaking them for an empty fault list. Eight focused regressions exercise its
 actual embedded journal functions, legitimate no-match results, unreadable records,
-retained AVC/core evidence and full source-SHA matching. All eight passed locally;
-the next image still requires fresh boot and media evidence.
+retained AVC/core evidence and full source-SHA matching. All eight passed locally.
+
+Candidate9 source `3ff89cfeb569ba7bf85624ba84c232dbe5242853` published digest
+`sha256:e7c02f596fa3909c8e4a30de35ab477fcf158439ed3644014de6c409b2c6fc6d`.
+Its [image build](https://github.com/MarwanSummakieh/MarwanOS/actions/runs/37551813075)
+succeeded and [source checks](https://github.com/MarwanSummakieh/MarwanOS/actions/runs/37551809873)
+passed 210 backend tests with two optional skips, all headless shell fixtures and
+component pins (148/17/7/23/69). Actual postboot full-journal SELinux audit and
+updater-stage execution pass. The strict gate still fails one check: current-boot
+NVIDIA gamescope teardown core1508. Dispatch retention succeeded, but the new
+stack faults in mapped `glsi+0x402cd` at null state + 0x40, through eglcore,
+`CVulkanTexture` and global `VulkanOutput_t` destruction during exit handlers.
+The shell recovered; no core or failed state was cleared to produce a pass.
+Candidate9 release media is on hold.
+
+The automated candidate9 hardware audit reports both NVMe SMART checks passing
+and zero kernel hardware-fault matches. Recorded software boot time is 9.922
+seconds, without establishing a filmed physical cold-boot measurement. NVIDIA
+probe remains partial because `nvidia-smi` is unavailable. The passive toast's
+local headless and native tests pass at 1280×720, 1920×1080 and 3440×1440; genuine
+baked foreground-game toast QA is still pending. The prior actual 1/47 unlock,
+single persistent notification and restart deduplication evidence remain valid.
+
+Candidate10's released `.pc1.2` cleanup header/patch targets NVIDIA on the DRM
+session backend. It runs in ordinary compositor shutdown after commit/LUT/focus
+cleanup and before backend removal: drain submitted work, free pending and
+cached command buffers, then release upscale/effect and output texture owners
+while driver state is alive. Normal signals, return and finalizers remain; the
+change adds no Vulkan device/instance destruction. Ten focused regressions and
+exact official SRPM preparation with `--fuzz=0` pass. Full candidate10 compilation,
+exact integrated source/publication, baked NVIDIA boot and fresh release media
+acceptance remain pending. The owner requested automated checks only; no further
+physical or sleep testing is requested, and physical acceptance remains unclaimed.

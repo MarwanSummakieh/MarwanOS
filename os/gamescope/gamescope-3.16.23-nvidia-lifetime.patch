@@ -1,22 +1,87 @@
 --- a/src/rendervulkan.cpp
 +++ b/src/rendervulkan.cpp
-@@ -11,6 +11,7 @@
+@@ -11,6 +11,8 @@
  #include <bitset>
  #include <thread>
  #include <dlfcn.h>
 +#include "nvidia_dispatch_lifetime.hpp"
++#include "nvidia_output_cleanup.hpp"
  #include "vulkan_include.h"
  #include "Utils/Algorithm.h"
  
-@@ -685,6 +686,11 @@ bool CVulkanDevice::createDevice()
+@@ -684,6 +686,11 @@
+ 	#define VK_FUNC(x) vk.x = (PFN_vk##x) vk.GetDeviceProcAddr(device(), "vk"#x);
  	VULKAN_DEVICE_FUNCTIONS
  	#undef VK_FUNC
- 
++
 +	VkPhysicalDeviceProperties dispatchProperties = {};
 +	vk.GetPhysicalDeviceProperties(physDev(), &dispatchProperties);
 +	retain_nvidia_dispatch_owner(dispatchProperties.vendorID,
 +		reinterpret_cast<const void *>(vk.FreeCommandBuffers));
-+
+ 
  	vk.GetDeviceQueue(device(), m_queueFamily, 0, &m_queue);
  	if ( m_queueFamily == m_generalQueueFamily )
- 		m_generalQueue = m_queue;
+@@ -1933,6 +1940,33 @@
+ 
+ CVulkanDevice g_device;
+ 
++void CVulkanDevice::releaseCommandBuffers()
++{
++	m_pendingCmdBufs.clear();
++	m_unusedCmdBufs.clear();
++}
++
++void vulkan_shutdown_output()
++{
++	// The embedded compositor has stopped painting, but its backend and the
++	// NVIDIA driver are still alive. Swapchain backends have a detached present
++	// worker and are outside this narrowly diagnosed DRM shutdown path.
++	if ( !GetBackend() || !GetBackend()->IsSessionBased() ||
++	     GetBackend()->UsesVulkanSwapchain() || !g_device.device() )
++		return;
++	VkPhysicalDeviceProperties properties = {};
++	g_device.vk.GetPhysicalDeviceProperties(g_device.physDev(), &properties);
++	if ( properties.vendorID != 0x10de )
++		return;
++
++	extern void ClearUpscaleImages();
++	release_nvidia_output_before_driver_exit(g_device, g_output, []() {
++		ClearUpscaleImages();
++		g_reshadeManager.clear();
++	});
++	std::fprintf(stderr, "marwanos: released NVIDIA embedded Vulkan output and command buffers before backend teardown pid=%ld\n", static_cast<long>(getpid()));
++}
++
+ static bool allDMABUFsEqual( wlr_dmabuf_attributes *pDMA )
+ {
+ 	if ( pDMA->n_planes == 1 )
+--- a/src/rendervulkan.hpp
++++ b/src/rendervulkan.hpp
+@@ -562,6 +562,7 @@
+ };
+ 
+ extern VulkanOutput_t g_output;
++void vulkan_shutdown_output();
+ 
+ struct SamplerState
+ {
+@@ -776,6 +777,7 @@
+ 	void wait(uint64_t sequence, bool reset = true);
+ 	void waitIdle(bool reset = true);
+ 	void garbageCollect();
++	void releaseCommandBuffers();
+ 	inline VkDescriptorSet descriptorSet()
+ 	{
+ 		VkDescriptorSet ret = m_descriptorSets[m_currentDescriptorSet];
+--- a/src/steamcompmgr.cpp
++++ b/src/steamcompmgr.cpp
+@@ -6564,6 +6564,9 @@
+ 	}
+ 
+ 	g_VirtualConnectorFocuses.clear();
++
++	// Release remaining Vulkan globals before backend/driver exit handlers.
++	vulkan_shutdown_output();
+ 
+     gamescope::IBackend::Set( nullptr );
+ 
