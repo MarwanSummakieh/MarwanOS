@@ -52,6 +52,10 @@ no shutdown timeouts. Both candidate13 startup gates reject emergency mode,
 device mount timeouts, obsolete hotfix activation and unnecessary Xorg bounce;
 both passed. Enforcing SELinux remains enabled.
 
+The owner confirmed that PC1's physical display returned to MarwanOS
+automatically after the corrected full reboot, without a login prompt or
+pressing Enter.
+
 Direct NVIDIA GLX rendering and the expected pixel pass on both boots. DP-2
 retains 3440×1440 at 174.96 Hz. SDL identifies one routed Sony DualSense as PS5;
 the physical node is excluded and remembered controller slot identities are
