@@ -714,9 +714,30 @@ Candidate11's minimal `.pc1.3` memo-cache cleanup passes **11 ELF regressions**
 and preparation of the exact SHA-pinned source RPM with **`--fuzz=0`**. It drains
 the private imported-texture memo cache before backend teardown, after active GPU
 owners are released, and unlinks buffer listeners under the established Wayland
-lock → memo-map mutex order. Full production compilation/image publication,
-baked NVIDIA normal SIGTERM and normal reboot, and fresh-media acceptance remain
-pending; source-level passes do not establish the runtime fix.
+lock → memo-map mutex order. Local full backend testing passes **216 tests: 214
+passes and two optional skips**. The full production build passes all **287
+compile/link steps**, producing both `gamescope-3.16.23-1.pc1.3.fc43.x86_64.rpm`
+and its patched source RPM. Binary SHA256 is
+`c7e18272f154b27ea2053554f4a1c4320dd6085394b924b5737eaa1a2b04fb26`;
+source RPM SHA256 is
+`cb884f6ee800de1a59540b52d2968020c9e2bb8a1e8ef7deae15e6b2ffd43119`.
+Logs are `out/candidate11-backend-local.log` and
+`out/candidate11-production-build.log`. Independent read-only acceptance helper
+fixtures pass 16 cases, including a kernel-only fault with no stored core.
+
+The code-only candidate commit is `c2822e78e2613cab1a3bb70254ca6f3357ca2888`
+on local branch `codex/nvidia-memo-cleanup`; it changes exactly five code/build/test
+files from candidate10 and excludes these new acceptance records. Automatic
+approval review rejected both prepared PC1 issue/PR updates and the code-only
+push, requiring explicit authorization for their GitHub destinations and payloads.
+Permission was requested; neither rejected action ran. Image publication, baked
+NVIDIA normal SIGTERM and normal reboot, and fresh-media acceptance remain
+pending. Local build/test passes do not establish the runtime fix.
+
+`out/candidate10-final-acceptance.json` and
+`out/PC1-candidate10-final-acceptance.zip` explicitly preserve the overall release
+FAIL alongside initial software and scoped installer/VM passes. No raw core is
+included or exported.
 
 ## Candidate10 scoped offline media acceptance — October 7
 
