@@ -30,10 +30,14 @@ and user-confirmed physical controller gameplay completed on 2026-10-06;
 the final candidate's actual Metadata Refresh and image-owned reboot preserve
 its native input profile, artwork and history. Genuine achievements now pass
 end to end, including a passive gameplay toast and persistent 2/47 progress.
-Candidate10 passes the actual PC1 compositor and strict postboot software gates.
+Candidate10 passed its initial PC1 compositor/postboot gates and offline VM
+installation, but later normal compositor exit reproduces an NVIDIA fault;
+release validation fails. Candidate11's targeted cleanup passes 11 ELF regressions
+and exact SHA-pinned SRPM preparation with zero fuzz; production build and baked
+normal-exit/reboot acceptance remain pending.
 Nine tracked tasks remain. Bluetooth reports the missing dongle correctly;
 physical checks and sleep testing are deferred under the owner's automated-only
-instruction. Fresh candidate10 installer-media validation is in progress.
+instruction. Candidate10's passing installer-media evidence is scoped to its VM.
 
 Development is organized through the [PC1 GitHub Project](https://github.com/users/MarwanSummakieh/projects/3)
 and [six repositories](docs/repositories.md), with pinned component copies in
@@ -61,7 +65,7 @@ other documents describe their dated builds.
 | Windows installation | EXE/MSI setup from Files, portable apps, explicit program selection, launch, minimize/resume, close and confirmed managed-prefix removal. The final image's service and first-use runtime passed the real 7-Zip lifecycle; see [the contract and validation](docs/windows-installation.md) |
 | Steam | Native client preferred, legacy Flatpak fallback, shared launch/stop helper and controller routing; account/game compatibility requires target validation |
 | Browser and files | Embedded Chromium with tabs, history/bookmarks, downloads, controller file uploads and web dialogs; Files search/path/history, split view, previews, cancellable copy/move, rename, trash and restore. See [built-in tools](docs/built-in-tools.md). |
-| Verification | Candidate10 runs 215 backend tests: 213 pass and two optional checks skip; integrated shell suites, real uinput multiplayer/rumble and Win32 setup-exit fixtures pass. Its actual PC1 compositor and postboot gates report zero failures, with no current-boot compositor core, full-journal Enforcing audit clean and normal updater execution successful. Tekken launch/render/Close, metadata/history and genuine 2/47 reboot persistence pass; candidate9's real earned gameplay toast, focus/input, expiry and restart deduplication also pass. Fresh candidate10 media is being validated. Physical gates remain open; earlier Chromium/USB/VM observations apply to their recorded builds. |
+| Verification | Candidate10 runs 215 backend tests: 213 pass and two optional checks skip; integrated shell suites, real uinput multiplayer/rumble and Win32 setup-exit fixtures pass. Its initial PC1 compositor/postboot gates, full-journal Enforcing audit and normal updater execution pass, but subsequent normal SIGTERM exit produces retained NVIDIA core17178: release FAIL. Tekken launch/render/Close, metadata/history and genuine 2/47 persistence pass; candidate9's real earned toast/input/expiry/deduplication pass. Fresh candidate10 offline controller installation and USB-absent VM boot pass all 15 installed-health checks; this does not resolve the PC1 fault. Candidate11 passes 11 ELF regressions and exact SHA-pinned SRPM preparation with --fuzz=0; full production compile/image, baked normal SIGTERM/reboot, fresh media and physical acceptance remain pending. |
 
 ## Architecture
 

@@ -564,8 +564,9 @@ while driver state is alive. Normal signals, return and finalizers remain; the
 change adds no Vulkan device/instance destruction. Ten focused regressions and
 exact official SRPM preparation with `--fuzz=0` pass. The
 [candidate10 image build](https://github.com/MarwanSummakieh/MarwanOS/actions/runs/37555843652)
-has succeeded; subsequent baked NVIDIA boot acceptance passes as recorded below,
-while fresh release media remains pending. The owner requested automated checks only; no further
+has succeeded; initial baked boot checks pass below, but subsequent normal exit
+still faults. Fresh candidate10 media passes its scoped VM checks below; overall
+release validation fails. The owner requested automated checks only; no further
 physical or sleep testing is requested, and physical acceptance remains unclaimed.
 
 ## Candidate9 genuine achievement and passive toast acceptance — October 7
@@ -603,8 +604,9 @@ retain global inbox IDs `[1,2,3]`, with achievement IDs 2 and 3 only and no repl
 The temporary QA keyboard recorded destruction at **01:28:52 UTC**; the shell
 regained focus. Installed Tekken achievement acceptance is complete, leaving
 **nine tracked OS tasks**. Candidate9's separate NVIDIA teardown defect remains
-part of that image's failed release evidence. Candidate10 validates the boot fix
-below; fresh release media and the separate physical acceptance remain pending.
+part of that image's failed release evidence. Candidate10 passes initial boot
+checks but later reproduces normal-exit failure; its scoped media success below
+does not establish overall release or separate physical acceptance.
 
 Preserved local evidence includes `out/candidate9-genuine-toast-proof.json`
 (nine independent checks with source-file hashes),
@@ -618,7 +620,7 @@ and `-07.png`, `pc1-candidate9-achievements.png`,
 the earlier Practice unlock and the newly earned Customize record; catalog
 definitions never substitute for personal progress.
 
-## Candidate10 actual boot and software gates — October 7
+## Candidate10 initial boot gates and later normal-exit failure — October 7
 
 Candidate10 source `77a3ede381837163d15c5b1c702e5a68709897d5` published digest
 `sha256:76bdea953d2dc4d5c4e995ac48d64f3214df9ff26b4a63004ecbebe1226461c1`.
@@ -628,13 +630,13 @@ and runs gamescope `3.16.23-1.pc1.2.fc43.x86_64`. Its successful
 [image build](https://github.com/MarwanSummakieh/MarwanOS/actions/runs/37555843652)
 includes passing source checks: 215 tests total, 213 passes and two optional skips.
 
-Both actual compositor verification and the strict postboot software gate report
+At the initial observation, both compositor verification and the strict postboot software gate report
 **zero failures**. During the normal image-owned link scrub, compositor `1514`
 records release of the embedded NVIDIA Vulkan output and command buffers before
 backend teardown; replacement compositor `2067` starts normally. The current
-boot contains no gamescope SIGSEGV/core or GPU fault match. This establishes the
-candidate10 boot-path fix for the prior candidate9 teardown failure, without
-erasing the earlier failure or claiming every possible shutdown path is tested.
+boot then contains no gamescope SIGSEGV/core or GPU fault match. These observations
+establish a successful initial scrub path, not a complete teardown fix: later
+normal reboot and SIGTERM failures below supersede its release status.
 
 The gate also verifies image-owned shell `2156` and controller broker `2009`,
 no bind overrides or failed system/player units, fresh frame heartbeat, successful
@@ -652,6 +654,16 @@ zero logged kernel MCE/EDAC/Xid/AER faults. Recorded software boot is **10.657s*
 UEFI/Secure Boot state. These observations do not establish audible sound,
 physical flicker, rumble, multiplayer, suspend/wake or power-button-to-home timing.
 
+A subsequent read-only query at `1791338595` uses the already installed NVML
+shared library, without installing `nvidia-smi`. It successfully reports **NVIDIA
+GeForce RTX 3070**, driver **610.43.03** and current GPU temperature **47°C**;
+NVML initialization, all queries and cleanup return success. This fills the
+earlier model/driver/temperature probe gap, while preserving the original partial
+audit. It calls no settings API and does not establish load/stress behavior or
+physical hardware acceptance. Evidence: `out/candidate10-nvml-health.json` and
+its query-only helper `out/candidate10-nvml-probe.py`, using NVIDIA's documented
+[device queries](https://docs.nvidia.com/deploy/nvml-api/latest/api/group__nvmlDeviceQueries.html).
+
 Reboot preserves the genuinely earned **2/47 · RUNE local** records, save SHA256
 `262efe189d585ee96c1485ac38cb42bce76f9ac342caa676c51edbe2bccb4d09`, genuine unlock
 times and global inbox IDs `[1,2,3]`; achievement IDs 2 and 3 remain the only unlock
@@ -665,7 +677,7 @@ An additional normal Play launch ran the real Tekken process `17906`, XID
 live-game compositor gate reports zero failures and readable live Wine/Proton
 environments without the failed loader trial. Normal Home → Close exited the
 game, restored the native shell and retained both genuine unlocks without replay.
-The strict postboot gate still reports zero failures after close. This checks
+The strict postboot gate still reports zero failures at that observation after close. This checks
 launch/render/close software behavior; it adds no physical-controller gameplay
 acceptance. Evidence: `out/candidate10-real-game-probe.json`,
 `out/candidate10-compositor-real-game.json`,
@@ -677,7 +689,58 @@ Local evidence is preserved in `out/candidate10-compositor.json`,
 `out/candidate10-postboot-gate.log`, `out/candidate10-updater-final.log`,
 `out/candidate10-hardware-audit.json`,
 `out/candidate10-achievements-after-reboot.json` and native
-`out/pc1-candidate10-tekken-details.png`. Fresh candidate10 media is being built;
-its offline install and installed-target acceptance are **pending**. The release
-task remains **open**, with **nine tracked OS tasks** remaining. Physical and
-sleep acceptance remain deferred under the owner's automated-only instruction.
+`out/pc1-candidate10-tekken-details.png`.
+
+After actual Tekken use and native screenshots, a normal full reboot exposes the
+remaining defect in compositor `2067` at **02:16:50 UTC**. Its early Vulkan cleanup
+message precedes a kernel SIGSEGV at address `0x40` in `libnvidia-glsi+0x402cd`.
+Shutdown aborts the coredump worker, so this event has kernel/journal evidence
+without a stored core. Evidence: `out/candidate10-normal-shutdown.json` and
+`out/candidate10-normal-shutdown-core-context.log`. Screenshot-only and postgame greetd/X11-I/O-error stops exit cleanly;
+those paths do not substitute for the failing ordinary signal/exit path.
+
+A subsequent normal SIGTERM on boot `b92e5954-341e-4c95-be9d-419bb39f8e09`
+reproduces the fault in compositor `17178` at **02:24:45 UTC**, with a retained
+current-boot core. Its named stack is `__run_exit_handlers` →
+`CBufferMemoizer::~CBufferMemoizer` → `CVulkanTexture::~CVulkanTexture` → NVIDIA
+eglcore/glsi, again `glsi+0x402cd` / address `0x40`, after the early cleanup log.
+The static client-buffer memo cache still privately owns imported textures until
+exit handlers. Candidate10 is therefore **release FAIL** despite its initial
+19-check compositor and postboot passes; no core, failed state or journal evidence
+was cleared. The preserved named stack in
+`out/candidate10-graceful-exit-result.log` is sufficient for attribution; raw core
+export was rejected by automatic approval review and was not performed.
+Candidate11's minimal `.pc1.3` memo-cache cleanup passes **11 ELF regressions**
+and preparation of the exact SHA-pinned source RPM with **`--fuzz=0`**. It drains
+the private imported-texture memo cache before backend teardown, after active GPU
+owners are released, and unlinks buffer listeners under the established Wayland
+lock → memo-map mutex order. Full production compilation/image publication,
+baked NVIDIA normal SIGTERM and normal reboot, and fresh-media acceptance remain
+pending; source-level passes do not establish the runtime fix.
+
+## Candidate10 scoped offline media acceptance — October 7
+
+Fresh media uses the exact candidate10 source/digest above. The raw image is
+**21,382,561,792 bytes**, SHA256
+`12ac989a927003a9b8dd078ad798d4806d00b6ad61b95300b4fceab1d363e64e`;
+the ISO is **6,007,554,048 bytes**, SHA256
+`a05ec5e032553a0498f12e0fe422b78a23d3ec1afc2425c25cc30d1464bc2bb4`.
+Hashes and sizes are preserved in
+`out/release-20261007-candidate10/SHA256SUMS` and `media-sizes.txt`.
+
+Actual offline installation to a blank **80GiB** VM disk completed through the
+controller interface's Ready to Play / Restart flow. With the installer USB
+absent, the installed target booted and passed **15/15** health checks: exact
+source/digest and digest-only origin, active system/player workers and session,
+fresh frame heartbeat, no failed units or current VM boot core, Enforcing SELinux
+with no enforcing AVC in the full journal, successful boot timer/GRUB flags and
+no devmode. Audio/update worker state and native Ready to Play/Settings captures
+were reviewed. `/boot` retains Anaconda's default ext4 read-write mount; no
+permission or SELinux loosening supplied the pass. Installed evidence is
+`out/release-20261007-candidate10/installed-health.json` (`failed_count=0`).
+
+This is a **candidate10 media/VM PASS**, independent of the actual PC1 NVIDIA
+normal-exit **release FAIL**. It does not certify a corrected candidate11 image
+or its future media. The release task remains **open**, with **nine tracked OS
+tasks** remaining and achievements complete. Physical and sleep acceptance remain
+deferred under the owner's automated-only instruction.

@@ -41,7 +41,7 @@ source = path.read_text()
 for needle in ('Release:        %autorelease\n', '\n%description\n', '\n%autopatch -p1\n'):
     if source.count(needle) != 1:
         raise SystemExit('unexpected Fedora spec structure: ' + repr(needle))
-source = source.replace('Release:        %autorelease\n', 'Release:        1.pc1.2%{?dist}\n')
+source = source.replace('Release:        %autorelease\n', 'Release:        1.pc1.3%{?dist}\n')
 source = source.replace('\n%description\n', '\nSource998: nvidia_output_cleanup.hpp\nSource999: nvidia_dispatch_lifetime.hpp\nPatch999: gamescope-3.16.23-nvidia-lifetime.patch\n\n%description\n')
 source = source.replace('\n%autopatch -p1\n', '\n%autopatch -p1\ncp %{SOURCE998} src/nvidia_output_cleanup.hpp\ncp %{SOURCE999} src/nvidia_dispatch_lifetime.hpp\n')
 path.write_text(source)
@@ -56,9 +56,9 @@ fi
 # the source's complete Fedora BuildRequires instead of hand-picked dependencies.
 dnf -y builddep "$work/rpm/SPECS/gamescope.spec"
 rpmbuild -bb --define "_topdir $work/rpm" --define '_smp_build_ncpus 2' "$work/rpm/SPECS/gamescope.spec"
-readonly built="$work/rpm/RPMS/x86_64/gamescope-3.16.23-1.pc1.2.fc43.x86_64.rpm"
-[[ $(rpm -qp --qf '%{NAME}-%{VERSION}-%{RELEASE}.%{ARCH}' "$built") == gamescope-3.16.23-1.pc1.2.fc43.x86_64 ]] || exit 1
+readonly built="$work/rpm/RPMS/x86_64/gamescope-3.16.23-1.pc1.3.fc43.x86_64.rpm"
+[[ $(rpm -qp --qf '%{NAME}-%{VERSION}-%{RELEASE}.%{ARCH}' "$built") == gamescope-3.16.23-1.pc1.3.fc43.x86_64 ]] || exit 1
 cp -- "$built" "$output/"
 # Keep an exact patched source RPM alongside the payload for source attribution.
 rpmbuild -bs --define "_topdir $work/rpm" "$work/rpm/SPECS/gamescope.spec"
-cp -- "$work/rpm/SRPMS/gamescope-3.16.23-1.pc1.2.fc43.src.rpm" "$output/"
+cp -- "$work/rpm/SRPMS/gamescope-3.16.23-1.pc1.3.fc43.src.rpm" "$output/"

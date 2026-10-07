@@ -1,6 +1,7 @@
 """Real ELF regression: mapped NVIDIA code is insufficient after driver exit."""
 import os
 from pathlib import Path
+import re
 import shutil
 import signal
 import subprocess
@@ -51,6 +52,8 @@ APPLICATION = r'''
 #include <cassert>
 #include <cstdlib>
 #include <memory>
+#include <mutex>
+#include <unordered_map>
 #include <vector>
 static void (*release_resource)(const char *);
 struct Texture { ~Texture() { release_resource("texture"); } };
@@ -84,9 +87,40 @@ struct Device {
     }
 } device;
 static std::shared_ptr<Texture> effect, upscale;
-static void cleanup() {
+static bool wayland_locked;
+static unsigned detached_listeners;
+static void wlserver_lock() { assert(!wayland_locked); wayland_locked = true; }
+static void wlserver_unlock() { assert(wayland_locked); wayland_locked = false; }
+namespace gamescope {
+struct TrackingMutex {
+    void lock() { assert(wayland_locked); }
+    void unlock() { assert(wayland_locked); }
+};
+class CBufferMemoizer {
+    struct Memo {
+        std::shared_ptr<Texture> private_texture;
+        explicit Memo(std::shared_ptr<Texture> texture) : private_texture(std::move(texture)) {}
+        ~Memo() { assert(wayland_locked); ++detached_listeners; }
+    };
+    mutable TrackingMutex m_mutBufferMemos;
+    std::unordered_map<unsigned, Memo> m_BufferMemos;
+public:
+    void Clear();
+    bool empty() const { return m_BufferMemos.empty(); }
+    void add(unsigned key, std::shared_ptr<Texture> texture) {
+        m_BufferMemos.emplace(std::piecewise_construct, std::forward_as_tuple(key),
+                             std::forward_as_tuple(std::move(texture)));
+    }
+};
+// Compile the exact production Clear() body added to pinned BufferMemo.cpp.
+#include "buffer_memo_clear.inc"
+}
+static gamescope::CBufferMemoizer buffer_memos;
+static void cleanup(bool clear_memos = true) {
     release_nvidia_output_before_driver_exit(device, output, []() {
         effect.reset(); upscale.reset();
+    }, [clear_memos]() {
+        if (clear_memos) buffer_memos.Clear();
     });
     assert(device.pending.empty() && device.unused.empty());
     assert(output.outputImages.empty() && output.outputImagesPartialOverlay.empty());
@@ -108,6 +142,7 @@ int main(int argc, char **argv) {
     assert(dlclose(driver) == 0);
     bool empty = !std::strcmp(argv[2], "empty");
     bool output_only = !std::strcmp(argv[2], "late-output");
+    bool late_memos = !std::strcmp(argv[2], "late-memos");
     if (!empty) {
         output.outputImages.push_back(std::make_shared<Texture>());
         output.outputImagesPartialOverlay.push_back(std::make_shared<Texture>());
@@ -119,6 +154,8 @@ int main(int argc, char **argv) {
         if (!output_only) output.swapchainHDRMetadata = std::make_shared<Metadata>();
         if (!output_only) {
             effect = std::make_shared<Texture>(); upscale = std::make_shared<Texture>();
+            buffer_memos.add(1, std::make_shared<Texture>());
+            buffer_memos.add(2, std::make_shared<Texture>());
             auto command = std::make_unique<Command>();
             command->texture = output.outputImages[0];
             device.pending.push_back(std::move(command));
@@ -128,7 +165,14 @@ int main(int argc, char **argv) {
     if (!std::strcmp(argv[2], "early") || !std::strcmp(argv[2], "twice") || empty) {
         cleanup();
         if (!std::strcmp(argv[2], "twice")) cleanup();
+        assert(buffer_memos.empty() && !wayland_locked);
+        assert(detached_listeners == (empty ? 0u : 2u));
     }
+    if (late_memos) cleanup(false); // Candidate10 output cleanup leaves private memos alive.
+    // Ordinary static map destruction isn't under the Wayland lock. Relax only
+    // the fixture's lock assertion for that negative-control exit path, so its
+    // real driver-state fault remains the observed failure.
+    if (!buffer_memos.empty()) wayland_locked = true;
     return 0; // Ordinary exit handlers and library finalizers remain enabled.
 }
 '''
@@ -143,6 +187,14 @@ class GamescopeOutputCleanupTests(unittest.TestCase):
         cls.root = Path(cls.temporary.name)
         for name in ("nvidia_dispatch_lifetime.hpp", "nvidia_output_cleanup.hpp"):
             shutil.copyfile(ROOT / "os/gamescope" / name, cls.root / name)
+        patch = (ROOT / "os/gamescope/gamescope-3.16.23-nvidia-lifetime.patch").read_text()
+        memo_patch = patch.split("--- a/src/BufferMemo.cpp\n", 1)[1]
+        additions = "\n".join(line[1:] for line in memo_patch.splitlines()
+                              if line.startswith("+") and not line.startswith("+++"))
+        method = re.search(r"    void CBufferMemoizer::Clear\(\)\n    \{.*?\n    \}", additions, re.S)
+        if method is None:
+            raise AssertionError("production memo-cache Clear method missing from patch")
+        (cls.root / "buffer_memo_clear.inc").write_text(method.group(0) + "\n")
         (cls.root / "driver.cpp").write_text(LIBRARY)
         (cls.root / "application.cpp").write_text(APPLICATION)
         cls.library = cls.root / "libnvidia-eglcore.so.610.43.03"
@@ -179,7 +231,7 @@ class GamescopeOutputCleanupTests(unittest.TestCase):
     def test_early_release_precedes_normal_driver_finalization(self):
         result = self.fixture("early")
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("driver-finalize commands=2 textures=10 metadata=1", result.stderr)
+        self.assertIn("driver-finalize commands=2 textures=12 metadata=1", result.stderr)
         self.assertLess(result.stderr.index("gpu-drained"), result.stderr.index("release command"))
         self.assertLess(result.stderr.index("early-cleanup-complete"), result.stderr.index("driver-finalize"))
         self.assertIn("normal-library-finalizer", result.stderr)
@@ -189,7 +241,14 @@ class GamescopeOutputCleanupTests(unittest.TestCase):
         result = self.fixture("twice")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stderr.count("early-cleanup-complete"), 2)
+        self.assertIn("driver-finalize commands=2 textures=12 metadata=1", result.stderr)
+
+    def test_output_cleanup_alone_leaves_private_memos_to_fault_at_exit(self):
+        result = self.fixture("late-memos")
+        self.assertEqual(result.returncode, -signal.SIGSEGV, result.stderr)
+        self.assertIn("early-cleanup-complete", result.stderr)
         self.assertIn("driver-finalize commands=2 textures=10 metadata=1", result.stderr)
+        self.assertIn("late-driver-call texture", result.stderr)
 
     def test_initialized_device_without_output_is_safe(self):
         result = self.fixture("empty")
