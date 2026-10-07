@@ -32,12 +32,14 @@ its native input profile, artwork and history. Genuine achievements now pass
 end to end, including a passive gameplay toast and persistent 2/47 progress.
 Candidate10 passed its initial PC1 compositor/postboot gates and offline VM
 installation, but later normal compositor exit reproduces an NVIDIA fault;
-release validation fails. Candidate11's targeted cleanup passes 11 ELF regressions,
-the full backend suite (214 passes, two optional skips), exact SHA-pinned SRPM
-preparation with zero fuzz, and all 287 production compile/link steps with binary
-and source RPM generation. The owner authorized pushing all current source and
-status on October 7; candidate11 image publication, baked normal-exit/reboot and
-fresh-media acceptance remain pending. See the [status checkpoint](docs/status-2026-10-07.md).
+release validation fails for that candidate. Candidate11's targeted cleanup is
+now published and verified on real PC1 NVIDIA hardware: idle and postgame normal
+SIGTERM, full reboot shutdown, and final compositor/postboot gates pass without
+a compositor fault. Its build passes 214 backend tests with two optional skips
+and the shell suites; all 11 focused ELF regressions pass. Fresh candidate11
+media and broader release acceptance remain open. See the
+[candidate11 evidence](docs/candidate11-teardown-acceptance-20261007.md) and
+[status checkpoint](docs/status-2026-10-07.md).
 Nine tracked tasks remain. Bluetooth reports the missing dongle correctly;
 physical checks and sleep testing are deferred under the owner's automated-only
 instruction. Candidate10's passing installer-media evidence is scoped to its VM.
@@ -51,7 +53,8 @@ this OS integration repository.
 This is a bootable development distro. The current build runs in a UEFI VM
 with its integrated browser, Files, controller input and Windows application
 lifecycle verified. Physical NVIDIA/controller/TV acceptance remains necessary.
-See the [current acceptance record](docs/acceptance-20261006.md) for software,
+See the [current teardown acceptance](docs/candidate11-teardown-acceptance-20261007.md)
+and [detailed acceptance record](docs/acceptance-20261006.md) for software,
 bench and candidate-image evidence, and the [earlier media record](docs/acceptance-2026-10-05.md)
 for dated VM/USB artifact details. Historical observations in
 other documents describe their dated builds.
@@ -68,7 +71,7 @@ other documents describe their dated builds.
 | Windows installation | EXE/MSI setup from Files, portable apps, explicit program selection, launch, minimize/resume, close and confirmed managed-prefix removal. The final image's service and first-use runtime passed the real 7-Zip lifecycle; see [the contract and validation](docs/windows-installation.md) |
 | Steam | Native client preferred, legacy Flatpak fallback, shared launch/stop helper and controller routing; account/game compatibility requires target validation |
 | Browser and files | Embedded Chromium with tabs, history/bookmarks, downloads, controller file uploads and web dialogs; Files search/path/history, split view, previews, cancellable copy/move, rename, trash and restore. See [built-in tools](docs/built-in-tools.md). |
-| Verification | Candidate10 runs 215 backend tests: 213 pass and two optional checks skip; integrated shell suites, real uinput multiplayer/rumble and Win32 setup-exit fixtures pass. Its initial PC1 compositor/postboot gates, full-journal Enforcing audit and normal updater execution pass, but subsequent normal SIGTERM exit produces retained NVIDIA core17178: release FAIL. Tekken launch/render/Close, metadata/history and genuine 2/47 persistence pass; candidate9's real earned toast/input/expiry/deduplication pass. Fresh candidate10 offline controller installation and USB-absent VM boot pass all 15 installed-health checks; this does not resolve the PC1 fault. Candidate11 passes 11 ELF regressions and exact SHA-pinned SRPM preparation with --fuzz=0; 214 backend passes/two optional skips and all 287 production compile/link steps with binary/source RPM generation pass; source push is now owner-authorized, while image publication, baked normal SIGTERM/reboot, fresh media and physical acceptance remain pending. |
+| Verification | Candidate11 is published and booted on PC1: two normal SIGTERM exits, including after game/screenshot use, normal full reboot shutdown and final compositor/postboot gates pass with no NVIDIA compositor fault. The build passes 214 backend tests with two optional skips and the integrated shell suites; 11 ELF teardown regressions and eight tracked reboot-verifier regressions pass. Candidate10's fault evidence remains preserved; its separate offline installation and USB-absent VM boot pass all 15 installed-health checks. Fresh candidate11 media and broader physical acceptance remain pending. |
 
 ## Architecture
 

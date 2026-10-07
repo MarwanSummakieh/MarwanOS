@@ -773,3 +773,17 @@ explicitly authorizes the current source/status push to the configured MarwanOS
 GitHub remote. The earlier rejected actions above remain part of the historical
 record. This source checkpoint does not establish candidate11 OS image
 publication or runtime/media acceptance; see the [status checkpoint](status-2026-10-07.md).
+
+## Candidate11 normal-exit acceptance — October 7
+
+Candidate11 was subsequently built, published and booted on PC1. Its source is
+`cc199319111e0fe7e52f558b2f04b8cfb7dbd53e`, image digest
+`sha256:a271f2ba2dedab79a5405c86e3a356dd4673208be468ec6a0afe62885623806b`.
+Two ordinary SIGTERM tests, including after actual Tekken launch/render/Close
+and a native screenshot, normal shutdown during a full reboot, and final
+compositor/postboot gates pass without a compositor SEGV/core. The prior-boot
+shutdown verifier passes all nine checks; its real candidate10 kernel-only
+negative control correctly fails. Candidate10's historical failure evidence
+remains preserved. Fresh candidate11 media and broader physical acceptance stay
+open. See the [candidate11 runtime record](candidate11-teardown-acceptance-20261007.md)
+for exact boot IDs, process IDs, scope and retained artifacts.
