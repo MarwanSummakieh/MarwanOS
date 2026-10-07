@@ -54,7 +54,9 @@ magick -background none -font "$FONT_FILE" -pointsize 100 \
     -bordercolor none -border 8 -strip "$OUT_POWERED"
 
 echo "==> MarwanOS tag"
-magick -background none "$MARWANOS_SOURCE" -resize 1257x417 -strip "$OUT_MARWANOS"
+# Rasterize the vector master at the full output resolution. Rendering at the
+# SVG's 419x139 nominal size and then enlarging would blur the vector outlines.
+magick -background none -density 288 "$MARWANOS_SOURCE" -resize 1257x417 -strip "$OUT_MARWANOS"
 
 echo "==> background field"
 magick -size 1672x941 gradient:"${FIELD_TOP}-${FIELD_BOTTOM}" \

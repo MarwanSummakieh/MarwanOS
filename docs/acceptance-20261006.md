@@ -765,3 +765,11 @@ normal-exit **release FAIL**. It does not certify a corrected candidate11 image
 or its future media. The release task remains **open**, with **nine tracked OS
 tasks** remaining and achievements complete. Physical and sleep acceptance remain
 deferred under the owner's automated-only instruction.
+
+## Source publication authorization — October 7
+
+The owner subsequently requested pushing all current work with its status. This
+explicitly authorizes the current source/status push to the configured MarwanOS
+GitHub remote. The earlier rejected actions above remain part of the historical
+record. This source checkpoint does not establish candidate11 OS image
+publication or runtime/media acceptance; see the [status checkpoint](status-2026-10-07.md).
