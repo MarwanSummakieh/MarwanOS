@@ -67,6 +67,24 @@ def read_json(path):
         return {}
 
 
+def journal_messages(arguments):
+    code, output, error = command(["journalctl", "-b", "--no-pager", "--all", "-o", "json", *arguments])
+    # journalctl uses 1 for a successful grep with no matches, but subprocess
+    # failures/timeouts also arrive as 1 with an error. Never treat those as an
+    # empty journal: the release gate must fail when evidence is unavailable.
+    if code not in (0, 1) or (code == 1 and error):
+        raise ValueError("boot journal query failed: " + error)
+    messages = []
+    for line in output.splitlines():
+        value = json.loads(line).get("MESSAGE", "")
+        if isinstance(value, list):
+            value = bytes(value).decode("utf-8", errors="replace")
+        if not isinstance(value, str):
+            raise ValueError("unreadable boot journal message")
+        messages.append(value)
+    return messages
+
+
 def walk_mounts(values):
     for value in values:
         yield value
@@ -152,7 +170,9 @@ def main():
     except OSError:
         build = {}
     actual_commit = build.get("MARWANOS_COMMIT", "")
-    check("baked expected source commit", actual_commit == expected_commit and "dirty" not in actual_commit,
+    check("baked expected source commit", 7 <= len(actual_commit) <= 40
+          and all(character in "0123456789abcdef" for character in actual_commit)
+          and expected_commit.startswith(actual_commit),
           actual_commit or "build-info missing")
     check("development shell disabled", not Path("/var/marwanos/devmode").exists())
     code, output, error = command(["findmnt", "--json", "--output", "TARGET,SOURCE,FSTYPE,FSROOT,OPTIONS"])
@@ -182,6 +202,18 @@ def main():
     for prefix, label in [(["systemctl"], "system"), (user_prefix, "player")]:
         code, output, error = command([*prefix, "--failed", "--no-legend", "--no-pager"])
         check(label + " has no failed units", code == 0 and not output, output or error)
+    code, output, error = command(["getenforce"])
+    check("SELinux remains enforcing", code == 0 and output == "Enforcing", output or error)
+    # Audit records can arrive through journald's audit transport rather than
+    # the kernel transport. A kernel-only query missed a real Plymouth denial.
+    denied = journal_messages(["--grep=avc:.*denied"])
+    enforcing_denials = [message for message in denied if not re.search(r"\bpermissive=1\b", message)]
+    check("full boot journal has no enforcing SELinux denial", not enforcing_denials,
+          " | ".join(enforcing_denials)[:1800])
+    cores = journal_messages(["COREDUMP_EXE=/usr/bin/gamescope"])
+    faults = journal_messages([r"--grep=gamescope[^\n]*(segfault|dumped core)|Process [0-9]+ \(gamescope[^)]*\).*dumped core"])
+    check("current boot has no gamescope SIGSEGV or core", not cores and not faults,
+          " | ".join(faults)[:1000])
     marker = runtime / "marwanos/shell.ready"
     try:
         age = time.time() - marker.stat().st_mtime

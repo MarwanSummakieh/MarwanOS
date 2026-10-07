@@ -5,7 +5,7 @@
   "components": {
     "shell": {
       "repository": "https://github.com/MarwanSummakieh/pc1-shell.git",
-      "commit": "12b43c263d659a44f1cbca8ed0b1f5b1ffa407be",
+      "commit": "68ac567b5b4b109eb32f91677849b4ee541fc80f",
       "files": {
         "docs/app-card-icons-bench-20261005.md": "718aa90a8420de8f10b8e0137dc99181ab5adc91",
         "docs/built-in-tools.md": "7ea67a75a2ee657ff6fd40d66d3e7ed25035b440",
@@ -24,7 +24,7 @@
         "scripts/check-browser-engine.sh": "9e97f0a245b7e4a204958bb36b196da8209e4f77",
         "scripts/check-controller-shell.sh": "a2cbccc3e9cd2a7a439663a43d190e99f8890165",
         "scripts/check-keyboard-preview.sh": "898ace49e07655260f5caa3cf929eae12716d867",
-        "scripts/check-shell.sh": "c53556bff7b5cee920e5fb80ef1c6319ec53dbc9",
+        "scripts/check-shell.sh": "668430bdbc939b850e4df454ef934482b4d2adfe",
         "scripts/check-tools-shell.sh": "65ca2dcc1942d6adf771b15e03540e7ab3cec3aa",
         "scripts/check-window-geometry.sh": "6da19468b3547167b30f137cfb5d7c097bcbf3dd",
         "scripts/check-windows-shell.sh": "290f67600db3f9b31e77a3977e9ded62dfb3e038",
@@ -97,7 +97,7 @@
         "shell/src/setup_screen.gd": "ca1ac3c825d3e31c04bbc9351bf39928c9afa271",
         "shell/src/shell_input.gd": "a3080a352a5d9ad7813217af318688d08fa0687f",
         "shell/src/shell_log.gd": "e6c9351f23852d923e5fae498b9dacf3c7586fcf",
-        "shell/src/shell_root.gd": "1fb68b83217f8f5d4e81285b2d98c52acec1b025",
+        "shell/src/shell_root.gd": "ee9af627f4c135f7e4205c2787fc5513cd0717ac",
         "shell/src/status_corner.gd": "931255a1c2d9c3cfcf3e3a2063496f95a27f85c6",
         "shell/src/system_status.gd": "a831ce8e89644ec714c98fdd083cb1fa7cf4c4dd",
         "shell/src/tv_theme.gd": "498f169114bcfcb42b80faa87a5c7ac665c2f29e",
@@ -150,7 +150,11 @@
         "tests/browser_download_directory.gd": "a6c451dc64d41b6aaadeb3f23e2c1430d0b880a6",
         "scripts/check-metadata-page-shell.sh": "41e8eeac74753a04b19f04b2d4393039ba8f83e2",
         "shell/src/metadata_page.gd": "34609408b6383f3492d9780b2645d27e13926a77",
-        "tests/metadata_page_shell.gd": "dc3c9e4c51ae3e151580fd0fed8631b5e0bd42c3"
+        "tests/metadata_page_shell.gd": "dc3c9e4c51ae3e151580fd0fed8631b5e0bd42c3",
+        "scripts/check-achievement-toast-shell.sh": "475c954753afdbb2bd5c85ab4719187fb00c3173",
+        "shell/src/achievement_toast.gd": "8f21531146c7dd357aa4302c4a48eee62c7a1725",
+        "tests/achievement_toast_probe.gd": "6e99befb93c7b64b3ab4a56685992f5592d2b63d",
+        "tests/achievement_toast_shell.gd": "65e94c39625b3eff9ccba0ba205f003aad09aac4"
       }
     },
     "installers": {
@@ -191,7 +195,7 @@
     },
     "services": {
       "repository": "https://github.com/MarwanSummakieh/pc1-services.git",
-      "commit": "e57d4d1fbfc50e11d36451bab2bfc2810a38c167",
+      "commit": "5cccd212a1b2449a970a02bc559c2dea1c5f44ac",
       "files": {
         "docs/audio-manager.md": "5fbb703c3a0389e7c494a5747a99ec4eee47aeed",
         "os/files/usr/lib/marwanos/audio/manager.py": "8cca9e3ac18f103aa307531bbd0eba8df59286c1",
@@ -206,7 +210,7 @@
         "os/files/usr/lib/systemd/user/marwanos-metadata.service": "d0434f861e485dc81e56fd05b67daa6b71703938",
         "tests/test_metadata.py": "d7908295a0f6cc44fc7feacf0a7e231acafd5b3e",
         "docs/game-metadata.md": "9c595b5d1f15e962a15a9a6306f193daf8a6ecb2",
-        "docs/achievements.md": "df9c25e0242b5b1e28e6ae55b40ff5a63e7726f3",
+        "docs/achievements.md": "6909d3d65aea6598b9550e09fae462ab9a3f3e46",
         "docs/bluetooth.md": "5dbddee116a0793c748c62c40d26ec3b52f77a93",
         "os/files/usr/lib/marwanos/achievements/manager.py": "9921903554e9011645f8b1b79a26f2185c3bc70a",
         "os/files/usr/lib/marwanos/bluetooth/manager.py": "4b95ab4f80114dc9be887b76911d14ee4bc8dee7",

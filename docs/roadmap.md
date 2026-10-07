@@ -18,12 +18,12 @@ features. An integrated Flathub store is removed from the roadmap.
 | Complete | Automatic game metadata and library presentation | Final candidate's real Tekken artwork, fullscreen Play-only Details, Options metadata refresh, offline cache and reboot persistence pass; prior physical controller gameplay confirmed |
 | Complete | Play history and recently played ordering | Real Tekken foreground/Home/minimize/resume/exit session and recent ordering pass; final candidate reboot and actual metadata refresh preserve the single 122.453-second session |
 | High | Controller rumble, multiplayer routing and reliable hotplug | Four slots and real force-feedback forwarding implemented; kernel/controller checks pass; physical rumble/two-pad acceptance pending |
-| High | Unified achievements | Candidate6 automatically fetched and cached all 47 genuine Tekken definitions/icons; native page and filters pass without false notifications or save changes; earned-unlock acceptance pending |
+| High | Unified achievements | Candidate6 fetched all 47 genuine definitions/icons and detected an actually earned Practice unlock with one persistent notification; native 1/47 page and restart deduplication pass. Gameplay suppresses toast presentation; its passive overlay correction needs baked acceptance |
 | High, waiting | Controller-operated Bluetooth pairing | Controller page and BlueZ pairing agent implemented; real private D-Bus fixture passes; physical dongle acceptance pending |
 | High | Download → install → cleanup | Final candidate's actual browser download, successful guided Close, app registration, explicit cleanup and installed-app lifecycle pass; torrent/multipart payloads retained; physical FDM lane pending |
 | Release | Reliable suspend/resume | Sleep action and read-only evidence helper exist; testing explicitly deferred by the owner |
 | Release | Silent boot, hardware and compatibility acceptance | Current-image TV/controller/audio/Steam/game testing and original boot-time gate remain incomplete |
-| Release | Bake recent bench fixes into a release image | Candidate6 70faf40 passes override-free software/catalog checks and offline installation/USB-absent boot, but fails the full-audit Plymouth gate and physical NVIDIA teardown. Source-owned fixes require new baked hardware/media acceptance. Physical gates remain |
+| Release | Bake recent bench fixes into a release image | Candidate6 70faf40 has verified image-owned payloads/catalog and functional offline installation/USB-absent boot, but the strict gate fails on a compositor core, enforcing Plymouth AVC and automatic-update origin error. Candidate9 corrections require fresh baked hardware/media acceptance. Physical gates remain |
 
 ### Metadata and Tekken 8 acceptance
 

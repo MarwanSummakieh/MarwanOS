@@ -342,8 +342,28 @@ all 47 unique IDs, names/descriptions and decoded cached icons with the genuine
 official response. The existing RUNE `Count=0` save is byte-for-byte unchanged;
 there are zero observed unlocks and no schema-only achievement notifications.
 Actual 3440×1440 captures show the separate **0/47 unlocked · RUNE local** page,
-All/Locked/Unlocked filters, and the roomy Play-only Details page. A genuine
-earned unlock/notification remains unverified.
+All/Locked/Unlocked filters, and the roomy Play-only Details page. The earned
+unlock check below followed this silent catalog baseline.
+
+Ordinary keyboard gameplay then dealt **2,020 actual damage** in offline Practice.
+At **22:57:33 UTC**, Tekken itself wrote `Practicedamage` with `Achieved=1` and
+`UnlockTime=1791327453`; its indexed RUNE count changed from zero to one. The
+image-owned worker detected **No pain, no gain!** at 22:57:35 and the normal
+notification service persisted exactly one achievement notification, ID2.
+Actual native captures show **1/47 · RUNE local · Unlocked**, its genuine colored
+icon, description and matching timestamp. Controller-equivalent Refresh and an
+ordinary image-owned achievement worker restart preserve the record and single
+notification without replay. No achievement/save/event was injected or edited.
+The temporary keyboard advertised no joystick capabilities, enforced the actual
+focused Tekken process/window, bounded every hold, and released/destroyed itself.
+The coordinator-owned Practice test was normally closed through the shell.
+
+This uncovered a real presentation gap: the shell deliberately suppresses
+notifications while an application owns the screen. The earned event and durable
+inbox pass, but **in-game toast presentation fails** on candidate6. A passive,
+non-focusable native overlay correction needs source and baked acceptance before
+the achievements issue can close. Replaying the earned notification is not a
+substitute for another genuinely earned event after that correction.
 
 The scoped Vulkan-loader environment trial **failed**. Original gamescope
 PID1468 had the flag set but produced a SIGSEGV/core at 22:20:01 UTC during the
@@ -382,6 +402,21 @@ preserving greetd/readiness. The narrow source change and two lifecycle regressi
 require a new baked image; no terminal permission or SELinux policy is loosened.
 See [Plymouth cleanup](plymouth-cleanup.md). None of these VM checks establishes NVIDIA physical
 teardown, physical vibration/audio, cold-power timing or Secure Boot acceptance.
+
+The fully compiled production gamescope helper subsequently passed all 287
+compile/link targets, RPM packaging and exact version checks in a bounded
+disposable Fedora build container. No resulting RPM was installed on PC1.
+Candidate7's image build failed before compilation because `.containerignore`
+excluded the new helper; a real tiny Podman build confirms the corrected context
+now includes both new COPY inputs. Candidate8's superseded build was cancelled.
+The next image combines dispatch retention, Plymouth cleanup and passive
+achievement toast presentation. No new baked-runtime pass is claimed yet.
+
+The release gate now checks SELinux Enforcing and all journal transports for
+enforcing denials, plus the current boot's gamescope SIGSEGV/core records. Earlier
+zero-failure results apply to the checks in their dated versions; they did not
+certify these newly explicit gates. Permissive-domain audit records are distinct
+from denied enforcing accesses and are not silently turned into policy grants.
 
 Suspend/resume remains explicitly deferred: the owner chose **Continue without
 sleep testing**. No sleep cycle was performed or reported as passing.
@@ -471,9 +506,31 @@ The default reference game is the installed Tekken entry above; `--game-id` sele
 another reference installation with cover/background/logo/header acceptance assets.
 Play and close the game once before the gate if its history is empty. Wait for the
 boot-success timer after a fresh boot. The helper reads image identity, overrides,
-services/failed units, frame/audio state, metadata asset hashes, real play history,
+services/failed units, full-journal enforcing AVCs/compositor crashes, frame/audio state, metadata asset hashes, real play history,
 achievement provider response and stable controller slot files/devices. It never
 changes audio, sends controller heartbeats, modifies files, stages images or restarts
 services. It exits nonzero on missing or mismatched evidence. Its success certifies
 the listed software checks only; the physical checklist remains independently
 pending until observed.
+
+## Candidate9 preparation
+
+A later read of candidate6 accepted its full source SHA while correctly reporting
+three failures: the existing compositor core, the enforcing Plymouth denial, and
+a newly failed `rpm-ostreed-automatic.service`. The latter failed at 23:27:04 UTC
+because its saved container origin combined a tag and digest, a form rejected by
+the container parser. No failed state was cleared to obtain a passing gate.
+
+`make-installer.sh` now passes digest-only pinned references to the image builder.
+Five regressions run its actual entrypoint with a disposable image-builder boundary;
+they verify the resulting arguments, registry ports/namespaces, unchanged tag-only
+behavior and rejection of malformed pins before privileged operations. These tests
+passed, but do not establish an installed image's origin. Candidate9 staging and
+fresh release media must use the published digest-only reference, then verify the
+actual booted origin and successful update checks separately.
+
+The postboot helper now also rejects journal-query errors and timeouts instead of
+mistaking them for an empty fault list. Eight focused regressions exercise its
+actual embedded journal functions, legitimate no-match results, unreadable records,
+retained AVC/core evidence and full source-SHA matching. All eight passed locally;
+the next image still requires fresh boot and media evidence.
