@@ -549,11 +549,12 @@ Candidate9 release media is on hold.
 
 The automated candidate9 hardware audit reports both NVMe SMART checks passing
 and zero kernel hardware-fault matches. Recorded software boot time is 9.922
-seconds, without establishing a filmed physical cold-boot measurement. NVIDIA
-probe remains partial because `nvidia-smi` is unavailable. The passive toast's
-local headless and native tests pass at 1280×720, 1920×1080 and 3440×1440; genuine
-baked foreground-game toast QA is still pending. The prior actual 1/47 unlock,
-single persistent notification and restart deduplication evidence remain valid.
+seconds, without establishing a filmed physical cold-boot measurement. A separate
+sanitized `/proc`/sysfs read confirms NVIDIA GeForce RTX 3070 and loaded open
+kernel module 610.43.03. Temperature remains unavailable through NVIDIA-associated
+hwmon sensors, with `nvidia-smi` absent. The passive toast's local headless and
+native tests pass at 1280×720, 1920×1080 and 3440×1440. The subsequent genuine baked
+achievement and foreground-toast acceptance is recorded below.
 
 Candidate10's released `.pc1.2` cleanup header/patch targets NVIDIA on the DRM
 session backend. It runs in ordinary compositor shutdown after commit/LUT/focus
@@ -561,7 +562,122 @@ cleanup and before backend removal: drain submitted work, free pending and
 cached command buffers, then release upscale/effect and output texture owners
 while driver state is alive. Normal signals, return and finalizers remain; the
 change adds no Vulkan device/instance destruction. Ten focused regressions and
-exact official SRPM preparation with `--fuzz=0` pass. Full candidate10 compilation,
-exact integrated source/publication, baked NVIDIA boot and fresh release media
-acceptance remain pending. The owner requested automated checks only; no further
+exact official SRPM preparation with `--fuzz=0` pass. The
+[candidate10 image build](https://github.com/MarwanSummakieh/MarwanOS/actions/runs/37555843652)
+has succeeded; subsequent baked NVIDIA boot acceptance passes as recorded below,
+while fresh release media remains pending. The owner requested automated checks only; no further
 physical or sleep testing is requested, and physical acceptance remains unclaimed.
+
+## Candidate9 genuine achievement and passive toast acceptance — October 7
+
+On the exact candidate9 image above, normal offline Character Customization
+created a new empty Alisa slot with the free default black hair color and used
+the ordinary thumbnail-confirm/Save flow. At **01:26:55 UTC** (`1791336415`),
+Tekken genuinely earned `Customize` / **You're in for it now!**. The genuine RUNE
+count changed from one to two; the worker reports **2/47** with the official
+catalog total. The save SHA256 is
+`262efe189d585ee96c1485ac38cb42bce76f9ac342caa676c51edbe2bccb4d09`.
+The normal image-owned worker emitted exactly one new durable achievement
+notification, ID 3 at `1791336416`. No purchase, existing-slot overwrite, Notify
+replay or manual achievement/save edit supplied this event.
+
+Actual **3440×1440** compositor captures show the full readable title, game and
+description over the game roster. The independent passive native window
+`4194376` carries `GAMESCOPE_EXTERNAL_OVERLAY=1`. Every sampled compositor and
+keyboard focus remains on Tekken PID `23763`, XID `44040193`. During the popup,
+the focus-guarded temporary kernel keyboard requested exactly one LEFT hold of
+75 ms; its real server records key-down/release and the compositor input counter
+changes `72→74`. Those log timestamps do not measure the exact hardware hold
+duration. No toast remains at recorded observer offsets **+7.097 seconds** and
+**+10.198 seconds**, with game focus retained. A property read during retirement
+observed the old XID disappear (`BadWindow`); later samples and native frames
+confirm clean expiry rather than a stuck overlay. These are sampled observations,
+not a continuous trace or physical-controller acceptance.
+
+After a normal game close, actual native All and Unlocked pages show **2/47 ·
+RUNE local**, both colored icons, genuine descriptions and unlock times
+01:26:55 UTC / 22:57:33 UTC. Controller-equivalent Y Refresh and an ordinary
+image-owned worker restart preserve the same hash, records and notification
+IDs. Fresh worker `137716` is active from **01:31:18 UTC**; two post-restart reads
+retain global inbox IDs `[1,2,3]`, with achievement IDs 2 and 3 only and no replay.
+The temporary QA keyboard recorded destruction at **01:28:52 UTC**; the shell
+regained focus. Installed Tekken achievement acceptance is complete, leaving
+**nine tracked OS tasks**. Candidate9's separate NVIDIA teardown defect remains
+part of that image's failed release evidence. Candidate10 validates the boot fix
+below; fresh release media and the separate physical acceptance remain pending.
+
+Preserved local evidence includes `out/candidate9-genuine-toast-proof.json`
+(nine independent checks with source-file hashes),
+`out/candidate9-toast-observer2.jsonl`, `out/candidate9-toast-input2.jsonl`,
+`out/candidate9-keyboard3.jsonl`, native `pc1-candidate9-genuine-toast-01.png`
+and `-07.png`, `pc1-candidate9-achievements.png`,
+`pc1-candidate9-unlocked-after-refresh.png`,
+`out/candidate9-achievements-after-restart.json`,
+`out/candidate9-achievements-after-restart-delayed.json` and
+`out/candidate9-worker-and-qa-cleanup.log`. The reviewed evidence preserves
+the earlier Practice unlock and the newly earned Customize record; catalog
+definitions never substitute for personal progress.
+
+## Candidate10 actual boot and software gates — October 7
+
+Candidate10 source `77a3ede381837163d15c5b1c702e5a68709897d5` published digest
+`sha256:76bdea953d2dc4d5c4e995ac48d64f3214df9ff26b4a63004ecbebe1226461c1`.
+The actual boot `5b5693c6-bb56-4b85-b7d5-527c013e653b` retains digest-only origin
+`ghcr.io/marwansummakieh/marwanos@sha256:76bdea953d2dc4d5c4e995ac48d64f3214df9ff26b4a63004ecbebe1226461c1`
+and runs gamescope `3.16.23-1.pc1.2.fc43.x86_64`. Its successful
+[image build](https://github.com/MarwanSummakieh/MarwanOS/actions/runs/37555843652)
+includes passing source checks: 215 tests total, 213 passes and two optional skips.
+
+Both actual compositor verification and the strict postboot software gate report
+**zero failures**. During the normal image-owned link scrub, compositor `1514`
+records release of the embedded NVIDIA Vulkan output and command buffers before
+backend teardown; replacement compositor `2067` starts normally. The current
+boot contains no gamescope SIGSEGV/core or GPU fault match. This establishes the
+candidate10 boot-path fix for the prior candidate9 teardown failure, without
+erasing the earlier failure or claiming every possible shutdown path is tested.
+
+The gate also verifies image-owned shell `2156` and controller broker `2009`,
+no bind overrides or failed system/player units, fresh frame heartbeat, successful
+GRUB boot state, Enforcing SELinux with no enforcing denial in the full boot
+journal, selectable audio, clean Bluetooth no-adapter state, four verified metadata
+asset hashes, native Tekken input profile and four stable application pads.
+Normal `rpm-ostreed-automatic.service` execution completed at **01:45:54 UTC**
+with `Result=success` and `ExecMainStatus=0`; its inactive state after completion
+is normal. This uses the actual digest-only origin and configured updater stage.
+
+The candidate10 hardware audit passes both NVMe SMART health queries and finds
+zero logged kernel MCE/EDAC/Xid/AER faults. Recorded software boot is **10.657s**
+(737ms kernel, 4.773s initrd, 5.146s userspace). The audit remains **PARTIAL**:
+`nvidia-smi` is absent, GPU temperature is unverified and firmware did not expose
+UEFI/Secure Boot state. These observations do not establish audible sound,
+physical flicker, rumble, multiplayer, suspend/wake or power-button-to-home timing.
+
+Reboot preserves the genuinely earned **2/47 · RUNE local** records, save SHA256
+`262efe189d585ee96c1485ac38cb42bce76f9ac342caa676c51edbe2bccb4d09`, genuine unlock
+times and global inbox IDs `[1,2,3]`; achievement IDs 2 and 3 remain the only unlock
+notifications, without replay. Native 3440×1440 Tekken Details retains the full
+background and Play-only action, now showing **52 minutes / three sessions** after
+the genuine gameplay above. This extends persistence evidence; the original
+122.453-second session and candidate9's earned-toast proof remain historical facts.
+
+An additional normal Play launch ran the real Tekken process `17906`, XID
+`44040193`, and rendered its native intro through the image compositor. The
+live-game compositor gate reports zero failures and readable live Wine/Proton
+environments without the failed loader trial. Normal Home → Close exited the
+game, restored the native shell and retained both genuine unlocks without replay.
+The strict postboot gate still reports zero failures after close. This checks
+launch/render/close software behavior; it adds no physical-controller gameplay
+acceptance. Evidence: `out/candidate10-real-game-probe.json`,
+`out/candidate10-compositor-real-game.json`,
+`out/pc1-candidate10-real-game-ready.png`,
+`out/pc1-candidate10-shell-restored.png` and
+`out/candidate10-achievements-after-game-close.json`.
+
+Local evidence is preserved in `out/candidate10-compositor.json`,
+`out/candidate10-postboot-gate.log`, `out/candidate10-updater-final.log`,
+`out/candidate10-hardware-audit.json`,
+`out/candidate10-achievements-after-reboot.json` and native
+`out/pc1-candidate10-tekken-details.png`. Fresh candidate10 media is being built;
+its offline install and installed-target acceptance are **pending**. The release
+task remains **open**, with **nine tracked OS tasks** remaining. Physical and
+sleep acceptance remain deferred under the owner's automated-only instruction.

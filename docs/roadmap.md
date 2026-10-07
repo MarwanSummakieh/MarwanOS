@@ -13,17 +13,20 @@ features. An integrated Flathub store is removed from the roadmap.
 
 ## Remaining work
 
+**Nine tracked OS tasks remain.** Automatic metadata/presentation, installed
+Tekken verification, persistent play history and achievements are complete.
+
 | Priority | Work | Status / dependency |
 | --- | --- | --- |
 | Complete | Automatic game metadata and library presentation | Final candidate's real Tekken artwork, fullscreen Play-only Details, Options metadata refresh, offline cache and reboot persistence pass; prior physical controller gameplay confirmed |
-| Complete | Play history and recently played ordering | Real Tekken foreground/Home/minimize/resume/exit session and recent ordering pass; final candidate reboot and actual metadata refresh preserve the single 122.453-second session |
+| Complete | Play history and recently played ordering | Real Tekken foreground/Home/minimize/resume/exit session and recent ordering pass; the original 122.453-second session survives refresh/reboots. After subsequent genuine gameplay, candidate10 Details shows 52 minutes across three sessions |
 | High | Controller rumble, multiplayer routing and reliable hotplug | Four slots and real force-feedback forwarding implemented; kernel/controller checks pass; physical rumble/two-pad acceptance pending |
-| High | Unified achievements | All 47 genuine definitions/icons and an actually earned Practice unlock with one persistent notification are verified; native 1/47 page and restart deduplication pass. Candidate9's passive overlay passes local headless/native tests at three resolutions; genuine baked gameplay toast remains pending |
+| Complete | Unified achievements | All 47 genuine definitions/icons, two naturally earned Tekken unlocks, native 2/47 page/Refresh and worker-restart deduplication pass. Candidate9's real in-game toast stays passive during guarded keyboard input, expires and preserves game focus; candidate10 reboot preserves 2/47 without notification replay. Physical controller acceptance remains separate |
 | High, waiting | Controller-operated Bluetooth pairing | Controller page and BlueZ pairing agent implemented; real private D-Bus fixture passes; physical dongle acceptance pending |
 | High | Download → install → cleanup | Final candidate's actual browser download, successful guided Close, app registration, explicit cleanup and installed-app lifecycle pass; torrent/multipart payloads retained; physical FDM lane pending |
 | Release | Reliable suspend/resume | Sleep action and read-only evidence helper exist; testing explicitly deferred by the owner |
-| Release | Silent boot, hardware and compatibility acceptance | Candidate9 automated audit passes both NVMe SMART checks and finds zero kernel hardware faults; software boot is 9.922s. NVIDIA probe is partial without nvidia-smi. Physical TV/controller/audio/Steam/game and filmed cold-boot acceptance remain unclaimed; owner requested automated checks only |
-| Release | Bake recent bench fixes into a release image | Published candidate9 3ff89cf passes full SELinux audit and actual updater-stage execution, but strict gate FAIL1 records current-boot NVIDIA teardown core1508. Candidate10 .pc1.2 early cleanup has 10 focused regression passes and exact SRPM zero-fuzz preparation; full compile, baked boot and fresh media pending. Candidate6 functional media evidence remains scoped; candidate9 media is on hold |
+| Release | Silent boot, hardware and compatibility acceptance | Candidate10 automated audit passes both NVMe SMART checks and finds zero kernel hardware faults; software boot is 10.657s. NVIDIA probe remains partial without nvidia-smi. Physical TV/controller/audio/Steam/game and filmed cold-boot acceptance remain unclaimed; owner requested automated checks only |
+| Release | Bake recent bench fixes into a release image | Candidate10 77a3ede / digest 76bdea953d2d… uses .pc1.2 early cleanup; actual compositor and postboot gates both report zero failures, including full SELinux audit, successful normal updater execution and no current-boot NVIDIA teardown core. Source checks pass 213 tests with two optional skips. Fresh candidate10 release media is building and remains pending; release stays open. Candidate9's core1508 is retained as prior failed evidence; candidate6 functional media evidence remains scoped |
 
 ### Metadata and Tekken 8 acceptance
 
@@ -52,8 +55,9 @@ the new metadata worker now provides the automatic provider/download pipeline.
 The [2026-10-06 metadata implementation](game-metadata.md) now supplies automatic
 matching, downloads, persistent cache and spacious controller details. The owner
 confirmed actual controller gameplay after the saved native-input profile repair.
-Physical release acceptance and the separate controller-page final bake remain
-open; see the current acceptance record for exact software evidence and defects.
+The controller page is baked and verified on candidate10. Physical release
+acceptance remains open; see the current acceptance record for exact software
+evidence and its limits.
 
 Playnite's documented model uses metadata providers and automatically enriches
 games on import, with later refresh and editing. Use that behavior as the baseline:
@@ -89,9 +93,15 @@ games on import, with later refresh and editing. Use that behavior as the baseli
       icons, locked/unlocked state, completion totals and unlock times when supplied.
 - [x] Show newly observed unlock notifications without replaying the entire history
       during the first sync; support offline cached viewing and later synchronization.
-- [ ] Validate a real earned unlock end to end. Unsupported achievement sources must
+- [x] Validate a real earned unlock end to end. Unsupported achievement sources must
       have an explicit unavailable state; identifying a game does not supply its
       player's unlock state.
+
+Candidate9 verifies the actual Customize unlock after ordinary game Save, a
+readable passive toast over Tekken with keyboard input/focus preserved, expiry,
+the native 2/47 page and no notification replay after Refresh/worker restart.
+See [achievement evidence](achievements.md). This completes the achievements
+task without claiming unsupported providers or physical-controller testing.
 
 Steam exposes player achievements and game schemas through its documented
 [ISteamUserStats Web API](https://partner.steamgames.com/doc/webapi/ISteamUserStats).

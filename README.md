@@ -28,9 +28,12 @@ See the [current roadmap](docs/roadmap.md) for priorities, dependencies and
 remaining hardware acceptance. Tekken installation, metadata/cache verification
 and user-confirmed physical controller gameplay completed on 2026-10-06;
 the final candidate's actual Metadata Refresh and image-owned reboot preserve
-its native input profile, artwork and history. Bluetooth now
-reports the missing dongle correctly. Physical release gates remain pending;
-sleep testing is deferred at the owner's request.
+its native input profile, artwork and history. Genuine achievements now pass
+end to end, including a passive gameplay toast and persistent 2/47 progress.
+Candidate10 passes the actual PC1 compositor and strict postboot software gates.
+Nine tracked tasks remain. Bluetooth reports the missing dongle correctly;
+physical checks and sleep testing are deferred under the owner's automated-only
+instruction. Fresh candidate10 installer-media validation is in progress.
 
 Development is organized through the [PC1 GitHub Project](https://github.com/users/MarwanSummakieh/projects/3)
 and [six repositories](docs/repositories.md), with pinned component copies in
@@ -58,7 +61,7 @@ other documents describe their dated builds.
 | Windows installation | EXE/MSI setup from Files, portable apps, explicit program selection, launch, minimize/resume, close and confirmed managed-prefix removal. The final image's service and first-use runtime passed the real 7-Zip lifecycle; see [the contract and validation](docs/windows-installation.md) |
 | Steam | Native client preferred, legacy Flatpak fallback, shared launch/stop helper and controller routing; account/game compatibility requires target validation |
 | Browser and files | Embedded Chromium with tabs, history/bookmarks, downloads, controller file uploads and web dialogs; Files search/path/history, split view, previews, cancellable copy/move, rename, trash and restore. See [built-in tools](docs/built-in-tools.md). |
-| Verification | Candidate8's 197 backend tests (two optional skips), integrated controller suites, real uinput multiplayer/rumble and Win32 setup-exit fixtures pass. Actual PC1 Tekken history, automatic 47-definition catalog, one genuinely earned achievement with restart deduplication, HDMI/USB stream routing and FDM lifecycle pass. The stricter full-journal release gate correctly rejects candidate6's compositor crash and Plymouth denial. NVIDIA dispatch retention, Plymouth cleanup and passive gameplay notifications still need baked-runtime acceptance; physical release gates remain. Earlier Chromium/USB/VM checks apply to their recorded builds. |
+| Verification | Candidate10 runs 215 backend tests: 213 pass and two optional checks skip; integrated shell suites, real uinput multiplayer/rumble and Win32 setup-exit fixtures pass. Its actual PC1 compositor and postboot gates report zero failures, with no current-boot compositor core, full-journal Enforcing audit clean and normal updater execution successful. Tekken launch/render/Close, metadata/history and genuine 2/47 reboot persistence pass; candidate9's real earned gameplay toast, focus/input, expiry and restart deduplication also pass. Fresh candidate10 media is being validated. Physical gates remain open; earlier Chromium/USB/VM observations apply to their recorded builds. |
 
 ## Architecture
 
