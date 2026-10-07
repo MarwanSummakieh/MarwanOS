@@ -27,7 +27,7 @@ if name == 'systemctl':
     elif args[0] == 'stop': s['greetd'] = False; s['tty_owner'] = 'root'
     elif args[0] == 'start': s['greetd'] = True; s['tty_owner'] = 'player'
 elif name == 'pgrep':
-    status = 0 if (s['daemon'] if args[-1] == 'plymouthd' else s['greetd']) else 1
+    status = 0 if (s['daemon'] if args[-1] == 'plymouthd' else s['greetd'] and s['gamescope']) else 1
 elif name == 'plymouthd': s['daemon'] = True
 elif name == 'plymouth':
     if args == ['--ping']: status = 0 if s['daemon'] else 1
@@ -44,7 +44,7 @@ sys.exit(status)
 
 @unittest.skipUnless(shutil.which("bash"), "bash is required for display lifecycle regression")
 class LinkScrubCleanupTests(unittest.TestCase):
-    def run_scrub(self, *, fail_cleanup=False, old_cleanup=False):
+    def run_scrub(self, *, fail_cleanup=False, old_cleanup=False, gamescope=True):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             commands = root / "bin"
@@ -55,6 +55,7 @@ class LinkScrubCleanupTests(unittest.TestCase):
                 executable.chmod(0o755)
             state = root / "state.json"
             state.write_text(json.dumps({"greetd": True, "daemon": False,
+                                         "gamescope": gamescope,
                                          "tty_owner": "player", "deactivated": False,
                                          "denied_reopen": False, "fail_cleanup": fail_cleanup,
                                          "calls": []}))
@@ -88,6 +89,17 @@ class LinkScrubCleanupTests(unittest.TestCase):
         self.assertNotIn("plymouthd reaped", result.stdout)
         self.assertTrue(state["greetd"])
         self.assertEqual(state["tty_owner"], "player")
+
+    def test_xorg_session_is_not_restarted_or_given_a_new_splash(self):
+        result, state = self.run_scrub(gamescope=False)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(state["greetd"])
+        self.assertFalse(state["daemon"])
+        self.assertFalse(state["denied_reopen"])
+        self.assertFalse(state["deactivated"])
+        self.assertFalse(any(call[0] in ("systemctl", "plymouth", "plymouthd")
+                             for call in state["calls"]), state["calls"])
+        self.assertIn("link scrub is unnecessary", result.stdout)
 
 
 if __name__ == "__main__":

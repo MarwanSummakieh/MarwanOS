@@ -76,6 +76,15 @@ if [[ -e $STAMP ]]; then
 fi
 : >"$STAMP"
 
+# This transition repairs gamescope's direct-DRM scanout only. NVIDIA and VM
+# sessions now use Xorg, where restarting the session adds a visible bounce and
+# starts plymouth against a player-owned terminal without repairing anything.
+if ! pgrep -x gamescope-wl >/dev/null 2>&1 && ! pgrep -x gamescope >/dev/null 2>&1; then
+    log "no direct-DRM gamescope session; link scrub is unnecessary"
+    trap - EXIT INT TERM
+    exit 0
+fi
+
 if ! systemctl is-active --quiet greetd; then
     warn "greetd is not active; the scrub has nothing to bounce"
     trap - EXIT INT TERM
