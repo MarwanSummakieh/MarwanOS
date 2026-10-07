@@ -36,10 +36,18 @@ release validation fails for that candidate. Candidate11's targeted cleanup is
 now published and verified on real PC1 NVIDIA hardware: idle and postgame normal
 SIGTERM, full reboot shutdown, and final compositor/postboot gates pass without
 a compositor fault. Its build passes 214 backend tests with two optional skips
-and the shell suites; all 11 focused ELF regressions pass. Fresh candidate11
-media and broader release acceptance remain open. See the
+and the shell suites; all 11 focused ELF regressions pass. Candidate11 raw media
+and its branded offline ISO are built and checksum-verified; fresh installation
+and broader release acceptance remain open. See the
 [candidate11 evidence](docs/candidate11-teardown-acceptance-20261007.md) and
 [status checkpoint](docs/status-2026-10-07.md).
+The latest source checkpoint adds NVIDIA Xorg display selection and automatic
+175 Hz startup, native virtual-controller hotplug and hardware identities,
+Steam Input recapture protection, and duplicate Steam-card merging. The owner
+confirmed smooth Steam display and Silksong menu controls on PC1. These changes
+still need a replacement image and full reboot validation. Current source
+validation passes 248 backend tests with two optional skips; see the
+[display investigation](docs/steam-display-corruption-20261007.md).
 Nine tracked tasks remain. The owner has requested physical acceptance; the
 [session record](docs/physical-acceptance-20261007.md) tracks pending observations.
 Only one physical controller is available and there is no Bluetooth adapter, so
@@ -65,7 +73,7 @@ other documents describe their dated builds.
 |---|---|
 | OS | Fedora 43 / Universal Blue bootc image, pinned NVIDIA open-module sidecar, Plymouth splash, accelerated Xorg/Openbox on connected NVIDIA displays and VMs, gamescope on other GPUs; see [ADR 0013](docs/adr/0013-nvidia-xorg-display.md) |
 | Shell | Godot 4.7.1, controller navigation, library rail, app overlay, compact movable keyboard with saved position, settings, Wi-Fi, updates, power and diagnostics |
-| Controller ownership | Exclusive Linux input broker, four remembered player slots, hardware model identities, native virtual-device hotplug, Linux rumble forwarding, all-pad Home/Share and gated game input; physical rumble/two-pad acceptance pending; see [controller routing](docs/controller-routing.md) |
+| Controller ownership | Exclusive Linux input broker, four remembered player slots with virtual devices only for attached pads, hardware model identities, native virtual-device hotplug, Linux rumble forwarding, Steam Input recapture protection, all-pad Home/Share and gated game input; physical Tekken hotplug/rumble and two-pad acceptance pending; see [controller routing](docs/controller-routing.md) |
 | Library | Desktop applications, Steam libraries, standalone Windows executables and managed umu apps; automatic Steam Store metadata/artwork with persistent offline cache, a Play-only details page and separate Options → Metadata refresh/match page; see [metadata evidence](docs/game-metadata.md) |
 | History and achievements | Persistent actual foreground sessions, totals and recent sorting; per-profile local/Steam achievement providers, automatic keyless Steam catalogs, progress, offline viewing and first-sync-safe unlock notifications. Unsupported schemas/profiles stay explicit; see [achievements](docs/achievements.md) |
 | Bluetooth | Controller pairing page, BlueZ agent, codes/confirmation, trust/removal/reconnect; actual dongle acceptance pending; see [Bluetooth](docs/bluetooth.md) |
@@ -73,7 +81,7 @@ other documents describe their dated builds.
 | Windows installation | EXE/MSI setup from Files, portable apps, explicit program selection, launch, minimize/resume, close and confirmed managed-prefix removal. The final image's service and first-use runtime passed the real 7-Zip lifecycle; see [the contract and validation](docs/windows-installation.md) |
 | Steam | Native client preferred, legacy Flatpak fallback, shared launch/stop helper and controller routing; account/game compatibility requires target validation |
 | Browser and files | Embedded Chromium with tabs, history/bookmarks, downloads, controller file uploads and web dialogs; Files search/path/history, split view, previews, cancellable copy/move, rename, trash and restore. See [built-in tools](docs/built-in-tools.md). |
-| Verification | Candidate11 is published and booted on PC1: two normal SIGTERM exits, including after game/screenshot use, normal full reboot shutdown and final compositor/postboot gates pass with no NVIDIA compositor fault. The build passes 214 backend tests with two optional skips and the integrated shell suites; 11 ELF teardown regressions and eight tracked reboot-verifier regressions pass. Candidate10's fault evidence remains preserved; its separate offline installation and USB-absent VM boot pass all 15 installed-health checks. Fresh candidate11 media and broader physical acceptance remain pending. |
+| Verification | Candidate11 passes NVIDIA normal shutdown/reboot and final compositor/postboot gates. Its raw media and branded ISO are built and checksum-verified; fresh offline installation and USB-absent boot remain pending. Latest source passes 248 backend tests with two optional skips, controller shell checks and component-pin verification; 37 controller policy checks and the real Linux uinput fixture pass. The latest display/controller changes are not baked into candidate11. Candidate10 remains release FAIL despite its separate 15/15 VM installation pass. Broader physical acceptance remains open. |
 
 ## Architecture
 

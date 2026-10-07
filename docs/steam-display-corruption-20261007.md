@@ -1,6 +1,10 @@
 # Steam display corruption — October 7, 2026
 
-Status: investigation in progress; no physical fix accepted yet.
+Status: accelerated NVIDIA Xorg display and automatic 174.96 Hz startup are
+implemented; the owner confirmed smooth, stable Steam display and working
+Silksong menu controls. A graphical-session restart passed. Replacement-image
+and full-machine reboot acceptance remain pending. Earlier failed trials below
+are retained as historical evidence.
 
 The owner's phone recording shows a clean shell, Steam startup, a black interval,
 then duplicated/offset startup graphics and bright horizontal bands. The owner
