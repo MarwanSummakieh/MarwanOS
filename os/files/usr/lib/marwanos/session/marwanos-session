@@ -3,7 +3,9 @@
 # MarwanOS session -- D4 (which compositor), D5 (where the client comes from),
 # and the supervision loop M3 specifies.
 #
-# The compositor is gamescope, owning DRM directly. That was plan A of the M1
+# NVIDIA displays use accelerated Xorg after the Steam corruption investigation
+# in ADR 0013. VMs also use Xorg; other GPUs retain gamescope's direct DRM path.
+# The original gamescope decision was plan A of the M1
 # spike, and it is now the decision: see docs/adr/0005. cage was plan B, and the
 # fallback to it -- along with the /var/marwanos/compositor lever that let a
 # machine-local file choose between them -- is deliberately gone.
@@ -1794,10 +1796,9 @@ mkdir -p "$RUNTIME"
 # virtual controller. Keep the broker alive across shell restarts.
 export SDL_JOYSTICK_HIDAPI=0
 export SDL_JOYSTICK_RAWINPUT=0
-# SDL applications select the routed pad rather than an exclusively grabbed
-# physical device that enumerates but intentionally produces no events.
-export SDL_GAMECONTROLLER_IGNORE_DEVICES_EXCEPT="0x1209/0x0001"
-export SDL_GAMECONTROLLERCONFIG="03000000091200000100000001000000,PC1 application controller,a:b0,b:b1,x:b3,y:b2,leftshoulder:b4,rightshoulder:b5,back:b6,start:b7,guide:b8,leftstick:b9,rightstick:b10,dpup:b11,dpdown:b12,dpleft:b13,dpright:b14,leftx:a0,lefty:a1,rightx:a3,righty:a4,lefttrigger:a2,righttrigger:a5,platform:Linux,"
+# Udev exposes only routed pads to SDL. Their native vendor/product IDs identify
+# the model; the virtual bus lets SDL map the capabilities we actually forward.
+unset SDL_GAMECONTROLLER_IGNORE_DEVICES_EXCEPT SDL_GAMECONTROLLERCONFIG
 supervise_controller() {
     _router_pid=""
     trap '[ -z "$_router_pid" ] || kill "$_router_pid" 2>/dev/null; exit 0' TERM INT
@@ -1816,13 +1817,19 @@ stop_controller() {
 
 # VMs expose software Vulkan without VK_EXT_physical_device_drm. An explicit
 # Xorg compatibility session provides the same shell and lifecycle there.
-# Physical appliances continue to use gamescope's direct DRM path.
+# NVIDIA uses this backend too: Steam corrupted the direct DRM output on PC1.
 start_x11_compatibility() {
     export MARWANOS_COMPOSITOR=x11
     export ENABLE_GAMESCOPE_WSI=0
     export DISPLAY=:0
     export XAUTHORITY="$RUNTIME/Xauthority"
-    export __EGL_VENDOR_LIBRARY_FILENAMES=/usr/share/glvnd/egl_vendor.d/50_mesa.json
+    if [ "${1:-mesa}" = nvidia ]; then
+        export __EGL_VENDOR_LIBRARY_FILENAMES=/usr/share/glvnd/egl_vendor.d/10_nvidia.json
+        export __GLX_VENDOR_LIBRARY_NAME=nvidia
+    else
+        export __EGL_VENDOR_LIBRARY_FILENAMES=/usr/share/glvnd/egl_vendor.d/50_mesa.json
+        unset __GLX_VENDOR_LIBRARY_NAME
+    fi
     unset WAYLAND_DISPLAY GAMESCOPE_WAYLAND_DISPLAY
     _cookie="$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')"
     touch "$XAUTHORITY"
@@ -1830,7 +1837,7 @@ start_x11_compatibility() {
     xauth -f "$XAUTHORITY" add "$DISPLAY" . "$_cookie" || return 1
     # Preserve greetd's console fd: asynchronous shell jobs otherwise inherit
     # /dev/null, losing the console needed by rootless Xorg and logind.
-    /usr/libexec/Xorg "$DISPLAY" -noreset -nolisten tcp -keeptty vt1 \
+    /usr/libexec/Xorg "$DISPLAY" -noreset -nolisten tcp -keeptty -depth 24 vt1 \
         -auth "$XAUTHORITY" -logfile "$RUNTIME/Xorg.log" <&0 > "$RUNTIME/Xorg-console.log" 2>&1 &
     GAMESCOPE_PID=$!
     _attempt=0
@@ -1840,6 +1847,9 @@ start_x11_compatibility() {
         [ "$_attempt" -lt 100 ] || return 1
         sleep 0.1
     done
+    if [ "${1:-mesa}" = nvidia ]; then
+        /usr/lib/marwanos/display/x11-mode || warn "could not select the fast native Xorg mode; retaining the current mode"
+    fi
     # Controller input travels through the broker, so Xorg does not see it as
     # keyboard/mouse activity. Keep an actively used console from blanking.
     xset s off || return 1
@@ -2051,6 +2061,9 @@ start_gamescope_or_fall_back() {
 start_graphics() {
     if systemd-detect-virt --vm --quiet; then
         start_x11_compatibility
+    elif nvidia_output_connected; then
+        log "NVIDIA display: accelerated Xorg backend (ADR 0013)"
+        start_x11_compatibility nvidia
     else
         export MARWANOS_COMPOSITOR=gamescope
         start_gamescope_or_fall_back

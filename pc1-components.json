@@ -5,7 +5,7 @@
   "components": {
     "shell": {
       "repository": "https://github.com/MarwanSummakieh/pc1-shell.git",
-      "commit": "68ac567b5b4b109eb32f91677849b4ee541fc80f",
+      "commit": "28beb2693e239c8872429a1e88d87016e87b0eba",
       "files": {
         "docs/app-card-icons-bench-20261005.md": "718aa90a8420de8f10b8e0137dc99181ab5adc91",
         "docs/built-in-tools.md": "7ea67a75a2ee657ff6fd40d66d3e7ed25035b440",
@@ -54,7 +54,7 @@
         "shell/src/browser.gd": "392088ac9a7e3adadd9e905656bd9e424879bc28",
         "shell/src/browser_screen.gd": "5b9dd07f00e821c71123d13352678f9fe1cdf24e",
         "shell/src/card.gd": "4686fa56bebd5cbd1ae477cf72a420883e0eb7db",
-        "shell/src/controller_router.gd": "a6870e70651243f043f17bcb8e47fdf6a589b3bb",
+        "shell/src/controller_router.gd": "412223108896178e7c6f44deb21a64001173c305",
         "shell/src/display.gd": "6b2dde72b876e34cb3eb3bd1c0952dcc06467ad1",
         "shell/src/error_screen.gd": "b56105686d95eb432c7cec2adc6b330358df30f0",
         "shell/src/file_item.gd": "becbf4f16dbd6f5b0ac3c5482f2e952b3f1c7e18",
@@ -182,15 +182,16 @@
     },
     "controllers": {
       "repository": "https://github.com/MarwanSummakieh/pc1-controllers.git",
-      "commit": "75cc1609e6dbe43a51cf092c3c7c9718b850abd1",
+      "commit": "7a8bc4d2fb47d245a172155233d6153508c8f6d6",
       "files": {
-        "docs/controller-routing.md": "15fa8869804f92353b172eb658d3db3d85513990",
-        "os/files/usr/lib/marwanos/controller/router.py": "b2257e6238521cfa441daaab91480509224d6598",
-        "tests/controller_kernel.py": "17562a2c52d8e57c3f22e8b65064a52da2446276",
+        "docs/controller-routing.md": "b24e7b010667f17a6374d411450e760e833a7471",
+        "os/files/usr/lib/marwanos/controller/router.py": "8cc06210ee244f508988ca85329a5b21ee2cfc15",
+        "tests/controller_kernel.py": "60f82bbe8c176395e4120681a9e394a761192330",
         "tests/installer_controller_device.py": "b0e53e7ad1aec6c3c99f47b806829d75ec009b53",
         "tests/installer_controller_host.py": "23af932f2835fdc42064c6fe6723b7028d45c8d0",
-        "tests/test_controller_router.py": "a6f30e59c9b2833ef9719d8c1ce4670616dcc68d",
-        "tests/vm_controller.py": "89e54e0a05e460ff796884349260d7b0e08ddbb0"
+        "tests/test_controller_router.py": "23249d9cc7fe2d8079a19f5c4ef6b4a8ea7bc89f",
+        "tests/vm_controller.py": "925931d63dbf6d60f2ff48a8e36a0dea637fbb8a",
+        "tests/controller_sdl.py": "98713ec2cb22ebf3244dc5c7770b02c6b2276e7e"
       }
     },
     "services": {

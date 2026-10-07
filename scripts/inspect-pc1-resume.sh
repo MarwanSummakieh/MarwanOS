@@ -97,9 +97,9 @@ def snapshot():
         heartbeat_mtime = 0
     names = []
     for event in Path("/sys/class/input").glob("event*"):
-        name = text(event / "device/name")
-        if name.startswith("PC1 application controller"):
-            names.append(name)
+        physical = text(event / "device/phys")
+        if physical.startswith("pc1/application/slot"):
+            names.append(physical)
     endpoint = runtime / "marwanos/controller/endpoint.json"
     try:
         state = endpoint.stat()
@@ -145,8 +145,11 @@ def health(state):
     check("NVIDIA GPU still exposed", bool(state.get("nvidia")))
     identities = state.get("controller_identities")
     check("physical controller slot identity present", isinstance(identities, list) and len(identities) == 4 and bool(identities[0]))
-    expected = ["PC1 application controller", "PC1 application controller 2", "PC1 application controller 3", "PC1 application controller 4"]
-    check("four virtual application pads present", state.get("virtual_pads") == expected)
+    remembered = {f"pc1/application/slot{index + 1}"
+                  for index, identity in enumerate(identities if isinstance(identities, list) else []) if identity}
+    pads = state.get("virtual_pads", [])
+    check("connected application pads use remembered player slots",
+          "pc1/application/slot1" in pads and len(pads) == len(set(pads)) and set(pads).issubset(remembered))
     check("controller endpoint private", state.get("private_endpoint") is True)
 
 

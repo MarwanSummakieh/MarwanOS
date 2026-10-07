@@ -509,8 +509,9 @@ RUN set -euxo pipefail; \
 # nvidia.ko modules and no Vulkan ICD, no EGL, no nvidia-smi -- a machine on
 # which gamescope fails in a way indistinguishable from the compositor problem
 # M1's spike exists to investigate. Upstream ublue's own installer script
-# installs /rpms/nvidia/* from this sidecar; we take the subset a Wayland
-# appliance needs. The ICD assertion at the end is the regression guard.
+# installs /rpms/nvidia/* from this sidecar; we take the console's required
+# subset, including NVIDIA's Xorg/GLX server modules for ADR 0013. The ICD and
+# common-version assertions below guard the installed driver set.
 #
 # i686 userspace (32-bit GL/Vulkan for Proton's 32-bit games) is deliberately
 # deferred to Phase 1: it drags multilib glibc into the image and nothing in
@@ -566,7 +567,8 @@ RUN --mount=type=cache,dst=/var/cache/libdnf5,sharing=locked \
         /tmp/rpms/nvidia/nvidia-driver-[0-9]*.x86_64.rpm \
         /tmp/rpms/nvidia/nvidia-driver-common-[0-9]*.x86_64.rpm \
         /tmp/rpms/nvidia/nvidia-driver-libs-[0-9]*.x86_64.rpm \
-        /tmp/rpms/nvidia/nvidia-driver-cuda-libs-[0-9]*.x86_64.rpm; \
+        /tmp/rpms/nvidia/nvidia-driver-cuda-libs-[0-9]*.x86_64.rpm \
+        /tmp/rpms/nvidia/xorg-x11-nvidia-[0-9]*.x86_64.rpm; \
     rm -rf /tmp/rpms; \
     dnf clean all; \
     rpm -q nvidia-driver-libs >/dev/null; \
@@ -581,7 +583,7 @@ RUN --mount=type=cache,dst=/var/cache/libdnf5,sharing=locked \
     : "second version and failed a build whose install was perfect."; \
     test "$(rpm -q --qf '%{VERSION}\n' \
         nvidia-driver nvidia-driver-common nvidia-driver-libs \
-        nvidia-driver-cuda-libs nvidia-kmod-common nvidia-modprobe \
+        nvidia-driver-cuda-libs nvidia-kmod-common nvidia-modprobe xorg-x11-nvidia \
         | sort -u | wc -l)" = 1; \
     ldconfig -p | grep -q 'libcuda\.so\.1'
 
@@ -1690,11 +1692,11 @@ RUN chmod 4755 /usr/lib/marwanos/mowser/chrome-sandbox
 # Installers get a separate display and run as player, never root.
 RUN --mount=type=cache,dst=/var/cache/libdnf5,sharing=locked \
     set -euxo pipefail; \
-    dnf -y install python3 python3-pefile python3-pillow python3-dbus python3-gobject xorg-x11-server-Xvfb xorg-x11-server-Xorg openbox xcompmgr xset \
+    dnf -y install python3 python3-pefile python3-pillow python3-dbus python3-gobject xorg-x11-server-Xvfb xorg-x11-server-Xorg openbox xcompmgr xset xrandr \
         pipewire pipewire-pulseaudio pipewire-alsa wireplumber pulseaudio-utils alsa-lib bluez; \
     dnf clean all; \
     chmod 0755 /usr/lib/marwanos/windows/manager.py; \
-    chmod 0755 /usr/lib/marwanos/steamctl /usr/lib/marwanos/controller/router.py; \
+    chmod 0755 /usr/lib/marwanos/steamctl /usr/lib/marwanos/controller/router.py /usr/lib/marwanos/display/x11-mode; \
     chmod 0644 /usr/lib/udev/rules.d/99-marwanos-controller.rules \
         /usr/lib/modules-load.d/marwanos-controller.conf; \
     python3 -m py_compile /usr/lib/marwanos/steamctl /usr/lib/marwanos/controller/router.py; \

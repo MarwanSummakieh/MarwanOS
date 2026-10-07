@@ -40,9 +40,11 @@ and the shell suites; all 11 focused ELF regressions pass. Fresh candidate11
 media and broader release acceptance remain open. See the
 [candidate11 evidence](docs/candidate11-teardown-acceptance-20261007.md) and
 [status checkpoint](docs/status-2026-10-07.md).
-Nine tracked tasks remain. Bluetooth reports the missing dongle correctly;
-physical checks and sleep testing are deferred under the owner's automated-only
-instruction. Candidate10's passing installer-media evidence is scoped to its VM.
+Nine tracked tasks remain. The owner has requested physical acceptance; the
+[session record](docs/physical-acceptance-20261007.md) tracks pending observations.
+Only one physical controller is available and there is no Bluetooth adapter, so
+two-pad and Bluetooth checks await hardware. Sleep testing remains deferred.
+Candidate10's passing installer-media evidence is scoped to its VM.
 
 Development is organized through the [PC1 GitHub Project](https://github.com/users/MarwanSummakieh/projects/3)
 and [six repositories](docs/repositories.md), with pinned component copies in
@@ -61,9 +63,9 @@ other documents describe their dated builds.
 
 | Area | State |
 |---|---|
-| OS | Fedora 43 / Universal Blue bootc image, pinned NVIDIA open-module sidecar, Plymouth splash, supervised gamescope session and Xorg/Openbox compatibility session for VMs |
+| OS | Fedora 43 / Universal Blue bootc image, pinned NVIDIA open-module sidecar, Plymouth splash, accelerated Xorg/Openbox on connected NVIDIA displays and VMs, gamescope on other GPUs; see [ADR 0013](docs/adr/0013-nvidia-xorg-display.md) |
 | Shell | Godot 4.7.1, controller navigation, library rail, app overlay, compact movable keyboard with saved position, settings, Wi-Fi, updates, power and diagnostics |
-| Controller ownership | Exclusive Linux input broker, four stable player slots, Linux rumble forwarding, all-pad Home/Share, gated game input and neutral handoff/disconnect; physical rumble/two-pad acceptance pending; see [controller routing](docs/controller-routing.md) |
+| Controller ownership | Exclusive Linux input broker, four remembered player slots, hardware model identities, native virtual-device hotplug, Linux rumble forwarding, all-pad Home/Share and gated game input; physical rumble/two-pad acceptance pending; see [controller routing](docs/controller-routing.md) |
 | Library | Desktop applications, Steam libraries, standalone Windows executables and managed umu apps; automatic Steam Store metadata/artwork with persistent offline cache, a Play-only details page and separate Options → Metadata refresh/match page; see [metadata evidence](docs/game-metadata.md) |
 | History and achievements | Persistent actual foreground sessions, totals and recent sorting; per-profile local/Steam achievement providers, automatic keyless Steam catalogs, progress, offline viewing and first-sync-safe unlock notifications. Unsupported schemas/profiles stay explicit; see [achievements](docs/achievements.md) |
 | Bluetooth | Controller pairing page, BlueZ agent, codes/confirmation, trust/removal/reconnect; actual dongle acceptance pending; see [Bluetooth](docs/bluetooth.md) |

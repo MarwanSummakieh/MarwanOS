@@ -293,13 +293,16 @@ def main():
     virtual = []
     for event in Path("/sys/class/input").glob("event*"):
         try:
-            name = (event / "device/name").read_text().strip()
-            if name.startswith("PC1 application controller"):
-                virtual.append(name)
+            physical = (event / "device/phys").read_text().strip()
+            if physical.startswith("pc1/application/slot"):
+                virtual.append(physical)
         except OSError:
             pass
-    expected_names = ["PC1 application controller", *[f"PC1 application controller {index}" for index in (2, 3, 4)]]
-    check("four stable application pads enumerated", sorted(virtual) == sorted(expected_names), ", ".join(virtual))
+    remembered_names = {f"pc1/application/slot{index + 1}"
+                        for index, identity in enumerate(identities if valid_slots else []) if identity}
+    check("connected application pads use remembered player slots",
+          "pc1/application/slot1" in virtual and len(virtual) == len(set(virtual))
+          and set(virtual).issubset(remembered_names), ", ".join(virtual))
     print("INFO: This read-only software gate does not certify physical sound, rumble, multiplayer, suspend/wake or cold power-on.")
 
 
