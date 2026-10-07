@@ -68,6 +68,8 @@ regressions are `tests/test_pc1_shutdown.py`. Local retained evidence includes:
 - `out/candidate11-live-validation.json`, validated against the collected records
   and retained screenshot SHA256.
 
-Candidate11 fresh installation media, separate power-off/power-on observation,
-physical controller/TV/audio acceptance and suspend remain outside this check.
+Candidate11 fresh media was subsequently built from this same digest; see the
+[offline media checksums](candidate11-offline-media-20261007.md). Offline installation,
+separate power-off/power-on observation, physical controller/TV/audio acceptance
+and suspend remain outside this runtime check.
 The existing nine-task release backlog remains open.
