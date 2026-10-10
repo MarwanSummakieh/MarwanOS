@@ -33,6 +33,10 @@ on:
 env:
   IMAGE_NAME: marwanos
 
+defaults:
+  run:
+    shell: bash
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -48,6 +52,7 @@ jobs:
 
       - name: Check installation flows before publishing
         run: |
+          set -euo pipefail
           sudo apt-get update
           sudo apt-get install -y aria2 xvfb python3-pefile python3-pil python3-dbus python3-gi python3-xlib dbus-daemon squashfs-tools gcc g++
           mkdir -p out/release-checks
@@ -55,6 +60,7 @@ jobs:
 
       - name: Check controller flows before publishing
         run: |
+          set -euo pipefail
           sudo apt-get install -y curl unzip libfontconfig1 libxkbcommon0 libgl1 libasound2t64 xdotool x11-utils dbus-x11 at-spi2-core gir1.2-atspi-2.0 gir1.2-gtk-3.0
           bash scripts/check-shell.sh 2>&1 | tee out/release-checks/shell.log
 
