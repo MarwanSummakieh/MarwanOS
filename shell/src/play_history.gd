@@ -17,10 +17,17 @@ var _save_failed := false
 
 
 func _ready() -> void:
+	set_profile()
+
+
+func set_profile() -> void:
 	_folder = OS.get_environment("MARWANOS_HISTORY_HOME")
 	if _folder.is_empty():
 		_folder = OS.get_environment("HOME").path_join(".local/share/marwanos/play-history")
+	_folder = Profiles.personal_path("play-history", _folder)
+	_dirty_seconds = 0.0
 	reload()
+	changed.emit()
 
 
 func reload() -> void:

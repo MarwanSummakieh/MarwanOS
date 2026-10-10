@@ -2,6 +2,7 @@
 
 Updated 2026-10-07 from the owner's priorities and installation record. This is the current backlog;
 older phase plans and ADRs remain historical context where they disagree.
+Steam embedding implemented and remotely tested on the PC1 bench on 2026-10-09.
 
 ## Product priority
 
@@ -27,6 +28,23 @@ Tekken verification, persistent play history and achievements are complete.
 | Release | Reliable suspend/resume | Sleep action and read-only evidence helper exist; testing explicitly deferred by the owner |
 | Release | Silent boot, hardware and compatibility acceptance | Candidate10 automated audit passes both NVMe SMART checks and finds zero kernel hardware faults; software boot is 10.657s. Existing NVML reports RTX 3070 / driver 610.43.03 / current temperature 47°C without installing tools. Owner now requests physical acceptance; candidate11 live software preflight passes with zero failures, with physical observations still pending. One controller and no Bluetooth adapter are available; two-pad/Bluetooth checks await hardware. See the [physical session record](physical-acceptance-20261007.md). Load/stress and firmware acceptance remain unclaimed |
 | Release | Bake recent bench fixes into a release image | Candidate11 cc19931 / digest a271f2ba2ded… passes NVIDIA normal shutdown/reboot and compositor/postboot gates. Its raw media and branded offline ISO are built and checksum-verified; fresh offline VM installation, USB-absent boot and persistence checks remain pending. The latest native-controller, Steam Input, NVIDIA Xorg/175 Hz and Steam-card fixes are committed and pushed but need a replacement image and full reboot validation. Current source passes 248 backend tests with two optional skips. Candidate10 remains release FAIL despite its separate 15/15 VM installation pass. See [candidate11 teardown](candidate11-teardown-acceptance-20261007.md), [media provenance](candidate11-offline-media-20261007.md) and [latest status](status-2026-10-07.md) |
+
+### Experimental implementation: Steam inside Stores
+
+The owner wants persistent MarwanOS navigation, a store selector on the left and
+the live Steam client in a large pane on the right, operated entirely by a
+controller. [ADR 0008](adr/0008-embedding-a-client-surface.md) now evaluates native
+X11 window embedding first on PC1's accepted Xorg backend. Steam's Big Picture
+interface supplies controller navigation within the pane; games remain
+fullscreen and must return to the saved Stores surface on exit.
+
+Status: the opt-in native pane is enabled on the bench. Controller-path browsing,
+Silksong launches from both libraries, fullscreen return, minimize/resume and
+host recovery pass remote checks. See the [screenshots and test report](steam-embedding-20261009.md).
+Physical acceptance, popup/text entry and performance remain open before default enablement. The
+current fullscreen Steam route remains available on unsupported backends or
+embedding failure. This investigation does not change the release acceptance
+claims above.
 
 ### Metadata and Tekken 8 acceptance
 

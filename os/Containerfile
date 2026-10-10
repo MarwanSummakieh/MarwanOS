@@ -1692,14 +1692,14 @@ RUN chmod 4755 /usr/lib/marwanos/mowser/chrome-sandbox
 # Installers get a separate display and run as player, never root.
 RUN --mount=type=cache,dst=/var/cache/libdnf5,sharing=locked \
     set -euxo pipefail; \
-    dnf -y install python3 python3-pefile python3-pillow python3-dbus python3-gobject xorg-x11-server-Xvfb xorg-x11-server-Xorg openbox xcompmgr xset xrandr \
+    dnf -y install aria2 python3 python3-pefile python3-pillow python3-xlib python3-dbus python3-gobject at-spi2-core at-spi2-atk xorg-x11-server-Xvfb xorg-x11-server-Xorg openbox xcompmgr xset xrandr \
         pipewire pipewire-pulseaudio pipewire-alsa wireplumber pulseaudio-utils alsa-lib bluez; \
     dnf clean all; \
     chmod 0755 /usr/lib/marwanos/windows/manager.py; \
     chmod 0755 /usr/lib/marwanos/steamctl /usr/lib/marwanos/controller/router.py /usr/lib/marwanos/display/x11-mode; \
     chmod 0644 /usr/lib/udev/rules.d/99-marwanos-controller.rules \
         /usr/lib/modules-load.d/marwanos-controller.conf; \
-    python3 -m py_compile /usr/lib/marwanos/steamctl /usr/lib/marwanos/controller/router.py; \
+    python3 -m py_compile /usr/lib/marwanos/profiles.py /usr/lib/marwanos/steamctl /usr/lib/marwanos/controller/router.py /usr/lib/marwanos/steam_embed.py /usr/lib/marwanos/text_input.py; \
     chmod 0644 /usr/lib/systemd/system/marwanos-windows.service; \
     install -d /usr/lib/systemd/system/multi-user.target.wants; \
     ln -sf ../marwanos-windows.service \
@@ -1708,6 +1708,10 @@ RUN --mount=type=cache,dst=/var/cache/libdnf5,sharing=locked \
     python3 -m py_compile /usr/lib/marwanos/notifications/server.py; \
     install -d /usr/lib/systemd/user/default.target.wants; \
     ln -sf ../marwanos-notifications.service /usr/lib/systemd/user/default.target.wants/marwanos-notifications.service; \
+    chmod 0644 /usr/lib/systemd/user/marwanos-downloads.service /usr/lib/marwanos/downloads/manager.py; \
+    python3 -m py_compile /usr/lib/marwanos/downloads/manager.py; \
+    command -v aria2c; \
+    ln -sf ../marwanos-downloads.service /usr/lib/systemd/user/default.target.wants/marwanos-downloads.service; \
     chmod 0644 /usr/lib/systemd/user/marwanos-audio.service /usr/lib/marwanos/audio/manager.py; \
     python3 -m py_compile /usr/lib/marwanos/audio/manager.py; \
     ln -sf ../marwanos-audio.service /usr/lib/systemd/user/default.target.wants/marwanos-audio.service; \

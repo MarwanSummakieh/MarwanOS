@@ -56,6 +56,7 @@ def normalized(title):
 class SteamProvider:
     name = "Steam Store"
     cdn = "https://cdn.akamai.steamstatic.com/steam/apps"
+    artwork_version = 2
 
     def fetch(self, url, limit=4 * 1024 * 1024):
         request = urllib.request.Request(url, headers={"User-Agent": "PC1-Metadata/1.0"})
@@ -96,7 +97,7 @@ class SteamProvider:
                 "platforms": [key for key, value in data.get("platforms", {}).items() if value],
                 "store_url": f"https://store.steampowered.com/app/{appid}/",
                 "art_urls": {"cover": f"{self.cdn}/{appid}/library_600x900.jpg",
-                             "background": data.get("background_raw") or f"{self.cdn}/{appid}/library_hero.jpg",
+                             "background": f"{self.cdn}/{appid}/library_hero.jpg",
                              "logo": f"{self.cdn}/{appid}/logo.png",
                              "header": data.get("header_image", "")}}
 
@@ -110,6 +111,8 @@ class Manager:
         for record in self.state["games"].values():
             if record.get("status") == "loading":
                 record.update(status="error", attempted_at=0)
+        if self.state.get("refresh", {}).get("status") == "loading":
+            self.state["refresh"].update(status="error", error="Metadata update was interrupted. Try again.")
 
     def publish(self):
         self.state["updated_at"] = time.time()
@@ -148,7 +151,8 @@ class Manager:
         games = self.state["games"]
         old = games.get(key, {})
         title = entry.get("title", "")
-        if not force and old.get("import_title") == title:
+        artwork_version = getattr(self.provider, "artwork_version", 1)
+        if not force and old.get("import_title") == title and old.get("artwork_version", 1) == artwork_version:
             if old.get("status") in ("needs-match", "unmatched"):
                 return
             if old.get("status") == "ready" and all(Path(asset["path"]).is_file()
@@ -159,7 +163,7 @@ class Manager:
         if (match and str(match) != old.get("provider_id")) or (old.get("import_title") != title and not old.get("manual_match")):
             old = {field: old[field] for field in ("overrides", "manual_match") if field in old}
         record = dict(old, import_title=title, source=source_name(key), status="loading",
-                      attempted_at=time.time(), error="")
+                      attempted_at=time.time(), error="", artwork_version=artwork_version)
         if match:
             record["manual_match"] = str(match)
         games[key] = record
@@ -191,6 +195,20 @@ class Manager:
         self.publish()
 
     def request(self, request, entries):
+        if request.get("action") == "refresh-all":
+            self.state["refresh"] = {"status": "loading", "total": len(entries),
+                                     "completed": 0, "failed": 0, "started_at": time.time()}
+            self.publish()
+            for entry in entries:
+                self.enrich(entry, force=True)
+                progress = self.state["refresh"]
+                progress["completed"] += 1
+                if self.state["games"].get(entry["id"], {}).get("status") != "ready":
+                    progress["failed"] += 1
+                self.publish()
+            self.state["refresh"].update(status="done", finished_at=time.time())
+            self.publish()
+            return
         key = str(request.get("game_id", ""))
         entry = next((entry for entry in entries if entry["id"] == key), None)
         if not entry:
@@ -224,18 +242,27 @@ def source_name(key):
             "gog": "GOG", "rom": "Emulated"}.get(key.split(".", 1)[0], "Application")
 
 
+def metadata_candidate(entry):
+    if entry.get("kind") in ("app", "application", "utility"):
+        return False
+    if entry.get("input_mode") == "pointer" and entry.get("kind") != "game":
+        return False
+    return str(entry.get("title", "")).casefold() not in {
+        "steam", "downloads", "fdm", "fdm controller", "fdm classic", "free download manager", "7zfm"}
+
+
 def library(apps=APPS, windows=WINDOWS):
     entries = {}
     try:
         for line in apps.read_text().splitlines():
             fields = line.split("\t")
-            if len(fields) >= 6 and fields[5] == "installed" and source_name(fields[0]) != "Application":
+            if len(fields) >= 6 and fields[5] == "installed" and source_name(fields[0]) != "Application" and metadata_candidate({"title": fields[1]}):
                 entries[fields[0]] = {"id": fields[0], "title": fields[1]}
     except OSError:
         pass
     for path in (windows / "apps").glob("*.json"):
         entry = read_json(path, {})
-        if isinstance(entry, dict) and entry.get("id") and entry.get("state") == "installed":
+        if isinstance(entry, dict) and entry.get("id") and entry.get("state") == "installed" and metadata_candidate(entry):
             entries[entry["id"]] = entry
     return list(entries.values())
 

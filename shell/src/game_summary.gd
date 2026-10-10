@@ -9,13 +9,13 @@ var _description: Label
 
 func _ready() -> void:
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
-	size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
-	custom_minimum_size.x = 1100
+	size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	custom_minimum_size.x = 0
 	add_theme_constant_override("separation", 8)
-	_title = _label(TvTheme.SIZE_HERO_TITLE, 1)
+	_title = _label(TvTheme.SIZE_HERO_TITLE, 2)
 	_facts = _label(TvTheme.SIZE_BODY, 2)
 	_facts.add_theme_color_override("font_color", TvTheme.TEXT_SECONDARY)
-	_description = _label(TvTheme.SIZE_BODY, 3)
+	_description = _label(TvTheme.SIZE_BODY, 2)
 
 
 func _label(font_size: int, lines: int) -> Label:

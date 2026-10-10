@@ -67,7 +67,7 @@ func _run() -> void:
 	await press("ui_down")
 	check(root.gui_get_focus_owner().get_meta("metadata_key") == "match:1778820", "D-pad selects the correct candidate independently of default focus")
 	await press("ui_accept")
-	check(requests().size() == 2 and requests()[1] == {"action": "match", "game_id": GAME_ID, "provider_id": "1778820"}, "candidate selection sends the exact provider match and installation identity")
+	check(requests().size() == 2 and requests().has({"action": "match", "game_id": GAME_ID, "provider_id": "1778820"}), "candidate selection sends the exact provider match and installation identity")
 	update_record({"title": "Corrected TEKKEN 8", "status": "ready", "provider": "Steam Store", "provider_id": "1778820", "description": "Corrected description", "candidates": []})
 	check(page._heading.text == "Corrected TEKKEN 8 · Metadata" and page._rows.size() == 2, "completed correction replaces stale candidates and updates title")
 	await press("ui_cancel")

@@ -7,13 +7,14 @@
 #   os/files/usr/share/plymouth/themes/marwanos/pc1.png        PC1 mark
 #   os/files/usr/share/plymouth/themes/marwanos/powered-by.png caption
 #   os/files/usr/share/plymouth/themes/marwanos/marwanos.png   original tag
-#   os/files/usr/share/plymouth/themes/marwanos/field.png      pale linework
+#   os/files/usr/share/plymouth/themes/marwanos/field.png      solid charcoal field
 #   os/files/usr/share/plymouth/themes/marwanos/splash.png     final stack preview
 #   os/branding/splash.bmp                                     early UKI frame
 #
-# The composition follows PC1's own boot screen: a pale grey field, the exact
-# heavy PC1 geometry in near-black, a quiet "Powered by" caption, and the
-# owner's original colour MarwanOS tag. The static UKI frame carries the PC1
+# The composition follows PC1's own boot screen with the current shell palette:
+# a charcoal field, the exact heavy PC1 geometry in pale blue, a quiet
+# "Powered by" caption, and the owner's original colour MarwanOS tag.
+# The static UKI frame carries the PC1
 # mark alone. Plymouth starts on the same frame and reveals the two lower
 # layers. That avoids a branded frame disappearing during the firmware-to-
 # userspace handoff.
@@ -23,6 +24,9 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# Native Windows ImageMagick also needs the BMP3: filename in Windows form;
+# MSYS does not translate a path preceded by an ImageMagick format prefix.
+if command -v cygpath >/dev/null; then REPO_ROOT="$(cygpath -m "$REPO_ROOT")"; fi
 THEME_DIR="${REPO_ROOT}/os/files/usr/share/plymouth/themes/marwanos"
 OUT_PC1="${THEME_DIR}/pc1.png"
 OUT_POWERED="${THEME_DIR}/powered-by.png"
@@ -30,7 +34,9 @@ OUT_MARWANOS="${THEME_DIR}/marwanos.png"
 OUT_FIELD="${THEME_DIR}/field.png"
 OUT_PNG="${THEME_DIR}/splash.png"
 OUT_BMP="${REPO_ROOT}/os/branding/splash.bmp"
-FONT_FILE="${REPO_ROOT}/os/branding/fonts/Inter-var-latin.woff2"
+# A lossless TrueType conversion of this same font can be supplied to builds
+# whose FreeType lacks WOFF2 support (for example, portable Windows builds).
+FONT_FILE="${FONT_FILE:-${REPO_ROOT}/os/branding/fonts/Inter-var-latin.woff2}"
 PC1_SOURCE="${REPO_ROOT}/os/branding/pc1-wordmark.svg"
 MARWANOS_SOURCE="${REPO_ROOT}/os/branding/MarwanOS.svg"
 
@@ -38,10 +44,11 @@ MARWANOS_SOURCE="${REPO_ROOT}/os/branding/MarwanOS.svg"
 [ -r "$PC1_SOURCE" ] || { echo "missing $PC1_SOURCE" >&2; exit 1; }
 [ -r "$MARWANOS_SOURCE" ] || { echo "missing $MARWANOS_SOURCE" >&2; exit 1; }
 
-CAPTION="#2A2A2E"
-FIELD_TOP="#D9DADD"
-FIELD_BOTTOM="#CFD1D5"
-LINE="#C4C7CC"
+# Keep these in sync with shell/src/tv_theme.gd: TEXT_SECONDARY and BACKGROUND.
+# The PC1 source uses PRIMARY; the original MarwanOS art stays
+# in full colour.
+CAPTION="#B7C7D2"
+FIELD="#11161C"
 
 echo "==> PC1 wordmark"
 magick -background none "$PC1_SOURCE" -resize 2352x708 -strip "$OUT_PC1"
@@ -59,10 +66,7 @@ echo "==> MarwanOS tag"
 magick -background none -density 288 "$MARWANOS_SOURCE" -resize 1257x417 -strip "$OUT_MARWANOS"
 
 echo "==> background field"
-magick -size 1672x941 gradient:"${FIELD_TOP}-${FIELD_BOTTOM}" \
-    -stroke "$LINE" -strokewidth 1 \
-    -draw "line -160,941 360,0 line 240,941 760,0 line 640,941 1160,0 line 1040,941 1560,0 line 1440,941 1960,0" \
-    -strip "$OUT_FIELD"
+magick -size 1672x941 xc:"$FIELD" -strip "$OUT_FIELD"
 
 echo "==> composed reference frame"
 magick "$OUT_FIELD" \

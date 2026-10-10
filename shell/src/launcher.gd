@@ -64,6 +64,7 @@ const PAD_KEY_APPS := {}
 
 var _current: Dictionary = {}
 var _minimized := false
+var _embedded_steam_game := false
 
 
 func _ready() -> void:
@@ -158,8 +159,32 @@ func current_entry() -> Dictionary:
 	return _current.duplicate()
 
 
+## Steam's own library can start a game without a shell launch request.
+## Adopt that observed game into the ordinary Home/minimize/close lifecycle.
+func adopt_steam_game(entry: Dictionary) -> void:
+	if not _current.is_empty():
+		return
+	_current = entry.duplicate()
+	_embedded_steam_game = true
+	_pid = -1
+	_handoff = true
+	_handoff_seen = true
+	_handoff_shell_ticks = 0
+	_gamescope_answered = true
+	launch_started.emit(_current)
+	_start_watchdog()
+	_app_is_up()
+
+
 ## The only way anything gets launched.
 func launch(entry: Dictionary) -> void:
+	if Profiles.is_open() or not Profiles.available:
+		blocked.emit(Profiles.error if not Profiles.available else "Choose a user before playing.")
+		return
+	var profile_error := Profiles.launch_error(entry)
+	if not profile_error.is_empty():
+		blocked.emit(profile_error)
+		return
 	if entry.has("executable") and not FileAccess.file_exists(str(entry.get("executable", ""))):
 		blocked.emit("%s is unavailable. Reconnect its drive or remove the app." % str(entry.get("title", "App")))
 		return
@@ -264,6 +289,11 @@ func _spawn(exec: Array) -> void:
 		var word := str(exec[i])
 		word = word.replace("{W}", str(screen.x)).replace("{H}", str(screen.y))
 		args.append(word)
+	# Windows and Steam helpers scope their own runtime save paths. Ordinary
+	# Linux games receive a private HOME while their installed binaries stay put.
+	if PlayHistory.is_game(Metadata.enrich(_current)) and not program in ["/usr/lib/marwanos/steamctl", "/usr/lib/marwanos/windows/manager.py", "/usr/lib/marwanos/winrun"] and OS.has_feature("linux"):
+		args = PackedStringArray(["/usr/lib/marwanos/profiles.py", "run", Profiles.active, "--", program]) + args
+		program = "/usr/bin/python3"
 
 	ShellLog.info("spawning %s %s" % [program, " ".join(args)])
 	_close_escalate_ticks = 0
@@ -437,6 +467,25 @@ func _start_watchdog() -> void:
 
 func _check_window() -> void:
 	_watched_seconds += WINDOW_POLL_SECONDS
+	if _handoff and not _embedded_steam_game and int(SteamEmbed.snapshot.get("client", 0)) > 0 \
+			and int(SteamEmbed.snapshot.get("game_id", 0)) == str(_current.get("id", "")).trim_prefix(HANDOFF_PREFIX).to_int() \
+			and Time.get_unix_time_from_system() - float(SteamEmbed.snapshot.get("heartbeat", 0)) < 3:
+		_embedded_steam_game = true
+		_handoff_seen = true
+		_app_is_up()
+	if _embedded_steam_game:
+		# Steam can reclaim focus as a game closes. Observe the verified game
+		# window itself; the lifetime of the client is independent of this game.
+		var state: Dictionary = SteamEmbed.snapshot
+		if Time.get_unix_time_from_system() - float(state.get("heartbeat", 0)) > 3:
+			return
+		if int(state.get("game_id", 0)) == str(_current.get("id", "")).trim_prefix(HANDOFF_PREFIX).to_int():
+			_handoff_shell_ticks = 0
+			return
+		_handoff_shell_ticks += 1
+		if _handoff_shell_ticks >= HANDOFF_RETURN_TICKS:
+			_on_closed()
+		return
 
 	var focus := Kiosk.focused_window(_pid, str(_current.get("prefix", "")))
 	# Recorded on every answer that IS one, whichever branch consumes it: this is
@@ -686,6 +735,9 @@ func can_close() -> bool:
 ## makes a later is_process_running an engine ERROR in the journal.
 func close_current() -> void:
 	if _current.is_empty() or _closing:
+		return
+	if _embedded_steam_game:
+		SteamEmbed.close_game()
 		return
 	if _steam_stop_pid > 0:
 		return
@@ -994,6 +1046,7 @@ func _finish() -> void:
 	# would have the home button offering to close a machine that is back at the
 	# rail with nothing running.
 	_handoff = false
+	_embedded_steam_game = false
 	_handoff_seen = false
 	_handoff_shell_ticks = 0
 	_gamescope_answered = false

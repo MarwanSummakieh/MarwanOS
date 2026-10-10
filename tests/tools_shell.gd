@@ -152,10 +152,16 @@ func _run() -> void:
 	await process_frame
 	await process_frame
 	check(shell.visible, "closing files restores home")
-	# Reach the new tools from the controller-operated top bar.
+	# Reach the browser through its controller-operated navigation destination.
+	if not shell._bar_row.visible:
+		await press(JOY_BUTTON_GUIDE)
+	check(shell._bar_row.visible, "PS/Home reveals navigation after returning from Files")
 	var buttons: Array = shell._bar_buttons
-	check(buttons[buttons.size() - 3]._kind == "browser", "Browser uses its own top-bar icon")
-	buttons[buttons.size() - 3].grab_focus() # Browser, then Power and status.
+	var browser_button: Control = null
+	for button: Control in buttons:
+		if button.get_meta("destination", "") == "Browser": browser_button = button
+	check(browser_button != null and browser_button.glyph == "browser", "Browser uses its own navigation icon")
+	browser_button.grab_focus()
 	await press(JOY_BUTTON_A)
 	check(browser.is_open() and not shell.visible, "controller opens browser from bar")
 	var web: Control = browser._screen
@@ -172,12 +178,14 @@ func _run() -> void:
 	await press(JOY_BUTTON_BACK)
 	check(not browser.is_open() and shell.visible, "Share returns home even without browser engine")
 	check(root.gui_get_focus_owner() != null, "return restores controller focus")
+	DirAccess.remove_absolute("user://controller_keyboard.cfg")
 	var keyboard: Control = load("res://src/keyboard.gd").new()
 	keyboard.initial_text = "cat"
 	keyboard.masked = false
 	root.add_child(keyboard)
 	await process_frame
-	check(keyboard._panel.get_global_rect().position.x > root.size.x / 2.0, "keyboard occupies the side, leaving the center clear")
+	await process_frame
+	check(absf(keyboard.get_panel_rect().get_center().x - root.size.x / 2.0) < 1, "keyboard floats at the bottom center")
 	await press(JOY_BUTTON_LEFT_SHOULDER)
 	await press(JOY_BUTTON_X)
 	keyboard._insert("o")

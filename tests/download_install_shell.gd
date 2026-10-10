@@ -165,6 +165,8 @@ func _run() -> void:
 		if item.get("path", "") == "/structured.exe":
 			torrent_receipt = item.get("torrent", false)
 	check(torrent_receipt, "structured FDM torrent flag reaches worker")
+	flow._on_notification({"app": "Downloads", "summary": "Download complete", "body": "Native download", "download": {"path": "/native.exe", "torrent": false}})
+	check(has_request("download", "", "/native.exe"), "native Downloads completion enters the same installer receipt flow")
 	# Registration choices pass native game input vs pointer app input to helper.
 	receipts([])
 	var screen: Control = load("res://src/windows_install_screen.gd").new()

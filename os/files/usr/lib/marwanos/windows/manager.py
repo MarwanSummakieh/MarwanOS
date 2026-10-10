@@ -2,8 +2,8 @@
 """PC1's user-owned Windows install worker and managed application launcher.
 
 Recipes provide optional unattended installs on a separate X server. General
-EXE/MSI setup runs as the player on the shell's display, with explicit library
-selection afterwards. Arguments are always passed as arrays, never shell code.
+EXE/MSI setup runs as the player and publishes identifiable programs on completion.
+Ambiguous installations retain explicit selection. Arguments are arrays, never shell code.
 Wine prefixes are compatibility environments, not security sandboxes.
 """
 
@@ -777,7 +777,8 @@ def local_candidates(prefix):
     for directory, folders, files in directories:
         relative = Path(directory).relative_to(drive)
         folders[:] = sorted(f for f in folders if not (Path(directory) / f).is_symlink()
-                            and f.lower() not in {"windows", "$recycle.bin", "temp", "installer"})
+                            and f.lower() not in {"windows", "$recycle.bin", "temp", "installer",
+                                "_redist", "_commonredist", "redist", "crashreporter", "d3d12_0"})
         for name in sorted(files):
             path = Path(directory) / name
             if name.lower().endswith(".lnk") and not path.is_symlink() and (
@@ -787,7 +788,8 @@ def local_candidates(prefix):
                 if target:
                     shortcuts.setdefault(target.casefold(), Path(name).stem)
                 continue
-            if not name.lower().endswith(".exe") or re.match(r"(?i)(unins|uninstall|setup|vcredist|vc_redist)", name):
+            if not name.lower().endswith(".exe") or re.match(
+                    r"(?i)(unins|uninstall|setup|vcredist|vc_redist|dxwebsetup|dxsetup|crashreporter|unitycrashhandler)", name):
                 continue
             if path.is_symlink() or not (path.resolve().is_relative_to(drive.resolve()) or
                     (mapped and path.resolve().is_relative_to(games.resolve()))):
@@ -807,7 +809,28 @@ def local_candidates(prefix):
         title = shortcuts.get(candidate["id"].casefold())
         if title:
             candidate.update(title=title, shortcut=True)
+    # A vendor prelauncher can be the shortcut target while the actual game is
+    # nested under bin/. Prefer a unique executable named by that shortcut.
+    # Never choose between unrelated programs or multiple renderer variants.
+    links = [item for item in result if item.get("shortcut")]
+    if len(links) == 1 and "launcher" in Path(links[0]["id"]).stem.casefold():
+        normalize = lambda value: re.sub(r"[^a-z0-9]", "", value.casefold())
+        title = normalize(links[0]["title"])
+        matches = [item for item in result if not item.get("shortcut")
+                   and len(normalize(Path(item["id"]).stem)) >= 4
+                   and normalize(Path(item["id"]).stem) in title]
+        if len(matches) == 1:
+            matches[0].update(title=links[0]["title"], primary=True)
     return sorted(result, key=lambda item: (not item.get("shortcut", False), item["title"].casefold()))
+
+
+def automatic_target(choices):
+    """Use installer shortcuts or one launchable program, never an arbitrary first EXE."""
+    for field in ("primary", "shortcut"):
+        targets = [item for item in choices if item.get(field)]
+        if targets:
+            return targets[0] if len(targets) == 1 else None
+    return choices[0] if len(choices) == 1 else None
 
 
 def inno_installer(path):
@@ -935,6 +958,11 @@ def local_setup(base, key, source, portable=False, guided=False):
                                "No installed program was found. Retry setup, or use Add as portable app for a standalone EXE.")
                 job["exit_code"] = exit_code
                 atomic_json(job_path, job)
+                if not cancelled.is_set() and exit_code in (0, 3010):
+                    target = automatic_target(choices)
+                    if target:
+                        mode = "gamepad" if target["id"].startswith("drive_c/Games/") else "pointer"
+                        return register_local(base, key, target["id"], mode)
                 return 0
         except (OSError, InstallError) as error:
             job.update(status="failed", detail=str(error), choices=[])
@@ -992,6 +1020,15 @@ def launch(base, key):
             (games is not None and executable.resolve().is_relative_to(games.resolve()))):
         raise InstallError("The application's stored program is invalid.")
     with exclusive(base / "running" / (key + ".lock")):
+        profile_path = Path(__file__).resolve().parents[1] / "profiles.py"
+        spec = importlib.util.spec_from_file_location("pc1_windows_profiles", profile_path)
+        profiles = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(profiles)
+        # AppData-installed executables are part of the install, so cannot be
+        # hidden by switching its users tree. Keep this limitation explicit.
+        if profiles.active_id() != "owner" and executable.is_relative_to(prefix / "drive_c/users"):
+            raise InstallError("This app is installed in a user's save folder. Reinstall it to C:\\Games to share it between users.")
+        profiles.prepare_windows(prefix)
         process = subprocess.Popen([RUNNER, str(executable)], env=runtime_env(Path(entry["prefix"])),
                                    cwd=executable.parent, start_new_session=True)
         running = base / "running" / (key + ".json")

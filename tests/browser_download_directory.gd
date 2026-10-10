@@ -33,8 +33,6 @@ func _run() -> void:
 	var view := DownloadView.new()
 	web._configure_downloads(view)
 	check(view.directory == expected, "engine destination uses the worker's HOME/Downloads root")
-	web._open_download_folder()
-	check(web._picker.initial_directory == view.directory, "Open Downloads targets the same directory as the engine")
 	var installs := root.get_node("WindowsInstall")
 	DirAccess.make_dir_recursive_absolute(installs.home.path_join("requests"))
 	installs.available = true
@@ -47,6 +45,16 @@ func _run() -> void:
 			found = true
 	check(found, "engine completion forwards the canonical full path into the download worker request")
 	check(web._downloads[1].path == completed_path, "Downloads menu retains the actual completed path")
+	var downloads := root.get_node("Downloads")
+	var task: Dictionary = downloads.browser_tasks.values().back()
+	check(task.directory == view.directory, "shared Downloads retains the engine's canonical folder")
+	var screen: Control = load("res://src/downloads_screen.gd").new()
+	root.add_child(screen)
+	screen._selected = task
+	screen._task_action("folder")
+	check(screen._modal.initial_directory == view.directory, "Open folder targets the same directory as the browser engine")
+	root.remove_child(screen)
+	screen.queue_free()
 	web.free()
 	view.free()
 	print("Browser download directory checks: %d failure(s)" % failures)

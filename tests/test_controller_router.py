@@ -133,11 +133,48 @@ class ControllerRecoveryTests(unittest.TestCase):
 
     def test_bluetooth_uhid_is_still_a_physical_source(self):
         with patch.object(router.glob, 'glob', return_value=['/dev/input/event22']), \
-                patch.object(router.Path, 'read_text', side_effect=['Sony DualSense', '']), \
+                patch.object(router.Path, 'read_text', side_effect=['Sony DualSense', '', '1000000000000 0 0 0 0', '3']), \
                 patch.object(router.Path, 'resolve', return_value=Path('/sys/devices/virtual/misc/uhid/0005:054C:0CE6/input/input42')), \
                 patch.object(router.os, 'open', side_effect=PermissionError()) as open_device:
             self.broker.scan()
         open_device.assert_called()
+
+    def test_discovery_never_opens_non_gamepad_nodes_across_repeated_scans(self):
+        for keys, axes in [('0', '0'), ('2420 10000 0 0 0 0', '3'),
+                           ('1000000000000 0 0 0 0', '1')]:
+            def read(path, *args, **kwargs):
+                return {'name': 'Physical input node', 'phys': 'usb/input0',
+                        'key': keys, 'abs': axes}[path.name]
+            with self.subTest(keys=keys, axes=axes), \
+                    patch.object(router.glob, 'glob', return_value=['/dev/input/event22']), \
+                    patch.object(router.Path, 'read_text', autospec=True, side_effect=read), \
+                    patch.object(router.Path, 'resolve', return_value=Path('/sys/devices/pci/input42')), \
+                    patch.object(router.os, 'open') as open_device, \
+                    patch.object(router.os, 'close') as close_device:
+                self.broker.scan()
+                self.broker.scan()
+            open_device.assert_not_called()
+            close_device.assert_not_called()
+
+    def test_disappearing_or_malformed_capabilities_do_not_probe_evdev(self):
+        for error in (FileNotFoundError(), 'not a bitmap'):
+            def read(path, *args, **kwargs):
+                if path.name == 'name': return 'Physical controller'
+                if path.name == 'phys': return 'usb/input0'
+                if isinstance(error, Exception): raise error
+                return error
+            with self.subTest(error=error), \
+                    patch.object(router.glob, 'glob', return_value=['/dev/input/event22']), \
+                    patch.object(router.Path, 'read_text', autospec=True, side_effect=read), \
+                    patch.object(router.Path, 'resolve', return_value=Path('/sys/devices/pci/input42')), \
+                    patch.object(router.os, 'open') as open_device:
+                self.broker.scan()
+            open_device.assert_not_called()
+
+    def test_sysfs_capability_words_preserve_zero_padding(self):
+        self.assertEqual(router.capability_bits('1 2 3'), (1 << 128) | (2 << 64) | 3)
+        self.assertTrue(router.capability_bits('7fdb000000000000 0 0 0 0') & (1 << 304))
+        self.assertFalse(router.capability_bits('2420 10000 0 0 0 0') & (1 << 304))
 
 
 class RumbleTests(unittest.TestCase):

@@ -3,6 +3,10 @@ extends Node
 signal changed()
 
 var games: Dictionary = {}
+var refresh: Dictionary = {}
+var refresh_pending := false
+var refresh_error := ""
+var _requested_at := 0.0
 var _folder := ""
 var _raw := ""
 
@@ -20,6 +24,10 @@ func _ready() -> void:
 
 
 func _poll() -> void:
+	if refresh_pending and Time.get_unix_time_from_system() - _requested_at > 90:
+		refresh_pending = false
+		refresh_error = "Metadata service did not respond. Try again."
+		changed.emit()
 	var path := _folder.path_join("state.json")
 	if not FileAccess.file_exists(path):
 		return
@@ -31,6 +39,18 @@ func _poll() -> void:
 		return
 	_raw = raw
 	games = data.games
+	refresh = data.get("refresh", {})
+	if float(refresh.get("started_at", 0)) >= _requested_at:
+		refresh_pending = false
+	changed.emit()
+
+
+func refresh_all() -> void:
+	if refresh_pending or refresh.get("status", "") == "loading":
+		return
+	_requested_at = Time.get_unix_time_from_system()
+	refresh_pending = request("refresh-all", "")
+	refresh_error = "" if refresh_pending else "Could not request metadata update. Try again."
 	changed.emit()
 
 

@@ -156,7 +156,7 @@ def action(base, root, key, verb):
         if receipt.get('status') != 'installed' or not installed_job(base, receipt):
             raise ValueError('Finish setup and add the installed program before cleanup.')
         if receipt.get('torrent'):
-            raise ValueError('Torrent files are kept for seeding. Remove them through FDM after stopping seeding.')
+            raise ValueError('Torrent files are kept for seeding. Stop seeding in Downloads before removing files in Files.')
         files = [contained(Path(item['path']), root) for item in receipt['files']]
         # Preflight the whole package: a replacement or moved file cancels cleanup.
         if any(fingerprint(file) != expected for file, expected in zip(files, receipt['files'])):

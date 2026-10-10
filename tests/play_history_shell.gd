@@ -16,7 +16,8 @@ func _run() -> void:
 	var launcher := root.get_node("Launcher")
 	check(launcher._history_steam_matches("STEAM_GAME = 1778820", "1778820"), "Steam handoff requires exact game app ID on foreground window")
 	check(not launcher._history_steam_matches("STEAM_GAME = 769", "1778820") and not launcher._history_steam_matches("STEAM_GAME: not found.", "1778820"), "Steam client and unproven windows never count as game")
-	history._folder = "/tmp/pc1-history-%d" % OS.get_process_id()
+	var temporary := OS.get_environment("TEMP") if OS.has_feature("windows") else "/tmp"
+	history._folder = temporary.path_join("pc1-history-%d" % OS.get_process_id())
 	history.reload()
 	var game := {"id": "managed.tekken-a", "title": "Tekken", "state": "installed", "exec": ["fixture"], "metadata": {"provider": "Steam Store", "provider_id": "1778820", "description": "Fighting game"}}
 	var second := game.duplicate(true)

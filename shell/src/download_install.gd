@@ -20,7 +20,7 @@ func completed(path: String, torrent: bool = false) -> void:
 	WindowsInstall._request({"verb": "download", "path": path, "torrent": torrent})
 
 func _on_notification(event: Dictionary) -> void:
-	if event.get("app", "") != "FDM Controller" or event.get("summary", "") != "Download complete":
+	if event.get("app", "") not in ["FDM Controller", "Downloads"] or event.get("summary", "") != "Download complete":
 		return
 	var download: Dictionary = event.get("download", {})
 	completed(str(download.get("path", event.get("body", ""))), bool(download.get("torrent", false)))
@@ -30,7 +30,7 @@ func _poll() -> void:
 	var home := get_tree().current_scene
 	if home is Control and not home.visible:
 		return
-	if _menu != null or WindowsInstall.is_busy() or WindowsInstall.is_open() or Browser.is_open() or Files.is_open() or Settings.is_open() or Power.is_open() or Info.is_open():
+	if _menu != null or Downloads.is_open() or WindowsInstall.is_busy() or WindowsInstall.is_open() or Browser.is_open() or Files.is_open() or Settings.is_open() or Power.is_open() or Info.is_open():
 		return
 	if Launcher.is_busy() and not Launcher.is_minimized():
 		return
@@ -53,7 +53,7 @@ func _show(receipt: Dictionary) -> void:
 	if installed:
 		_menu.items = [{"id": "keep", "label": "Keep downloaded files", "icon": "folder"}]
 		if bool(receipt.get("torrent", false)):
-			_menu.note_text = "Torrent files stay available for seeding. Stop seeding and remove them in FDM when ready."
+			_menu.note_text = "Torrent files stay available for seeding. Stop seeding in Downloads when ready."
 		else:
 			_menu.note_text = "Remove the downloaded setup file? The installed program and multipart payloads are kept."
 			_menu.items.append({"id": "cleanup", "label": "Remove downloaded installer files", "icon": "close"})

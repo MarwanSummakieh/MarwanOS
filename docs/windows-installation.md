@@ -19,7 +19,16 @@ apps requiring unavailable Windows services remain incompatible.
    **Original Windows setup** remains available for unsupported pages and uses
    the controller pointer; stopping controller setup and choosing Original starts
    a fresh attempt.
-4. After setup exits, choose the installed executable to add to the library.
+4. After successful setup, the helper automatically adds a program identified
+   by a unique Desktop/Start Menu shortcut or a single launchable executable.
+   Crash reporters and bundled runtime installers are excluded. A unique game
+   executable matching a prelauncher's shortcut title is preferred to that
+   prelauncher; installs in the managed Games mapping use native controller input.
+   The card is published during setup completion and home updates on the next
+   half-second installation poll, without reopening Install or rebooting.
+   Ambiguous or interrupted setups with usable programs appear on home as
+   **Finish adding**; select that card to choose the executable and input mode.
+   Failed or cancelled setup never automatically claims an installation succeeded.
    The list scans C: within that attempt, including Program Files and AppData,
    excluding Wine built-ins, linked directories and maintenance executables.
    Files installed outside the managed C: drive are not discovered.
@@ -27,8 +36,7 @@ apps requiring unavailable Windows services remain incompatible.
    target executables first in the list. Only local targets inside that attempt
    are accepted.
 5. Launch the new card. Back from the installation screen restores Files to
-   the same folder. Failed setup does not automatically publish a card; if it
-   left usable executables, explicit selection is still available.
+   the same folder. Pending cards open selection without rerunning setup.
 
 For a standalone EXE, **Add as portable app** creates a card without running
 setup. Keep its original file, folder and any removable drive available.
@@ -123,7 +131,8 @@ advancement. The original wizard is the fallback; this is not universal EXE supp
 The helper tracks preparation as well as the runtime so Stop works during startup.
 When the bridge reports that setup ended, the helper closes its runtime group and
 hidden display even if newly installed Windows services keep Proton waiting.
-Executable discovery and explicit library registration then use the existing flow.
+Executable discovery and automatic library registration then run; ambiguous
+results retain explicit program selection.
 Running guided attempts can be recovered after a shell restart by checking the
 helper's recorded PID and process start time. UI data is removed with its attempt.
 

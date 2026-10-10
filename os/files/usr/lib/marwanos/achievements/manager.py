@@ -401,10 +401,28 @@ def main():
     home = Path.home()
     base = Path(os.environ.get("MARWANOS_ACHIEVEMENTS_HOME", str(home / ".local/share/marwanos/achievements")))
     spool = Path(os.environ.get("XDG_DATA_HOME", str(home / ".local/share"))) / "marwanos/notification-events"
-    manager = Manager(base, spool=spool)
+    profile_spec = importlib.util.spec_from_file_location("pc1_achievement_profiles", Path(__file__).resolve().parents[1] / "profiles.py")
+    profiles = importlib.util.module_from_spec(profile_spec)
+    profile_spec.loader.exec_module(profiles)
+    manager = None
+    previous_profile = None
     while True:
+        # The service lives across shell user switches; never cache another
+        # local user's progress into the selected user's achievement state.
+        try:
+            key = profiles.validate(profiles.state().get("active", "owner"))
+        except (OSError, ValueError):
+            if args.once:
+                return
+            time.sleep(5)
+            continue
+        if key != previous_profile:
+            selected_base = base if key == "owner" else profiles.data_home(key) / "achievements"
+            manager = Manager(selected_base, spool=spool)
+            previous_profile = key
+        selected_base = manager.base
         entries = library(os.environ.get("MARWANOS_WINDOWS_HOME", str(home / ".local/share/marwanos/windows")), os.environ.get("MARWANOS_ACHIEVEMENTS_APPS", "/run/marwanos/apps.tsv"))
-        requests = list((base / "requests").glob("*.json"))[:100]
+        requests = list((selected_base / "requests").glob("*.json"))[:100]
         refresh = set()
         for path in requests:
             row = read_json(path, {})
@@ -412,7 +430,10 @@ def main():
                 refresh.add(str(row.get("game_id", "")))
             path.unlink(missing_ok=True)
         for entry in entries:
-            manager.sync(entry, entry["id"] in refresh)
+            with profiles.lock():
+                if profiles.state().get("active", "owner") != key:
+                    break
+                manager.sync(entry, entry["id"] in refresh)
         if args.once:
             return
         time.sleep(5)

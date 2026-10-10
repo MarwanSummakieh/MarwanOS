@@ -26,6 +26,12 @@ The Windows installation surface is described in [the installation contract](../
 Audio is available in Settings and the running-app Home menu, with device,
 microphone and application volume controls. See [audio manager](../docs/audio-manager.md).
 
+Console users select a profile at startup and share one installed library. Add
+users or switch from the PS/Home dock or Settings → Users. Standard game saves,
+play history, achievement caches and browser bookmarks/history follow the
+selected user. See [user profiles](../docs/user-profiles.md) for Steam Cloud,
+custom save-path limits and verification.
+
 ## Runtime contracts
 
 System helpers publish status under `/run/marwanos`; most shell readers have
@@ -64,9 +70,9 @@ See [dev-setup.md](../docs/dev-setup.md) for deployment and recovery commands.
 ## Play history
 
 The library sorts by most recently played, retaining scanner order for unplayed
-entries and equal timestamps. Home summaries show total playtime; game details
-show total time, last played UTC and session count while retaining Play as the
-only action. `PlayHistory.stats(installation_id)` also exposes the persisted
+entries and equal timestamps. Home summaries show total playtime; Down focuses
+Play and Options while preserving the selected artwork and overview.
+`PlayHistory.stats(installation_id)` also exposes the persisted
 session records. IDs identify installations, so reinstalling under a different
 ID begins a separate history even when the Steam metadata ID is the same.
 
@@ -91,3 +97,18 @@ every fifteen counted seconds and at transitions; shell crash or reboot closes
 unfinished sessions at the last checkpoint on recovery, never extrapolating
 downtime. This can conservatively lose up to fifteen seconds on abrupt failure.
 `MARWANOS_HISTORY_HOME` selects an isolated directory for regression tests.
+
+## Interface design
+
+Use [the shared design guidelines](../docs/design-system.md) for this shell and
+products added to it. Home uses a user header, compact artwork rail, primary
+actions and an attached system dock. Context menus reuse `edge_panel.gd` and
+`list_menu.gd`; action controls reuse `console_button.gd`. The current viewport
+determines card, dock and sidebar dimensions. `MARWANOS_DISPLAY_NAME` supplies
+the active profile name until profile management is connected, falling back to
+the session user. Stores includes the opt-in native Steam pane on Xorg. Enable
+`MARWANOS_STEAM_EMBED=1` with the packaged Python/Xlib host, or provide a bench
+`MARWANOS_STEAM_EMBED_HELPER` path. Guide returns to the selector, Share opens
+Steam's menu, and games remain fullscreen. The pane's failure state offers an
+explicit fullscreen action; unsupported systems retain the library's Steam
+entry. See [bench evidence and limits](../docs/steam-embedding-20261009.md).

@@ -29,7 +29,8 @@ func _run() -> void:
 		service = load("res://src/achievements.gd").new()
 		service.name = "Achievements"
 		root.add_child(service)
-	service._folder = "/tmp/pc1-achievements-shell-%d" % OS.get_process_id()
+	var temporary := OS.get_environment("TEMP") if OS.has_feature("windows") else "/tmp"
+	service._folder = temporary.path_join("pc1-achievements-shell-%d" % OS.get_process_id())
 	service.games = {"managed.tekken": {"status": "ready", "provider": "RUNE local", "unlocked_count": 1, "total_count": 2, "message": "", "achievements": [{"id": "ONE", "name": "First step", "description": "Do a thing", "unlocked": true, "unlock_time": 123}, {"id": "TWO", "name": "Next step", "unlocked": false, "progress_current": 2, "progress_max": 10}]}}
 	var page: Control = load("res://src/achievements_page.gd").new()
 	page.entry = {"id": "managed.tekken", "title": "TEKKEN 8"}

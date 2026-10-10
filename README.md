@@ -14,7 +14,8 @@ affiliated with Sony.
   appear in the library. Prefixes are managed automatically; ordinary EXE/MSI
   setup wizards use the controller pointer and on-screen keyboard.
 - Known recipes can install unattended in the background. Other installers run
-  interactively, followed by explicit selection of the installed program.
+  interactively, then identifiable programs appear on home automatically;
+  ambiguous or interrupted installs offer program selection in Downloads.
 - Steam remains a supported source of games. PC1 must retain its home/overlay
   controls instead of surrendering the experience to Steam's interface.
 - An integrated browser and file manager are required product features.
@@ -74,10 +75,10 @@ other documents describe their dated builds.
 | OS | Fedora 43 / Universal Blue bootc image, pinned NVIDIA open-module sidecar, Plymouth splash, accelerated Xorg/Openbox on connected NVIDIA displays and VMs, gamescope on other GPUs; see [ADR 0013](docs/adr/0013-nvidia-xorg-display.md) |
 | Shell | Godot 4.7.1, controller navigation, library rail, app overlay, compact movable keyboard with saved position, settings, Wi-Fi, updates, power and diagnostics |
 | Controller ownership | Exclusive Linux input broker, four remembered player slots with virtual devices only for attached pads, hardware model identities, native virtual-device hotplug, Linux rumble forwarding, Steam Input recapture protection, all-pad Home/Share and gated game input; physical Tekken hotplug/rumble and two-pad acceptance pending; see [controller routing](docs/controller-routing.md) |
-| Library | Desktop applications, Steam libraries, standalone Windows executables and managed umu apps; automatic Steam Store metadata/artwork with persistent offline cache, a Play-only details page and separate Options → Metadata refresh/match page; see [metadata evidence](docs/game-metadata.md) |
+| Library | Desktop applications, Steam libraries, standalone Windows executables and managed umu apps; automatic Steam Store metadata/artwork with persistent offline cache, continuous Home game actions and Options → Metadata refresh/match; Settings refreshes all games; see [metadata evidence](docs/game-metadata.md) |
 | History and achievements | Persistent actual foreground sessions, totals and recent sorting; per-profile local/Steam achievement providers, automatic keyless Steam catalogs, progress, offline viewing and first-sync-safe unlock notifications. Unsupported schemas/profiles stay explicit; see [achievements](docs/achievements.md) |
 | Bluetooth | Controller pairing page, BlueZ agent, codes/confirmation, trust/removal/reconnect; actual dongle acceptance pending; see [Bluetooth](docs/bluetooth.md) |
-| Download automation | Browser/FDM completion receipts, controller setup and explicit game/app input profiles; confirmed successful setup-file cleanup, with torrent/multipart retention; see [download flow](docs/download-install-flow.md) |
+| Downloads | Native shell queue for HTTP/HTTPS, torrents and browser progress, persistent Linux transfer service, pause/resume, file selection and installer receipts; source integration, target acceptance pending. See [native Downloads](docs/native-downloads.md) and [download flow](docs/download-install-flow.md). |
 | Windows installation | EXE/MSI setup from Files, portable apps, explicit program selection, launch, minimize/resume, close and confirmed managed-prefix removal. The final image's service and first-use runtime passed the real 7-Zip lifecycle; see [the contract and validation](docs/windows-installation.md) |
 | Steam | Native client preferred, legacy Flatpak fallback, shared launch/stop helper and controller routing; account/game compatibility requires target validation |
 | Browser and files | Embedded Chromium with tabs, history/bookmarks, downloads, controller file uploads and web dialogs; Files search/path/history, split view, previews, cancellable copy/move, rename, trash and restore. See [built-in tools](docs/built-in-tools.md). |

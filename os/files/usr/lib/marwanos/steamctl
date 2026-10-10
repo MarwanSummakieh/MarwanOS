@@ -2,6 +2,7 @@
 """One native/legacy Steam contract for discovery, launch and shutdown."""
 import argparse
 import json
+import importlib.util
 import os
 from pathlib import Path
 import re
@@ -42,6 +43,8 @@ def libraries(home):
 
 
 def command(arguments):
+    # Steam's CEF controls must expose focused editors to the system keyboard.
+    arguments = ["-cef-force-accessibility", *arguments]
     if shutil.which("steam"):
         return ["steam", *arguments]
     if shutil.which("flatpak"):
@@ -98,10 +101,20 @@ def main():
     else:
         if args.action == "launch" and (not args.appid or not args.appid.isdigit()):
             parser.error("launch requires a numeric application ID")
+        spec = importlib.util.spec_from_file_location("pc1_steam_profiles", Path(__file__).with_name("profiles.py"))
+        profiles = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(profiles)
+        # A running client owns these paths. Only bind before a cold start;
+        # switching users always closes the client first.
+        if not list(steam_processes()):
+            profiles.prepare_steam()
         argv = command(["-silent"] if args.action == "background" else ["-gamepadui"])
         if args.action == "launch":
             argv.append("steam://rungameid/" + args.appid)
-        os.execvp(argv[0], argv)
+        key = profiles.active_id()
+        if key != "owner" and argv[0] == "flatpak":
+            raise RuntimeError("Local save profiles require native Steam. Install native Steam before switching users.")
+        os.execvpe(argv[0], argv, profiles.steam_environment(key))
 
 
 if __name__ == "__main__":

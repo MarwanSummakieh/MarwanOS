@@ -26,7 +26,19 @@ bit-for-bit equality.
 `fonts/Inter-var-latin.woff2` and `fonts/Inter-OFL.txt` are the same font asset
 and license shipped by PC1. Inter is used only for the “Powered by” caption.
 
-Run `scripts/make-splash.sh` from Linux or WSL with ImageMagick 7 to regenerate
+Run `scripts/make-splash.sh` with ImageMagick 7 to regenerate
 the Plymouth PNGs and the static UKI bitmap. The firmware frame shows PC1 on
-the pale field. Plymouth holds that mark and reveals “Powered by” and MarwanOS
+the charcoal field. Plymouth holds that mark and reveals “Powered by” and MarwanOS
 while the OS and shell finish starting.
+
+The boot palette follows `shell/src/tv_theme.gd`: solid charcoal `BACKGROUND`
+(`#11161C`), pale-blue `PRIMARY` PC1 lettering (`#BCD9EC`) and
+`TEXT_SECONDARY` caption (`#B7C7D2`). The PC1 path
+geometry, layout and reveal timing are unchanged, and the original full-colour
+MarwanOS artwork is preserved.
+
+Linux/WSL can use the bundled WOFF2 directly. Git Bash is also supported; if
+the renderer's FreeType lacks WOFF2 support, use FontTools with its WOFF
+dependencies to convert the same font to TrueType, then set `FONT_FILE` to
+that `.ttf` when running the script. This changes the container format rather
+than the font design.

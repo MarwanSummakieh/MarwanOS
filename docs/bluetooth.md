@@ -47,6 +47,34 @@ BlueZ service. Physical acceptance remains pending:
 plug in the intended dongle, pair the actual controller, confirm player routing
 and rumble, restart and suspend/resume, and verify reconnect after hotplug.
 
+## PC1 adapter compatibility
+
+On 8 October 2026, the owner confirmed two wireless DualSense controllers and
+vibration with a UGREEN BT6.0 adapter (`33fa:0012`). BlueZ 5.87 then destroyed both
+UHID input devices after transient output-send errors while continuing to report
+the controllers connected. Reconnecting restored both players in Tekken.
+
+PC1 now has a persistent local `UserspaceHID=false` setting in
+`/etc/bluetooth/input.conf` to use kernel HIDP, whose send path retries `EAGAIN`.
+Both controller slots reattached under HIDP. The owner confirmed controls and
+PS/Home still work after the transport change; rumble retesting and sustained
+stability remain pending. The owner reported a four-light flicker while input
+continued working, then confirmed that restarting PC1 cleared it. Live inspection
+verified that the kernel HID setting survived the restart. The incident record
+tracks these physical reports separately from long-duration stability.
+This setting is not a general image default. See the
+[incident record](bluetooth-controller-recovery-20261008.md) for evidence,
+configuration backup and rollback instructions.
+
+On 10 October 2026, wake inspection found that this adapter exposes no USB
+Remote Wakeup flag or `power/wakeup` attribute, despite the connected DualSense
+already having `WakeAllowed: yes`. Controller wake from deep sleep cannot be
+enabled through the current adapter's available settings. See the
+[wake capability record](controller-wake-20261010.md).
+The owner selected display-only Rest mode as the workaround and confirmed
+screen-off and wireless PS wake on PC1. Rest keeps the PC and Bluetooth running;
+Sleep has been removed from the power menu.
+
 API references: [BlueZ Agent example](https://github.com/bluez/bluez/blob/master/test/simple-agent),
 [BlueZ bus policy](https://github.com/bluez/bluez/blob/master/src/bluetooth.conf),
 [Device API](https://bluez.readthedocs.io/en/latest/device-api/),

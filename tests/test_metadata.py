@@ -121,12 +121,48 @@ class MetadataTests(unittest.TestCase):
         self.assertEqual(self.provider.calls, [("details", "1778820")])
         self.assertEqual(self.record()["source"], "Steam")
 
+    def test_steam_background_uses_library_hero_instead_of_dim_store_backdrop(self):
+        provider = metadata.SteamProvider()
+        provider.json = lambda url: {"1778820": {"success": True, "data": {
+            "type": "game", "name": "TEKKEN 8", "background_raw": "https://fixture/page_bg_raw.jpg"}}}
+        result = provider.details("1778820")
+        self.assertEqual(result["art_urls"]["background"],
+                         "https://cdn.akamai.steamstatic.com/steam/apps/1778820/library_hero.jpg")
+
+    def test_artwork_version_refreshes_cached_games_once(self):
+        self.manager.enrich(self.entry)
+        self.provider.artwork_version = 2
+        self.provider.calls.clear()
+        self.manager.enrich(self.entry)
+        self.assertEqual([call for call in self.provider.calls if call[0] == "details"],
+                         [("details", "1778820")])
+        self.assertEqual(self.record()["artwork_version"], 2)
+        self.provider.calls.clear()
+        self.manager.enrich(self.entry)
+        self.assertEqual(self.provider.calls, [])
+
+    def test_failed_artwork_migration_retains_cache_and_respects_retry_delay(self):
+        self.manager.enrich(self.entry)
+        assets = self.record()["assets"].copy()
+        self.provider.artwork_version = 2
+        self.provider.offline = True
+        self.provider.calls.clear()
+        self.manager.enrich(self.entry)
+        self.assertEqual(self.record()["status"], "error")
+        self.assertEqual(self.record()["assets"], assets)
+        self.assertEqual(self.record()["artwork_version"], 2)
+        self.provider.calls.clear()
+        self.manager.enrich(self.entry)
+        self.assertEqual(self.provider.calls, [])
+
     def test_library_ignores_installers_pending_and_utilities(self):
         apps = Path(self.temp.name) / "apps.tsv"
         apps.write_text("steam\tSteam\t\t\tsteam\tinstalled\nsteam.22\tGame\t\t\tlaunch\tinstalled\nsteam.23\tPending\t\t\t\tdownloading\n")
         windows = Path(self.temp.name) / "windows"
         (windows / "apps").mkdir(parents=True)
         (windows / "apps/game.json").write_text(json.dumps(dict(self.entry, state="installed")))
+        (windows / "apps/tool.json").write_text(json.dumps({"id": "managed.fdm", "title": "FDM Controller", "state": "installed"}))
+        (windows / "apps/utility.json").write_text(json.dumps({"id": "managed.utility", "title": "Tool", "kind": "app", "state": "installed"}))
         entries = metadata.library(apps, windows)
         self.assertEqual({entry["id"] for entry in entries}, {"steam.22", "managed.tekken"})
 
@@ -153,6 +189,34 @@ class MetadataTests(unittest.TestCase):
         self.provider.offline = False
         self.manager.enrich(self.entry, force=True)
         self.assertEqual(self.record()["provider_id"], "22")
+
+    def test_refresh_all_updates_every_game_preserving_manual_matches_and_overrides(self):
+        self.manager.enrich(self.entry, match="22")
+        self.record()["overrides"] = {"title": "My title"}
+        second = {"id": "steam.1778820", "title": "TEKKEN 8"}
+        self.provider.calls.clear()
+        self.manager.request({"action": "refresh-all"}, [self.entry, second])
+        self.assertEqual([c for c in self.provider.calls if c[0] == "details"],
+                         [("details", "22"), ("details", "1778820")])
+        self.assertEqual(self.record()["overrides"], {"title": "My title"})
+        self.assertEqual(self.record()["manual_match"], "22")
+        self.assertEqual(self.manager.state["refresh"]["completed"], 2)
+        self.assertEqual(self.manager.state["refresh"]["status"], "done")
+
+    def test_refresh_all_reports_failures_and_retains_offline_artwork(self):
+        self.manager.enrich(self.entry)
+        assets = self.record()["assets"].copy()
+        self.provider.offline = True
+        self.manager.request({"action": "refresh-all"}, [self.entry])
+        self.assertEqual(self.manager.state["refresh"]["failed"], 1)
+        self.assertEqual(self.manager.state["refresh"]["status"], "done")
+        self.assertEqual(self.record()["assets"], assets)
+
+    def test_interrupted_bulk_refresh_can_be_retried(self):
+        self.manager.state["refresh"] = {"status": "loading"}
+        self.manager.publish()
+        restarted = metadata.Manager(self.manager.base, self.provider)
+        self.assertEqual(restarted.state["refresh"]["status"], "error")
 
 
 if __name__ == "__main__":

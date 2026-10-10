@@ -26,10 +26,10 @@ extends Node
 ## Emitted whenever the installed list changes, including to and from empty.
 signal apps_changed(apps: Array)
 
-## Two seconds, matching the status seam. The file changes rarely -- only when
+## Half a second, matching Windows installation updates. The file changes rarely -- when
 ## something is installed or removed -- and reading a few short lines off a
 ## tmpfs costs nothing.
-const POLL_SECONDS := 2.0
+const POLL_SECONDS := 0.5
 
 const APPS_FILE := "/run/marwanos/apps.tsv"
 
@@ -116,7 +116,7 @@ func _poll() -> void:
 	var managed_raw := JSON.stringify(managed)
 	# Compared as raw text rather than by diffing parsed lists: the file is
 	# small, string equality is exact, and it means an unchanged scan costs one
-	# comparison instead of rebuilding the rail every two seconds. The first
+	# comparison instead of rebuilding the rail every half second. The first
 	# poll always goes through, however it compares -- see _loaded.
 	if _loaded and raw == _last_raw and managed_raw == _last_managed:
 		return

@@ -27,9 +27,9 @@ class SteamIntegrationTests(unittest.TestCase):
 
     def test_native_binary_is_preferred_and_legacy_remains_supported(self):
         with patch.object(steam.shutil, "which", return_value="/usr/bin/steam"):
-            self.assertEqual(steam.command(["-gamepadui"]), ["steam", "-gamepadui"])
+            self.assertEqual(steam.command(["-gamepadui"]), ["steam", "-cef-force-accessibility", "-gamepadui"])
         with patch.object(steam.shutil, "which", side_effect=lambda name: "/usr/bin/flatpak" if name == "flatpak" else None):
-            self.assertEqual(steam.command(["-gamepadui"]), ["flatpak", "run", "com.valvesoftware.Steam", "-gamepadui"])
+            self.assertEqual(steam.command(["-gamepadui"]), ["flatpak", "run", "com.valvesoftware.Steam", "-cef-force-accessibility", "-gamepadui"])
 
     def test_symlinked_native_root_does_not_duplicate_library(self):
         with tempfile.TemporaryDirectory() as temporary:

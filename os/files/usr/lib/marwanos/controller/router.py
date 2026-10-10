@@ -27,6 +27,13 @@ MAX_PLAYERS = 4
 EV_FF, EV_UINPUT, FF_RUMBLE = 21, 0x101, 0x50
 
 
+def capability_bits(text):
+    """Decode sysfs input bitmaps, whose unpadded words are kernel longs."""
+    word_bits = struct.calcsize("P") * 8
+    return sum(int(word, 16) << (index * word_bits)
+               for index, word in enumerate(reversed(text.split())))
+
+
 def ioctl_number(direction, group, number, size):
     return direction << 30 | size << 16 | ord(group) << 8 | number
 
@@ -382,6 +389,15 @@ class Router:
                 if (not getattr(self, 'allow_uinput_sources', False)
                         and str(sysname.parent.resolve()).startswith('/sys/devices/virtual/input/')):
                     continue
+                # Reject keyboards, audio jacks and controller sensor/touchpad
+                # nodes using sysfs. Opening and closing their evdev nodes on
+                # every scan waits in evdev_release/synchronize_rcu, stalling
+                # both shell packets and game input for hundreds of milliseconds.
+                capabilities = sysname.parent / 'capabilities'
+                if not capability_bits((capabilities / 'key').read_text()) & (1 << 304):
+                    continue
+                if capability_bits((capabilities / 'abs').read_text()) & 3 != 3:
+                    continue
                 writable = True
                 try:
                     fd = os.open(path, os.O_RDWR | os.O_NONBLOCK)
@@ -441,7 +457,7 @@ class Router:
                 slot.pad = VirtualPad(name, physical=f"{VIRTUAL_PHYSICAL_PREFIX}{slot.index + 1}", input_id=input_id)
                 slot.active(False)
                 print(f"Controller player {slot.index + 1} connected: {name}; rumble={device['rumble']}", flush=True)
-            except OSError as error:
+            except (OSError, ValueError) as error:
                 if fd in self.devices:
                     self.disconnect(fd)
                 elif fd is not None:

@@ -41,7 +41,7 @@ magick "$THEME/field.png" -resize '1280x720!' \
     \( "$THEME/marwanos.png" -resize 300x \) -geometry +0+335 -composite \
     -depth 8 -alpha off "$WORK/patch/boot/grub2/pc1.png"
 cp "$REPO_ROOT/os/installer/grub-theme.txt" "$WORK/patch/boot/grub2/pc1-theme.txt"
-magick -size 8x8 xc:'#1c1c1e' -depth 8 "PNG24:$WORK/patch/boot/grub2/selection_c.png"
+magick -size 8x8 xc:'#BCD9EC' -depth 8 "PNG24:$WORK/patch/boot/grub2/selection_c.png"
 python3 "$REPO_ROOT/scripts/brand-installer-grub.py" "$WORK"
 # USB firmware loads the FAT EFI partition, not the ISO's /EFI directory.
 # Keep its menu in sync and replace the appended partition as well as the

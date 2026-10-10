@@ -8,14 +8,22 @@ var _raw := ""
 
 
 func _ready() -> void:
-	_folder = OS.get_environment("MARWANOS_ACHIEVEMENTS_HOME")
-	if _folder.is_empty():
-		_folder = OS.get_environment("HOME").path_join(".local/share/marwanos/achievements")
+	set_profile()
 	var timer := Timer.new()
 	timer.wait_time = 1.0
 	timer.autostart = true
 	timer.timeout.connect(_poll)
 	add_child(timer)
+
+
+func set_profile() -> void:
+	_folder = OS.get_environment("MARWANOS_ACHIEVEMENTS_HOME")
+	if _folder.is_empty():
+		_folder = OS.get_environment("HOME").path_join(".local/share/marwanos/achievements")
+	_folder = Profiles.personal_path("achievements", _folder)
+	games = {}
+	_raw = ""
+	changed.emit()
 	_poll()
 
 

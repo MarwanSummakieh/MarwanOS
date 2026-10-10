@@ -146,6 +146,11 @@ func run(tree: SceneTree, screen: Control, home: String, check: Callable) -> voi
 	var rect: Rect2 = keyboard.get_panel_rect()
 	check.call(rect.size.x <= 600 and rect.size.y <= 520, "text keyboard fits within a compact readable panel")
 	check.call(not keyboard._entry.text.contains("private"), "password draft remains masked")
+	check.call(keyboard._flat.size() == 40, "four letter rows keep the floating keyboard compact")
+	keyboard._on_symbols()
+	check.call(keyboard._flat[10].text == "!" and keyboard._symbols_key.text == "ABC", "symbols are available without adding a permanent row")
+	keyboard._on_symbols()
+	check.call(keyboard._flat[10].text == "q", "letters return without moving key focus")
 	var owner := tree.root.gui_get_focus_owner()
 	var router := tree.root.get_node("ControllerRouter")
 	var player := tree.root.get_node("PlayerOne")
@@ -199,6 +204,13 @@ func run(tree: SceneTree, screen: Control, home: String, check: Callable) -> voi
 	keyboard._move_caret(-1)
 	keyboard._on_backspace()
 	check.call(inserts == ["hello"] and edits == ["Left", "BackSpace"] and keyboard._text.is_empty(), "live browser keyboard forwards text and caret edits without storing a draft")
+	check.call(not keyboard._entry.visible, "live typing leaves its readback in the original field")
+	for viewport in [Vector2i(1280, 720), Vector2i(900, 720), Vector2i(400, 600)]:
+		tree.root.size = viewport
+		await tree.process_frame
+		await tree.process_frame
+		check.call(tree.root.get_visible_rect().encloses(keyboard.get_panel_rect()), "floating keyboard fits a %dx%d viewport" % [viewport.x, viewport.y])
+	tree.root.size = Vector2i(1920, 1080)
 	tree.root.remove_child(keyboard)
 	keyboard.queue_free()
 	screen._pane().grab_pane_focus()
