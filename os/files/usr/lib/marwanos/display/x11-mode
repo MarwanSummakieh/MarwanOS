@@ -1,0 +1,47 @@
+#!/usr/bin/python3
+"""Select the fastest advertised progressive rate at each active native mode."""
+import re
+import subprocess
+
+
+def selections(query):
+    outputs = []
+    current = None
+    for line in query.splitlines():
+        if line and not line[0].isspace():
+            match = re.match(r"(\S+) connected(?: primary)? \d+x\d+[+-]\d+[+-]\d+", line)
+            current = {"name": match[1], "modes": []} if match else None
+            if current is not None:
+                outputs.append(current)
+        elif current is not None:
+            fields = line.split()
+            if len(fields) < 2 or not re.fullmatch(r"\d+x\d+", fields[0]):
+                continue
+            rates = [float(rate.rstrip("*+")) for rate in fields[1:]
+                     if re.fullmatch(r"\d+(?:\.\d+)?[\*+]*", rate)]
+            if rates:
+                current["modes"].append((fields[0], max(rates), "+" in line, "*" in line))
+    result = []
+    for output in outputs:
+        modes = output["modes"]
+        # Preferred EDID resolution first; retain the active resolution when
+        # a server does not mark a preferred mode. Never invent a modeline.
+        mode = next((mode for mode in modes if mode[2]), None)
+        if mode is None:
+            mode = next((mode for mode in modes if mode[3]), None)
+        if mode is not None:
+            result.append((output["name"], mode[0], mode[1]))
+    return result
+
+
+def main():
+    query = subprocess.check_output(["xrandr", "--current"], text=True)
+    for output, mode, rate in selections(query):
+        subprocess.run(["xrandr", "--output", output, "--mode", mode,
+                        "--rate", str(rate)], check=True)
+        print(f"Xorg display {output}: {mode} at {rate:g} Hz", flush=True)
+    print(subprocess.check_output(["xrandr", "--current"], text=True), end="")
+
+
+if __name__ == "__main__":
+    main()

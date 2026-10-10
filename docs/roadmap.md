@@ -1,7 +1,8 @@
 # PC1 / MarwanOS roadmap
 
-Updated 2026-10-06 from the owner's priorities and installation record. This is the current backlog;
+Updated 2026-10-07 from the owner's priorities and installation record. This is the current backlog;
 older phase plans and ADRs remain historical context where they disagree.
+Steam embedding implemented and remotely tested on the PC1 bench on 2026-10-09.
 
 ## Product priority
 
@@ -13,39 +14,68 @@ features. An integrated Flathub store is removed from the roadmap.
 
 ## Remaining work
 
+**Nine tracked OS tasks remain.** Automatic metadata/presentation, installed
+Tekken verification, persistent play history and achievements are complete.
+
 | Priority | Work | Status / dependency |
 | --- | --- | --- |
-| High | Automatic game metadata and library presentation | Pending; Tekken 8 is installed and registered, ready for metadata acceptance |
-| High | Play history and recently played ordering | Not implemented |
-| High | Controller rumble, multiplayer routing and reliable hotplug | Rumble/multiplayer not implemented; physical acceptance also required |
-| High | Unified achievements | Research and implementation required; choose integrations supported by each game/source |
-| High, waiting | Controller-operated Bluetooth pairing | Waiting for the owner's Bluetooth dongle to arrive |
-| Release | Reliable suspend/resume | Sleep action exists; target NVIDIA/gamescope acceptance pending |
-| Release | Silent boot, hardware and compatibility acceptance | Current-image TV/controller/audio/Steam/game testing and original boot-time gate remain incomplete |
-| Release | Bake recent bench fixes into a release image | Some latest fixes use bench overrides; rebuild, reboot-test and publish the validated image |
+| Complete | Automatic game metadata and library presentation | Final candidate's real Tekken artwork, fullscreen Play-only Details, Options metadata refresh, offline cache and reboot persistence pass; prior physical controller gameplay confirmed |
+| Complete | Play history and recently played ordering | Real Tekken foreground/Home/minimize/resume/exit session and recent ordering pass; the original 122.453-second session survives refresh/reboots. After subsequent genuine gameplay, candidate10 Details shows 52 minutes across three sessions |
+| High | Controller rumble, multiplayer routing and reliable hotplug | Broker fixes cover force-feedback callbacks, discovery, native virtual hotplug, model identities and Steam Input recapture; 37 policy checks and the real Linux uinput fixture pass. Owner-confirmed Silksong menu controls pass with its official Steam Input layout. Tekken hotplug/rumble retesting and two-pad hardware acceptance remain open. See the [session record](physical-acceptance-20261007.md) and [latest investigation](steam-display-corruption-20261007.md) |
+| Complete | Unified achievements | All 47 genuine definitions/icons, two naturally earned Tekken unlocks, native 2/47 page/Refresh and worker-restart deduplication pass. Candidate9's real in-game toast stays passive during guarded keyboard input, expires and preserves game focus; candidate10 reboot preserves 2/47 without notification replay. Physical controller acceptance remains separate |
+| High, waiting | Controller-operated Bluetooth pairing | Controller page and BlueZ pairing agent implemented; real private D-Bus fixture passes; physical dongle acceptance pending |
+| High | Download → install → cleanup | Final candidate's actual browser download, successful guided Close, app registration, explicit cleanup and installed-app lifecycle pass; torrent/multipart payloads retained; physical FDM lane pending |
+| Release | Reliable suspend/resume | Sleep action and read-only evidence helper exist; testing explicitly deferred by the owner |
+| Release | Silent boot, hardware and compatibility acceptance | Candidate10 automated audit passes both NVMe SMART checks and finds zero kernel hardware faults; software boot is 10.657s. Existing NVML reports RTX 3070 / driver 610.43.03 / current temperature 47°C without installing tools. Owner now requests physical acceptance; candidate11 live software preflight passes with zero failures, with physical observations still pending. One controller and no Bluetooth adapter are available; two-pad/Bluetooth checks await hardware. See the [physical session record](physical-acceptance-20261007.md). Load/stress and firmware acceptance remain unclaimed |
+| Release | Bake recent bench fixes into a release image | Candidate11 cc19931 / digest a271f2ba2ded… passes NVIDIA normal shutdown/reboot and compositor/postboot gates. Its raw media and branded offline ISO are built and checksum-verified; fresh offline VM installation, USB-absent boot and persistence checks remain pending. The latest native-controller, Steam Input, NVIDIA Xorg/175 Hz and Steam-card fixes are committed and pushed but need a replacement image and full reboot validation. Current source passes 248 backend tests with two optional skips. Candidate10 remains release FAIL despite its separate 15/15 VM installation pass. See [candidate11 teardown](candidate11-teardown-acceptance-20261007.md), [media provenance](candidate11-offline-media-20261007.md) and [latest status](status-2026-10-07.md) |
+
+### Experimental implementation: Steam inside Stores
+
+The owner wants persistent MarwanOS navigation, a store selector on the left and
+the live Steam client in a large pane on the right, operated entirely by a
+controller. [ADR 0008](adr/0008-embedding-a-client-surface.md) now evaluates native
+X11 window embedding first on PC1's accepted Xorg backend. Steam's Big Picture
+interface supplies controller navigation within the pane; games remain
+fullscreen and must return to the saved Stores surface on exit.
+
+Status: the opt-in native pane is enabled on the bench. Controller-path browsing,
+Silksong launches from both libraries, fullscreen return, minimize/resume and
+host recovery pass remote checks. See the [screenshots and test report](steam-embedding-20261009.md).
+Physical acceptance, popup/text entry and performance remain open before default enablement. The
+current fullscreen Steam route remains available on unsupported backends or
+embedding failure. This investigation does not change the release acceptance
+claims above.
 
 ### Metadata and Tekken 8 acceptance
 
-- [ ] Verify the completed Tekken 8 installation's library entry and launch
+- [x] Verify the completed Tekken 8 installation's library entry and launch
       target are correct, including its actual installation source.
-- [ ] Trace which providers supply its metadata and verify actual downloads and
+- [x] Trace which providers supply its metadata and verify actual downloads and
       persisted cache files. Cached Steam artwork or an extracted EXE icon alone
-      does not prove automatic metadata enrichment.
-- [ ] Check title, cover, background/hero, icon/logo where available, description,
+      does not prove automatic metadata enrichment. The 2026-10-06 implementation
+      verified real Steam Store downloads; see [metadata evidence](game-metadata.md).
+- [x] Check title, cover, background/hero, icon/logo where available, description,
       release date, genres, developer/publisher and source/platform information.
-- [ ] Compare the controller interface and effort required with Playnite: import
+- [x] Compare the controller interface and effort required with Playnite: import
       should enrich the game automatically, without visiting a desktop or manually
-      collecting artwork. Provide controller-accessible refresh and match correction.
-- [ ] Verify metadata survives reboot and remains usable offline; failed downloads
+      collecting artwork. The owner requested Play as the only details action;
+      Options opens a separate controller refresh/matching page.
+- [x] Verify metadata survives reboot and remains usable offline; failed downloads
       offer retry and do not prevent launching the game. Preserve manual corrections.
-- [ ] Implement missing provider/download/cache or presentation behavior discovered
+- [x] Implement missing provider/download/cache or presentation behavior discovered
       by this check, and extend the same flow to games from other sources.
 
 The 2026-10-06 [completion record](fitgirl-controller-bench-20261005.md) reports
 successful installation, verification of all 533 files and library registration.
-Metadata acceptance remains pending. The inspected `appscan` helper discovers
-local icons and cached Steam art; no general Playnite-style metadata provider
-pipeline was established by the source inspection on 2026-10-05.
+Image-owned reboots and an isolated offline worker preserve the metadata/artwork.
+The older inspected `appscan` helper discovered local icons and cached Steam art;
+the new metadata worker now provides the automatic provider/download pipeline.
+The [2026-10-06 metadata implementation](game-metadata.md) now supplies automatic
+matching, downloads, persistent cache and spacious controller details. The owner
+confirmed actual controller gameplay after the saved native-input profile repair.
+The controller page is baked and verified on candidate10. Physical release
+acceptance remains open; see the current acceptance record for exact software
+evidence and its limits.
 
 Playnite's documented model uses metadata providers and automatically enriches
 games on import, with later refresh and editing. Use that behavior as the baseline:
@@ -53,37 +83,43 @@ games on import, with later refresh and editing. Use that behavior as the baseli
 
 ### Play history
 
-- [ ] Persist last played, session history and total play time under stable game IDs.
-- [ ] Offer recently played ordering and show play time in game details.
-- [ ] Record actual game sessions; failed launches and installer activity must not
+- [x] Persist last played, session history and total play time under stable game IDs.
+- [x] Offer recently played ordering and show play time in game details.
+- [x] Record actual game sessions; failed launches and installer activity must not
       count. Minimize/resume must retain one session rather than create duplicates.
-- [ ] Define idle/suspend accounting and recover history safely after shell crashes
+- [x] Define idle/suspend accounting and recover history safely after shell crashes
       or reboot, without resetting history when metadata changes.
 
 ### Controllers
 
-- [ ] Forward supported game rumble through the virtual controller to its physical pad.
-- [ ] Route multiple pads to distinct player slots for local multiplayer, retaining
+- [x] Forward supported game rumble through the virtual controller to its physical pad.
+- [x] Route multiple pads to distinct player slots for local multiplayer, retaining
       PC1's Home controls and preventing application input while menus own the pad.
 - [ ] Validate physical disconnect/reconnect, held-button suppression and stable
       player assignment. Use Tekken 8 as a two-player acceptance case when ready.
-- [ ] Once the Bluetooth dongle arrives, implement and verify controller-operated
-      discovery, pairing, removal, connection status and reconnect after reboot.
+- [ ] Verify the implemented controller-operated discovery, pairing, removal,
+      connection status and reconnect after reboot once the dongle arrives.
 
 ### Achievements
 
-- [ ] Investigate available achievement data for the installed Tekken 8 edition and
+- [x] Investigate available achievement data for the installed Tekken 8 edition and
       other supported sources, including authentication and refresh requirements.
-- [ ] Define a provider interface and persistent per-game, per-profile achievement
+- [x] Define a provider interface and persistent per-game, per-profile achievement
       cache. Evaluate Steam first for Steam-owned games; investigate other sources
       and supported local game data separately.
-- [ ] Add a controller-accessible game achievements page with names, descriptions,
+- [x] Add a controller-accessible game achievements page with names, descriptions,
       icons, locked/unlocked state, completion totals and unlock times when supplied.
-- [ ] Show newly observed unlock notifications without replaying the entire history
+- [x] Show newly observed unlock notifications without replaying the entire history
       during the first sync; support offline cached viewing and later synchronization.
-- [ ] Validate a real earned unlock end to end. Unsupported achievement sources must
+- [x] Validate a real earned unlock end to end. Unsupported achievement sources must
       have an explicit unavailable state; identifying a game does not supply its
       player's unlock state.
+
+Candidate9 verifies the actual Customize unlock after ordinary game Save, a
+readable passive toast over Tekken with keyboard input/focus preserved, expiry,
+the native 2/47 page and no notification replay after Refresh/worker restart.
+See [achievement evidence](achievements.md). This completes the achievements
+task without claiming unsupported providers or physical-controller testing.
 
 Steam exposes player achievements and game schemas through its documented
 [ISteamUserStats Web API](https://partner.steamgames.com/doc/webapi/ISteamUserStats).

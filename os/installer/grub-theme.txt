@@ -1,6 +1,6 @@
 desktop-image: "pc1.png"
 title-text: ""
-message-color: "#1c1c1e"
+message-color: "#E4EDF3"
 terminal-font: "DejaVu Sans Regular 24"
 + boot_menu {
   left = 17%
@@ -8,8 +8,8 @@ terminal-font: "DejaVu Sans Regular 24"
   width = 66%
   height = 20%
   item_font = "DejaVu Sans Regular 24"
-  item_color = "#1c1c1e"
-  selected_item_color = "#ffffff"
+  item_color = "#E4EDF3"
+  selected_item_color = "#20313E"
   selected_item_pixmap_style = "selection_*.png"
   item_height = 48
   item_padding = 10
@@ -21,5 +21,5 @@ terminal-font: "DejaVu Sans Regular 24"
   width = 66%
   text = "Choose an option. Press Enter to continue."
   font = "DejaVu Sans Regular 24"
-  color = "#52545c"
+  color = "#B7C7D2"
 }
