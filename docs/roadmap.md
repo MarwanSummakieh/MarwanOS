@@ -20,7 +20,7 @@ two wireless controllers and a Bluetooth adapter are available, and display-only
 Rest/PS wake has physical confirmation. The new candidate consolidates subsequent
 source and bench work; its image and hardware gates must be recorded separately.
 
-**Release integration and physical acceptance remain open.** Automatic metadata/presentation, installed
+**Candidate14 is published; fresh-image and physical acceptance remain open.** Automatic metadata/presentation, installed
 Tekken verification, persistent play history and achievements are complete.
 
 | Priority | Work | Status / dependency |
@@ -32,8 +32,8 @@ Tekken verification, persistent play history and achievements are complete.
 | High, waiting | Controller-operated Bluetooth pairing | Controller page and BlueZ pairing agent implemented; real private D-Bus fixture passes; physical dongle acceptance pending |
 | High | Download → install → cleanup | Final candidate's actual browser download, successful guided Close, app registration, explicit cleanup and installed-app lifecycle pass; torrent/multipart payloads retained; physical FDM lane pending |
 | Release | Reliable suspend/resume | Sleep action and read-only evidence helper exist; testing explicitly deferred by the owner |
-| Release | Silent boot, hardware and compatibility acceptance | Candidate10 automated audit passes both NVMe SMART checks and finds zero kernel hardware faults; software boot is 10.657s. Existing NVML reports RTX 3070 / driver 610.43.03 / current temperature 47°C without installing tools. Owner now requests physical acceptance; candidate11 live software preflight passes with zero failures, with physical observations still pending. One controller and no Bluetooth adapter are available; two-pad/Bluetooth checks await hardware. See the [physical session record](physical-acceptance-20261007.md). Load/stress and firmware acceptance remain unclaimed |
-| Release | Bake recent bench fixes into a release image | Candidate11 cc19931 / digest a271f2ba2ded… passes NVIDIA normal shutdown/reboot and compositor/postboot gates. Its raw media and branded offline ISO are built and checksum-verified; fresh offline VM installation, USB-absent boot and persistence checks remain pending. The latest native-controller, Steam Input, NVIDIA Xorg/175 Hz and Steam-card fixes are committed and pushed but need a replacement image and full reboot validation. Current source passes 248 backend tests with two optional skips. Candidate10 remains release FAIL despite its separate 15/15 VM installation pass. See [candidate11 teardown](candidate11-teardown-acceptance-20261007.md), [media provenance](candidate11-offline-media-20261007.md) and [latest status](status-2026-10-07.md) |
+| Release | Silent boot, hardware and compatibility acceptance | Earlier audits found no NVMe/kernel hardware faults on PC1's RTX 3070/NVIDIA 610.43 setup. Two wireless DualSense controllers and a UGREEN adapter are now available; sustained multiplayer, rumble/hotplug, Bluetooth recovery, TV/audio recovery and three filmed cold boots remain open. Load/stress and firmware acceptance remain unclaimed. See the [current candidate record](release-candidate-20261010.md) and [historical physical session](physical-acceptance-20261007.md) |
+| Release | Bake recent bench fixes into a release image | October 10 changes are consolidated on `codex/release-candidate-20261010` with 338 exports pinned to published component checkpoints. All 326 backend tests have no failures, both optional integrations pass separately, all 20 shell groups pass, and five native Chromium flows pass. Image publication, exact digest and fresh-image installation/reboot/update/rollback acceptance are recorded in the [candidate record](release-candidate-20261010.md). Candidate13 remains the separately accepted installation/reboot base |
 
 ### Experimental implementation: Steam inside Stores
 

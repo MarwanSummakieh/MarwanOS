@@ -44,14 +44,13 @@ this OS integration repository.
 
 ## Current implementation
 
-This is a bootable development distro. The current build runs in a UEFI VM
-with its integrated browser, Files, controller input and Windows application
-lifecycle verified. Physical NVIDIA/controller/TV acceptance remains necessary.
-See the [current teardown acceptance](docs/candidate11-teardown-acceptance-20261007.md)
-and [detailed acceptance record](docs/acceptance-20261006.md) for software,
-bench and candidate-image evidence, and the [earlier media record](docs/acceptance-2026-10-05.md)
-for dated VM/USB artifact details. Historical observations in
-other documents describe their dated builds.
+This is a bootable development distro. Candidate13 has verified UEFI VM
+installation and PC1 reboot evidence. The October 10 candidate has its own
+source checks and image build; fresh-image boot and physical acceptance remain
+necessary. See [the candidate record](docs/release-candidate-20261010.md) for
+current results. The [candidate11 teardown](docs/candidate11-teardown-acceptance-20261007.md),
+[earlier acceptance record](docs/acceptance-20261006.md) and
+[media record](docs/acceptance-2026-10-05.md) describe their dated builds.
 
 | Area | State |
 |---|---|
