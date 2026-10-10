@@ -9,6 +9,11 @@ SOURCE="$(realpath "${1:?usage: make-branded-installer.sh source.iso output.iso}
 OUTPUT="$(realpath -m "${2:?output ISO required}")"
 [[ "$SOURCE" != "$OUTPUT" ]] || { echo 'Source and output must differ' >&2; exit 1; }
 [[ ! -e "$OUTPUT" ]] || { echo 'Output already exists' >&2; exit 1; }
+FONT=/usr/share/fonts/dejavu-sans-fonts/DejaVuSans.ttf
+[[ -s "$FONT" && -r "$FONT" ]] || {
+    echo "Missing installer font: $FONT (install dejavu-sans-fonts on the build host)" >&2
+    exit 1
+}
 for tool in xorriso unsquashfs mksquashfs magick python3 grub2-mkfont dnf rpm2cpio cpio mcopy implantisomd5 checkisomd5; do command -v "$tool" >/dev/null; done
 WORK="$(mktemp -d /var/tmp/pc1-media.XXXXXX)"
 echo "Work directory: $WORK"
@@ -26,7 +31,7 @@ python3 "$REPO_ROOT/scripts/brand-installer.py" kickstart-pair \
     "$WORK/source/osbuild.ks" "$WORK/source/osbuild-base.ks" \
     "$WORK/patch/osbuild.ks" "$WORK/patch/osbuild-base.ks"
 bash "$REPO_ROOT/scripts/brand-installer-boot.sh" "$WORK" "$REPO_ROOT"
-grub2-mkfont -s 24 -o "$WORK/patch/boot/grub2/pc1.pf2" /usr/share/fonts/dejavu-sans-fonts/DejaVuSans.ttf
+grub2-mkfont -s 24 -o "$WORK/patch/boot/grub2/pc1.pf2" "$FONT"
 THEME="$REPO_ROOT/os/files/usr/share/plymouth/themes/marwanos"
 PIX="$WORK/root/usr/share/anaconda/pixmaps"
 magick "$THEME/field.png" -resize '300x900!' \

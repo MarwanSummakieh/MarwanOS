@@ -61,6 +61,7 @@ in CI was corrected by explicitly installing `x11-utils`.
 | Static checks | Python AST parsing passed for 68 files; Bash syntax checks and `git diff --check` passed |
 | PR checks | Component pins, Windows installation and controller-shell jobs all passed on the exact image source |
 | Image packaging | Passed: fresh native engine compilation/export, image assertions, packaged headless shell startup, `bootc container lint`, publication and independent registry digest verification |
+| Fresh-image lifecycle | Offline controller-operated VM installation, USB-absent boot, installed reboot, shipped-service candidate13 → candidate14 upgrade, explicit rollback and return passed; six boots passed 30 health checks each, with representative file and filesystem persistence. Separate machine-ID and initial update-check defects remain; see [acceptance evidence](candidate14-installation-acceptance-20261010.md) |
 
 PC1 tests ran under `/var/tmp/pc1-rc-20261010` in disposable namespaces with
 private state/network and hidden live homes, services and devices. They did not
@@ -90,11 +91,19 @@ Local evidence is under `out/release-candidate-20261010/`: `ci-final/`,
 
 ## Remaining release acceptance
 
-The consolidated image still needs a fresh offline installation, USB-absent boot,
-reboot, update/rollback and persistent-data checks. Candidate13's installation
-and reboot results describe its separately recorded scope and do not establish
-this candidate's acceptance. No disposable VM tooling was available in the
-checked environments; this session did not boot or install the new image.
+Candidate14's own offline VM installation, USB-absent boot, normal reboot,
+candidate13 → candidate14 update, explicit rollback/return and representative
+persistent-data checks passed. All six boots passed 30 health checks each.
+See [the installation and lifecycle record](candidate14-installation-acceptance-20261010.md)
+for exact boot IDs, media and evidence.
+
+**Software release gates remain:** the installed machine ID changes to the
+baked ID of each OS image across update/rollback, splitting journal history;
+and the fresh offline installation initially reports an update for its already
+running digest. The post-update no-change check passes. These findings require
+fixes and a successor-image retest. The media build also exposed a missing font
+prerequisite; the host dependency was corrected and the remastering helper now
+rejects it explicitly. This tooling fix does not change the frozen OS image.
 
 Physical acceptance remains open for sustained multiplayer, rumble/hotplug,
 Bluetooth recovery, Steam login/popups/text entry and broader games, native
@@ -104,5 +113,5 @@ run against the occupied target. Two wireless DualSense controllers and a UGREEN
 adapter are available. Display-only Rest/PS wake has earlier owner confirmation;
 true suspend/controller wake remains limited by the current adapter.
 
-PR #8 remains draft pending those acceptance gates. The running PC1 installation
+PR #8 remains draft pending software and physical acceptance gates. The running PC1 installation
 and the production `latest` image tag were not changed by this release work.

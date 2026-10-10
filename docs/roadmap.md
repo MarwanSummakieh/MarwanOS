@@ -20,11 +20,15 @@ two wireless controllers and a Bluetooth adapter are available, and display-only
 Rest/PS wake has physical confirmation. The new candidate consolidates subsequent
 source and bench work; its image and hardware gates must be recorded separately.
 
-**Candidate14 is published; fresh-image and physical acceptance remain open.** Automatic metadata/presentation, installed
+**Candidate14's VM installation, boot, update and rollback checks are complete;
+software release defects and physical acceptance remain open.** See the
+[lifecycle record](candidate14-installation-acceptance-20261010.md).
+Automatic metadata/presentation, installed
 Tekken verification, persistent play history and achievements are complete.
 
 | Priority | Work | Status / dependency |
 | --- | --- | --- |
+| Release blocker | Stable host identity and fresh-install update status | Candidate14 update/rollback changes `/etc/machine-id` to each image's baked ID; its fresh offline installation initially reports an update for the running digest. Post-update no-change check passes. Fix and retest a successor image; see [lifecycle findings](candidate14-installation-acceptance-20261010.md) |
 | Complete | Automatic game metadata and library presentation | Final candidate's real Tekken artwork, fullscreen Play-only Details, Options metadata refresh, offline cache and reboot persistence pass; prior physical controller gameplay confirmed |
 | Complete | Play history and recently played ordering | Real Tekken foreground/Home/minimize/resume/exit session and recent ordering pass; the original 122.453-second session survives refresh/reboots. After subsequent genuine gameplay, candidate10 Details shows 52 minutes across three sessions |
 | High | Controller rumble, multiplayer routing and reliable hotplug | Broker fixes cover force-feedback callbacks, discovery, native virtual hotplug, model identities and Steam Input recapture; 37 policy checks and the real Linux uinput fixture pass. Owner-confirmed Silksong menu controls pass with its official Steam Input layout. Tekken hotplug/rumble retesting and two-pad hardware acceptance remain open. See the [session record](physical-acceptance-20261007.md) and [latest investigation](steam-display-corruption-20261007.md) |
@@ -33,7 +37,7 @@ Tekken verification, persistent play history and achievements are complete.
 | High | Download → install → cleanup | Final candidate's actual browser download, successful guided Close, app registration, explicit cleanup and installed-app lifecycle pass; torrent/multipart payloads retained; physical FDM lane pending |
 | Release | Reliable suspend/resume | Sleep action and read-only evidence helper exist; testing explicitly deferred by the owner |
 | Release | Silent boot, hardware and compatibility acceptance | Earlier audits found no NVMe/kernel hardware faults on PC1's RTX 3070/NVIDIA 610.43 setup. Two wireless DualSense controllers and a UGREEN adapter are now available; sustained multiplayer, rumble/hotplug, Bluetooth recovery, TV/audio recovery and three filmed cold boots remain open. Load/stress and firmware acceptance remain unclaimed. See the [current candidate record](release-candidate-20261010.md) and [historical physical session](physical-acceptance-20261007.md) |
-| Release | Bake recent bench fixes into a release image | October 10 changes are consolidated on `codex/release-candidate-20261010` with 338 exports pinned to published component checkpoints. All 326 backend tests have no failures, both optional integrations pass separately, all 20 shell groups pass, and five native Chromium flows pass. Image publication, exact digest and fresh-image installation/reboot/update/rollback acceptance are recorded in the [candidate record](release-candidate-20261010.md). Candidate13 remains the separately accepted installation/reboot base |
+| Release | Bake recent bench fixes into a release image | Candidate14 is published with 338 exports pinned to published component checkpoints. All 326 backend tests have no failures, both optional integrations pass separately, all 20 shell groups and five native Chromium flows pass. Its own offline VM installation/reboot/update/rollback/persistence checks pass, but identity/update-status software defects and physical acceptance block release. See the [candidate record](release-candidate-20261010.md) |
 
 ### Experimental implementation: Steam inside Stores
 

@@ -44,10 +44,12 @@ this OS integration repository.
 
 ## Current implementation
 
-This is a bootable development distro. Candidate13 has verified UEFI VM
-installation and PC1 reboot evidence. The October 10 candidate has its own
-source checks and image build; fresh-image boot and physical acceptance remain
-necessary. See [the candidate record](docs/release-candidate-20261010.md) for
+This is a bootable development distro. Candidate14 has its own offline UEFI VM
+installation, USB-absent boot, reboot, update/rollback and persistence evidence.
+Release remains blocked by machine-ID changes across images and an initial
+same-digest update report; physical acceptance also remains necessary.
+See [the lifecycle record](docs/candidate14-installation-acceptance-20261010.md) and
+[the candidate record](docs/release-candidate-20261010.md) for
 current results. The [candidate11 teardown](docs/candidate11-teardown-acceptance-20261007.md),
 [earlier acceptance record](docs/acceptance-20261006.md) and
 [media record](docs/acceptance-2026-10-05.md) describe their dated builds.
@@ -64,7 +66,7 @@ current results. The [candidate11 teardown](docs/candidate11-teardown-acceptance
 | Windows installation | EXE/MSI setup from Files, portable apps, explicit program selection, launch, minimize/resume, close and confirmed managed-prefix removal. The final image's service and first-use runtime passed the real 7-Zip lifecycle; see [the contract and validation](docs/windows-installation.md) |
 | Steam | Native client preferred, legacy Flatpak fallback, shared launch/stop helper and controller routing; account/game compatibility requires target validation |
 | Browser and files | Embedded Chromium with tabs, history/bookmarks, downloads, controller file uploads and web dialogs; Files search/path/history, split view, previews, cancellable copy/move, rename, trash and restore. See [built-in tools](docs/built-in-tools.md). |
-| Verification | Candidate13 PC1 reboot and offline VM installation/USB-absent boot pass. The October 10 candidate consolidates subsequent source and bench work; see its candidate record for current checks, image identity and acceptance limits. |
+| Verification | Candidate14 offline VM installation, USB-absent boot, reboot, update, rollback/return and representative persistence pass; six boots pass 30 health checks each. Machine-ID persistence and the initial update-check result block release; physical testing remains open. See the candidate and lifecycle records. |
 
 ## Architecture
 
