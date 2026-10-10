@@ -129,12 +129,14 @@ func _run() -> void:
 	check(launcher._splash._failed, "missing compositor signal offers controller recovery")
 	# Headless Godot has no compositor. Supply the successful window handoff.
 	launcher._app_is_up()
-	await press(JOY_BUTTON_BACK) # Share is the shell's alternate Home binding.
+	await press(JOY_BUTTON_BACK)
+	check(screen._overlay == null and root.get_node("ControllerRouter")._app_input, "Share leaves the running application in control")
+	await press(JOY_BUTTON_GUIDE)
 	check(screen._overlay != null, "controller opens overlay during application")
 	check(not root.get_node("ControllerRouter")._app_input, "overlay neutralizes application controller input")
 	await press(JOY_BUTTON_B)
 	check(screen._overlay == null and launcher.is_busy(), "back resumes application")
-	await press(JOY_BUTTON_BACK)
+	await press(JOY_BUTTON_GUIDE)
 	await press(JOY_BUTTON_DPAD_DOWN) # Type -> Audio.
 	await press(JOY_BUTTON_DPAD_DOWN) # Audio -> Minimize.
 	var running_pid: int = launcher._pid
@@ -151,7 +153,7 @@ func _run() -> void:
 	check(screen._process_menu == null and launcher.is_busy() and launcher._pid == running_pid, "process menu resumes original process and releases focus")
 	check(not launcher._handoff_seen and launcher._handoff_shell_ticks == 0, "resume restarts the handoff focus check")
 	launcher._app_is_up()
-	await press(JOY_BUTTON_BACK)
+	await press(JOY_BUTTON_GUIDE)
 	await press(JOY_BUTTON_DPAD_DOWN)
 	await press(JOY_BUTTON_DPAD_DOWN) # Audio -> Minimize.
 	await press(JOY_BUTTON_A)
@@ -159,7 +161,7 @@ func _run() -> void:
 	await press(JOY_BUTTON_A)
 	check(launcher.is_busy() and launcher._pid == running_pid, "library resumes original process without relaunch")
 	launcher._app_is_up()
-	await press(JOY_BUTTON_BACK)
+	await press(JOY_BUTTON_GUIDE)
 	await press(JOY_BUTTON_DPAD_DOWN)
 	await press(JOY_BUTTON_DPAD_DOWN) # Audio -> Minimize.
 	await press(JOY_BUTTON_DPAD_DOWN) # Minimize -> Close.

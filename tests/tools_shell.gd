@@ -146,8 +146,8 @@ func _run() -> void:
 	screen._open_browser(screen._pane(), home.path_join("destination/example.txt"), "example.txt")
 	await process_frame
 	check(screen._modal_open() and root.gui_get_focus_owner() == null, "document browser releases file-list focus")
-	await press(JOY_BUTTON_BACK)
-	check(screen._browser == null and files.is_open(), "Share closes document and returns to files")
+	await press(JOY_BUTTON_GUIDE)
+	check(screen._browser == null and files.is_open(), "Guide closes document and returns to files")
 	files.close()
 	await process_frame
 	await process_frame
@@ -175,8 +175,8 @@ func _run() -> void:
 	await press(JOY_BUTTON_START)
 	check(web._menu != null, "controller opens browser options")
 	await press(JOY_BUTTON_B)
-	await press(JOY_BUTTON_BACK)
-	check(not browser.is_open() and shell.visible, "Share returns home even without browser engine")
+	await press(JOY_BUTTON_GUIDE)
+	check(not browser.is_open() and shell.visible, "Guide returns home even without browser engine")
 	check(root.gui_get_focus_owner() != null, "return restores controller focus")
 	DirAccess.remove_absolute("user://controller_keyboard.cfg")
 	var keyboard: Control = load("res://src/keyboard.gd").new()

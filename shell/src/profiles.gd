@@ -149,6 +149,10 @@ func launch_error(entry: Dictionary) -> String:
 		return "This app is installed in a user's save folder. Reinstall it to C:\\Games to share it between users."
 	return ""
 
+func helper_path() -> String:
+	var override := OS.get_environment("MARWANOS_PROFILES_HELPER")
+	return override if not override.is_empty() else "/usr/lib/marwanos/profiles.py"
+
 func select_user(key: String) -> bool:
 	if _switching or not available:
 		return false
@@ -162,10 +166,10 @@ func select_user(key: String) -> bool:
 	if not error.is_empty():
 		return false
 	_switching = true
+	SteamEmbed.hide_pane()
 	var previous := active
-	var helper := "/usr/lib/marwanos/profiles.py"
+	var helper := helper_path()
 	if OS.has_feature("linux") and FileAccess.file_exists(helper):
-		await SteamEmbed.close_for_user_switch()
 		var result := folder.path_join("switch-%d.json" % Time.get_ticks_usec())
 		var pid := OS.create_process("/usr/bin/python3", [helper, "activate", key, result])
 		if pid <= 0:

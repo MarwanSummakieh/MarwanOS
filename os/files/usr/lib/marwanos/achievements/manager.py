@@ -401,7 +401,8 @@ def main():
     home = Path.home()
     base = Path(os.environ.get("MARWANOS_ACHIEVEMENTS_HOME", str(home / ".local/share/marwanos/achievements")))
     spool = Path(os.environ.get("XDG_DATA_HOME", str(home / ".local/share"))) / "marwanos/notification-events"
-    profile_spec = importlib.util.spec_from_file_location("pc1_achievement_profiles", Path(__file__).resolve().parents[1] / "profiles.py")
+    profile_path = Path(os.environ.get("MARWANOS_PROFILES_HELPER", str(Path(__file__).resolve().parents[1] / "profiles.py")))
+    profile_spec = importlib.util.spec_from_file_location("pc1_achievement_profiles", profile_path)
     profiles = importlib.util.module_from_spec(profile_spec)
     profile_spec.loader.exec_module(profiles)
     manager = None

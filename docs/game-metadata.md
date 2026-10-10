@@ -18,6 +18,36 @@ Games absent from Steam retain local presentation and can be searched manually.
 Additional metadata providers can implement the same search/details/fetch interface.
 Achievement ownership and player progress are separate integrations.
 
+## Direct-launch and console games
+
+Installed direct-launch games can opt into curated metadata without a Steam
+match. Save a JSON record at
+`~/.local/share/marwanos/metadata/custom/<library-id>.json`; the filename must
+match the stable ID in `/run/marwanos/apps.tsv`. A record alone does not create
+a card or register an executable. Use
+[`scripts/metadata/bloodborne.json`](../scripts/metadata/bloodborne.json) as an
+example. It supplies title, description, release date, genres, developers,
+publishers, platforms, source attribution and artwork URLs.
+
+Bloodborne (`bloodborne`, CUSA03173) uses this path with official PlayStation
+information and downloaded cover/background artwork. Its launcher and library
+ID remain local. Options → Metadata → Refresh reuses the curated record instead
+of searching Steam. Editing the record invalidates its metadata version and
+updates the cache; ready metadata remains usable offline. No shell restart is
+needed.
+
+Custom artwork supports HTTPS from `image.api.playstation.com`,
+`gmedia.playstation.com` and `media.playstation.com`, with redirect validation,
+size limits, image validation and the existing hash-addressed cache. Other
+providers require an adapter/origin extension. Curated records accept presentation
+fields only; executable, stop command and controller settings are ignored.
+The worker includes a direct-launch card only when installed and explicitly
+configured. Utility filtering still applies.
+
+The backend passes 20 regression tests, including custom refresh, offline reuse,
+installed-card filtering and preservation of launch identity. The live bench
+downloaded and displayed both Bloodborne assets without adding setup cards.
+
 ## Controller operation
 
 Select a library card and press **Down** to open details. **Play** is the only

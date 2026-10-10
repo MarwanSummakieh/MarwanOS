@@ -51,7 +51,7 @@ signal closed()
 const TvTheme = preload("res://src/tv_theme.gd")
 const AppMenuRow = preload("res://src/app_menu_row.gd")
 const Keyboard = preload("res://src/keyboard.gd")
-const AudioScreen = preload("res://src/audio_screen.gd")
+const VolumePopup = preload("res://src/volume_popup.gd")
 
 ## The menu, in order. Adding an entry here and a branch in _on_item_chosen is
 ## the whole of adding a menu item -- the panel sizes itself and the focus chain
@@ -85,7 +85,7 @@ var _rows: Array = []
 ## the left edge, and nothing here should have to change again if it moves back.
 var _menu: Control = null
 var _keyboard: Keyboard = null
-var _audio_screen: AudioScreen = null
+var _volume_popup: VolumePopup = null
 var _typing_pid := -1
 var _typing_error: Label = null
 var _scrim: ColorRect
@@ -213,21 +213,22 @@ func _on_item_chosen(id: String) -> void:
 # ---------------------------------------------------------------------------
 
 func _open_audio() -> void:
-	if _audio_screen != null:
+	if _volume_popup != null:
 		return
-	_menu.hide()
-	_audio_screen = AudioScreen.new()
-	_audio_screen.closed.connect(func(): _close_audio.call_deferred())
-	add_child(_audio_screen)
+	_volume_popup = VolumePopup.new()
+	for row in _rows:
+		if row.id == "audio":
+			_volume_popup.anchor_control = row
+	_volume_popup.closed.connect(_close_audio.call_deferred, CONNECT_ONE_SHOT)
+	add_child(_volume_popup)
 
 
 func _close_audio() -> void:
-	if _audio_screen == null:
+	if _volume_popup == null:
 		return
-	var screen := _audio_screen
-	_audio_screen = null
-	remove_child(screen)
-	screen.queue_free()
+	var screen := _volume_popup
+	_volume_popup = null
+	screen.dismiss()
 	_menu.show()
 	for row in _rows:
 		if row.id == "audio":
@@ -359,7 +360,7 @@ func _exit_tree() -> void:
 
 
 func _unhandled_input(event: InputEvent) -> void:
-	if _audio_screen != null:
+	if _volume_popup != null:
 		return
 	# THE KEYBOARD OWNS B WHILE IT IS UP. It consumes ui_cancel for its own
 	# cancel signal, and this handler must not treat the same press as a second

@@ -1020,7 +1020,7 @@ def launch(base, key):
             (games is not None and executable.resolve().is_relative_to(games.resolve()))):
         raise InstallError("The application's stored program is invalid.")
     with exclusive(base / "running" / (key + ".lock")):
-        profile_path = Path(__file__).resolve().parents[1] / "profiles.py"
+        profile_path = Path(os.environ.get("MARWANOS_PROFILES_HELPER", str(Path(__file__).resolve().parents[1] / "profiles.py")))
         spec = importlib.util.spec_from_file_location("pc1_windows_profiles", profile_path)
         profiles = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(profiles)

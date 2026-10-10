@@ -75,6 +75,13 @@ The owner selected display-only Rest mode as the workaround and confirmed
 screen-off and wireless PS wake on PC1. Rest keeps the PC and Bluetooth running;
 Sleep has been removed from the power menu.
 
+Controller battery tracking is installed on the bench and included in source.
+The status corner shows available percentages; Bluetooth shows charging, USB
+connection, and dated last readings after disconnect. Low-battery warnings and
+persistent battery/connection history are available. Player 1 reported 5% and
+charging during verification. See the
+[battery tracking record](controller-battery-20261010.md).
+
 API references: [BlueZ Agent example](https://github.com/bluez/bluez/blob/master/test/simple-agent),
 [BlueZ bus policy](https://github.com/bluez/bluez/blob/master/src/bluetooth.conf),
 [Device API](https://bluez.readthedocs.io/en/latest/device-api/),

@@ -107,7 +107,7 @@ class Gate:
     def output(self, buttons, axes):
         self.blocked_buttons.intersection_update(i for i, value in enumerate(buttons) if value)
         self.blocked_axes.intersection_update(i for i, value in enumerate(axes) if abs(value) > .2)
-        return ([int(self.active and bool(v) and i not in self.blocked_buttons and i not in (4, 5))
+        return ([int(self.active and bool(v) and i not in self.blocked_buttons and i != 5)
                  for i, v in enumerate(buttons)],
                 [v if self.active and i not in self.blocked_axes else 0.0 for i, v in enumerate(axes)])
 
@@ -492,7 +492,7 @@ class Router:
         buttons = device.get("buttons", BUTTONS)
         if kind == 1 and code in buttons:
             slot.buttons[buttons[code]] = int(bool(value))
-            if code in (314, 316) and value:
+            if code == 316 and value:
                 self.set_active(False)
         elif kind == 3 and code in (16, 17):
             indices = (13, 14) if code == 16 else (11, 12)
@@ -564,7 +564,7 @@ class Router:
                 self.publish()
 
     def set_active(self, enabled):
-        if any(slot.buttons[4] or slot.buttons[5] for slot in self.slots):
+        if any(slot.buttons[5] for slot in self.slots):
             enabled = False
         for slot in self.slots:
             slot.active(enabled)
@@ -591,13 +591,12 @@ class Router:
         self.sequence += 1
         first = self.slots[0]
         buttons = list(first.buttons)
-        for index in (4, 5):
-            buttons[index] = int(any(slot.buttons[index] for slot in self.slots))
+        buttons[5] = int(any(slot.buttons[5] for slot in self.slots))
         # Keep the legacy first-pad fields for the shell and expose slot state
         # separately. Other players' ordinary buttons never navigate the shell.
         state = {"token": self.token, "seq": self.sequence,
                  "connected": bool(first.device), "name": first.device["name"] if first.device else "",
-                 "buttons": buttons, "axes": first.axes, "home": bool(buttons[4] or buttons[5]),
+                 "buttons": buttons, "axes": first.axes, "home": bool(buttons[5]),
                  "players": [{"slot": slot.index + 1, "connected": bool(slot.device),
                               "name": slot.device["name"] if slot.device else "",
                               "rumble": bool(slot.device and slot.device["rumble"])} for slot in self.slots]}
@@ -623,7 +622,7 @@ class Router:
                 for fd in list(self.devices):
                     if fd in ready:
                         self.read_device(fd)
-                if time.monotonic() > self.lease or any(slot.buttons[4] or slot.buttons[5] for slot in self.slots):
+                if time.monotonic() > self.lease or any(slot.buttons[5] for slot in self.slots):
                     self.set_active(False)
                 for fd, (slot, pad) in pads.items():
                     # Physical reads above may destroy a ready virtual pad.

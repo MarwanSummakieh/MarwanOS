@@ -29,15 +29,33 @@ func _poll() -> void:
 	var data: Variant = JSON.parse_string(raw) if not raw.is_empty() else null
 	if not data is Dictionary or absf(Time.get_unix_time_from_system() - float(data.get("updated_at", 0))) > 10:
 		data = {"status": "unavailable", "available": false, "adapters": [], "devices": [], "prompt": {}, "error": "Bluetooth service unavailable. Try again."}
-	var signature := JSON.stringify(data.duplicate())
 	# Heartbeats do not rebuild controller rows or lose the selected device.
-	data.erase("updated_at")
-	signature = JSON.stringify(data)
+	var stable: Dictionary = data.duplicate(true)
+	stable.erase("updated_at")
+	for device in stable.get("devices", []):
+		if device.get("battery") is Dictionary:
+			device.battery.erase("last_seen")
+	var signature := JSON.stringify(stable)
+	snapshot = data
 	if signature != _raw:
 		_raw = signature
-		snapshot = data
 		error = str(data.get("error", ""))
 		changed.emit()
+
+
+func battery_text(device: Dictionary) -> String:
+	var battery: Dictionary = device.get("battery", {})
+	if battery.get("available", false) and battery.get("percent") != null:
+		var text := "%d%%" % int(battery.percent)
+		if battery.get("status", "") == "Charging":
+			text += " · Charging"
+		elif battery.get("status", "") == "Full":
+			text += " · Full"
+		return text
+	if battery.get("last_percent") != null:
+		var when := Time.get_datetime_dict_from_unix_time(int(battery.get("last_seen", 0)))
+		return "Last battery %d%% · %02d/%02d %02d:%02d UTC" % [int(battery.last_percent), when.day, when.month, when.hour, when.minute]
+	return "Battery unavailable"
 
 
 func request(action: String, target: String = "", extra: Dictionary = {}) -> bool:

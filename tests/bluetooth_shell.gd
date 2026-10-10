@@ -89,6 +89,26 @@ func _run() -> void:
 	write_state(service, data)
 	await process_frame
 	check(root.get_viewport().gui_get_focus_owner().get_meta("bluetooth_key") == device.id, "status update preserves selected device")
+	data.devices[0].battery = {"available": true, "percent": 15, "status": "Discharging", "last_percent": 15, "last_seen": 100}
+	data.devices[0].player_slot = 1
+	write_state(service, data)
+	await process_frame
+	check(labels(page).contains("15%") and labels(page).contains("Player 1"), "controller row shows player and live battery")
+	var corner: Control = load("res://src/status_corner.gd").new()
+	root.add_child(corner)
+	await process_frame
+	check(corner._battery.text == "P1 15%", "status corner shows live player battery")
+	data.devices[0].battery.available = false
+	data.devices[0].battery.percent = null
+	write_state(service, data)
+	await process_frame
+	check(labels(page).contains("Last battery 15%") and not corner._battery.visible, "missing reports show dated last value and never a live percentage")
+	data.devices[0].battery = {"available": true, "percent": 55, "status": "Charging", "transport": "usb"}
+	write_state(service, data)
+	await process_frame
+	check(labels(page).contains("Charging") and corner._battery.text == "P1 55% +", "charging appears in controller row and status corner")
+	check(labels(page).contains("Connected via USB"), "wired battery reports identify USB even with Bluetooth disconnected")
+	corner.queue_free()
 	await press("ui_shell_x")
 	check(request(service).action == "trust" and request(service).value, "controller X enables trust")
 	await press("ui_shell_y")

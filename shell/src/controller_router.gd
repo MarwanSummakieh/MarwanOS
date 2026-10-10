@@ -102,8 +102,8 @@ func _apply_state(state: Dictionary) -> void:
 	var buttons: Array = state.get("buttons", [])
 	var axes: Array = state.get("axes", []) if connected else []
 	for index in 15:
-		# Guide/Share on any player still opens Home if player one is unplugged.
-		var pressed := bool(buttons[index]) if index < buttons.size() and (connected or index in [4, 5]) else false
+		# Guide on any player still opens Home if player one is unplugged.
+		var pressed := bool(buttons[index]) if index < buttons.size() and (connected or index == JOY_BUTTON_GUIDE) else false
 		if pressed != bool(_buttons[index]):
 			_buttons[index] = pressed
 			var event := InputEventJoypadButton.new()

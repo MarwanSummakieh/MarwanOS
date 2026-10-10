@@ -27,9 +27,10 @@ Audio is available in Settings and the running-app Home menu, with device,
 microphone and application volume controls. See [audio manager](../docs/audio-manager.md).
 
 Console users select a profile at startup and share one installed library. Add
-users or switch from the PS/Home dock or Settings → Users. Standard game saves,
+users or switch from the PS/Home dock or Settings → Users. Managed Windows game saves,
 play history, achievement caches and browser bookmarks/history follow the
-selected user. See [user profiles](../docs/user-profiles.md) for Steam Cloud,
+selected user. Steam keeps one shared account, login and save state across local
+users; switching leaves Steam running. See [user profiles](../docs/user-profiles.md) for Steam Cloud,
 custom save-path limits and verification.
 
 ## Runtime contracts
@@ -43,7 +44,7 @@ player's home, independently of bootc deployments.
 Use `Launcher.launch(entry)` for external applications. Internal surfaces save
 focus before opening and restore it after closing. Hidden surfaces must not
 handle controller actions behind the active surface. A/B are logical accept/back
-bindings; the UI draws PlayStation-style glyphs. Guide/Share mapping and input
+bindings; the UI draws PlayStation-style glyphs. Guide mapping and input
 ownership across Steam and games still require real-device validation.
 
 ## Build and verification

@@ -107,19 +107,6 @@ func launch_fullscreen() -> void:
 func close_game() -> void:
 	_command("close_game")
 
-func close_for_user_switch() -> void:
-	hide_pane()
-	_command("quit")
-	var deadline := Time.get_ticks_msec() + 3000
-	while _pid > 0 and OS.is_process_running(_pid) and Time.get_ticks_msec() < deadline:
-		await get_tree().process_frame
-	if _pid > 0 and OS.is_process_running(_pid):
-		OS.kill(_pid)
-	_pid = -1
-	_last_game = 0
-	snapshot = {}
-	changed.emit()
-
 func _command(action: String) -> void:
 	_action_id += 1
 	_action = action

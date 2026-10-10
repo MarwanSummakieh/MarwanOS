@@ -108,11 +108,14 @@ class ProfileSaveTests(unittest.TestCase):
         self.assertTrue(archive.is_dir())
         self.assertEqual((source / "unexpected").read_text(), "new data")
 
-    def test_steam_userdata_and_external_proton_prefix_are_private_and_library_is_shared(self):
+    def test_switching_users_preserves_shared_steam_account_and_external_proton_saves(self):
         steam = self.home / ".local/share/Steam"
         userdata = steam / "userdata/123/42/remote/save.dat"
         userdata.parent.mkdir(parents=True)
         userdata.write_text("original Steam save")
+        login = steam / "config/loginusers.vdf"
+        login.parent.mkdir()
+        login.write_text('"users" { "123" { "RememberPassword" "1" } }')
         library = self.home / "External Games"
         config = steam / "steamapps/libraryfolders.vdf"
         config.parent.mkdir()
@@ -124,34 +127,31 @@ class ProfileSaveTests(unittest.TestCase):
         binary = library / "steamapps/common/Game/Game.exe"
         binary.parent.mkdir(parents=True)
         binary.write_bytes(b"one install")
-        profiles.prepare_steam(ALICE)
-        self.assertFalse(userdata.exists())
-        self.assertFalse(save.exists())
-        userdata.parent.mkdir(parents=True)
-        userdata.write_text("Alice Steam save")
-        profiles.prepare_steam("owner")
-        self.assertEqual(userdata.read_text(), "original Steam save")
-        self.assertEqual(save.read_text(), "original Proton save")
-        self.assertEqual(binary.read_bytes(), b"one install")
-        profiles.prepare_steam(ALICE)
-        self.assertEqual(userdata.read_text(), "Alice Steam save")
+        for key in (ALICE, BOB, "owner"):
+            profiles.activate(key)
+            self.assertEqual(userdata.read_text(), "original Steam save")
+            self.assertEqual(save.read_text(), "original Proton save")
+            self.assertEqual(binary.read_bytes(), b"one install")
+            self.assertIn('"RememberPassword" "1"', login.read_text())
+            self.assertFalse((steam / "userdata").is_symlink())
+        self.assertEqual(list(self.store.rglob("steam-userdata")), [])
 
-    def test_new_steam_prefix_is_attributed_to_the_player_who_created_it(self):
+    def test_new_steam_prefix_remains_shared_after_switching_users(self):
         self.select(ALICE)
         prefix = self.home / ".local/share/Steam/steamapps/compatdata/99/pfx"
         save = prefix / "drive_c/users/steamuser/Documents/save.dat"
         save.parent.mkdir(parents=True)
         save.write_text("Alice installed and played this")
-        profiles.prepare_steam(BOB)
-        self.assertFalse(save.exists())
-        profiles.prepare_steam(ALICE)
+        profiles.activate(BOB)
+        self.assertEqual(save.read_text(), "Alice installed and played this")
+        profiles.activate(ALICE)
         self.assertEqual(save.read_text(), "Alice installed and played this")
 
-    def test_private_native_home_keeps_installed_steam_content_shared(self):
-        env = profiles.steam_environment(ALICE)
+    def test_non_steam_native_games_keep_private_home(self):
+        env = profiles.game_environment(ALICE)
         self.assertNotEqual(env["HOME"], str(self.home))
         self.assertEqual(env["MARWANOS_PROFILE_ID"], ALICE)
-        self.assertEqual((Path(env["HOME"]) / ".local/share/Steam").resolve(), self.home / ".local/share/Steam")
+        self.assertFalse((Path(env["HOME"]) / ".local/share/Steam").exists())
         self.assertEqual(profiles.game_environment("owner")["HOME"], str(self.home))
 
     def test_profile_traversal_and_nonexistent_users_are_rejected(self):
@@ -164,12 +164,10 @@ class ProfileSaveTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             profiles.active_id()
 
-    def test_activation_does_not_touch_saves_while_steam_is_still_running(self):
-        steam = profiles.steam_module()
-        with patch.object(profiles, "steam_module", return_value=steam), patch.object(steam, "stop"), patch.object(steam, "steam_processes", return_value=iter([(123, "42")])):
-            with self.assertRaisesRegex(ValueError, "still closing"):
-                profiles.activate(ALICE)
-        self.assertEqual(self.save.read_text(), "original progress")
+    def test_activation_does_not_invoke_steam_or_other_processes(self):
+        with patch.object(subprocess, "run", side_effect=AssertionError("Steam must stay running")), patch.object(os, "kill", side_effect=AssertionError("Steam must stay running")):
+            profiles.activate(ALICE)
+        self.assertEqual(profiles.active_id(), ALICE)
 
     def register_fixture(self):
         path = self.home / "windows/apps/local-fixture.json"
@@ -197,9 +195,7 @@ p.write_text(os.environ['PROFILE_FIXTURE_SAVE'])
 
     def test_activation_commits_selected_user_after_rebinding_installed_saves(self):
         self.register_fixture()
-        steam = profiles.steam_module()
-        with patch.object(profiles, "steam_module", return_value=steam), patch.object(steam, "stop"), patch.object(steam, "steam_processes", return_value=iter([])):
-            profiles.activate(ALICE)
+        profiles.activate(ALICE)
         self.assertEqual(profiles.active_id(), ALICE)
         self.assertFalse(self.save.exists())
         profiles.prepare_windows(self.prefix, "owner")
@@ -212,8 +208,7 @@ p.write_text(os.environ['PROFILE_FIXTURE_SAVE'])
             if path.name == "users.json":
                 raise OSError("disk full")
             original_write(path, value)
-        steam = profiles.steam_module()
-        with patch.object(profiles, "steam_module", return_value=steam), patch.object(steam, "stop"), patch.object(steam, "steam_processes", return_value=iter([])), patch.object(profiles, "write_json", side_effect=fail_commit):
+        with patch.object(profiles, "write_json", side_effect=fail_commit):
             with self.assertRaisesRegex(OSError, "disk full"):
                 profiles.activate(ALICE)
         self.assertEqual(profiles.active_id(), "owner")

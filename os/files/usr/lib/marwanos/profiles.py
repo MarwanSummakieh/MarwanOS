@@ -7,7 +7,6 @@ Only owned save directories are redirected. Game binaries are never copied.
 import argparse
 import contextlib
 import hashlib
-import importlib.util
 import json
 import os
 from pathlib import Path
@@ -154,37 +153,6 @@ def prepare_windows(prefix, key=None):
         bind_save(prefix / "user.reg", key, "wine-registry", directory=False)
 
 
-def steam_module():
-    from importlib.machinery import SourceFileLoader
-    path = Path(__file__).with_name("steamctl")
-    spec = importlib.util.spec_from_loader("pc1_profile_steam", SourceFileLoader("pc1_profile_steam", str(path)))
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
-
-
-def prepare_steam(key=None, home=None):
-    key = validate(key or active_id())
-    home = Path(home or Path.home())
-    steam = steam_module()
-    legacy_key = validate(state().get("active", "owner"))
-    with lock():
-        roots = [home / ".local/share/Steam", home / ".steam/steam",
-                 home / ".var/app/com.valvesoftware.Steam/.local/share/Steam"]
-        if not any(folder.is_dir() for folder in roots):
-            roots[0].mkdir(parents=True, exist_ok=True)
-        seen = set()
-        for folder in roots:
-            folder = folder.resolve()
-            if folder.is_dir() and folder not in seen:
-                seen.add(folder)
-                bind_save(folder / "userdata", key, "steam-userdata", legacy_key=legacy_key)
-        for library in steam.libraries(home):
-            for prefix in (library / "compatdata").glob("[0-9]*/pfx"):
-                bind_save(prefix / "drive_c/users", key, "wine-users", legacy_key=legacy_key)
-                bind_save(prefix / "user.reg", key, "wine-registry", directory=False, legacy_key=legacy_key)
-
-
 def prepare_installed_windows(key):
     base = Path(os.environ.get("MARWANOS_WINDOWS_HOME", str(Path.home() / ".local/share/marwanos/windows")))
     for path in (base / "apps").glob("*.json"):
@@ -202,21 +170,15 @@ def prepare_installed_windows(key):
 def activate(key):
     validate(key)
     # The shell rejects live/minimized games and installers before this call.
-    # Steam can also be alive as session furniture, outside Launcher's lifecycle.
-    steam = steam_module()
-    steam.stop()
-    if list(steam.steam_processes()):
-        raise ValueError("Steam is still closing. Wait and choose the user again.")
+    # Steam's account, client and saves belong to the shared console session.
     with lock():
         registry = state()
         previous = registry.get("active", "owner")
         try:
-            prepare_steam(key)
             prepare_installed_windows(key)
             registry["active"] = key
             write_json(root() / "users.json", registry)
         except Exception:
-            prepare_steam(previous)
             prepare_installed_windows(previous)
             raise
 
@@ -228,28 +190,6 @@ def game_environment(key):
         home.mkdir(exist_ok=True)
         env.update(HOME=str(home), XDG_DATA_HOME=str(home / ".local/share"),
                    XDG_CONFIG_HOME=str(home / ".config"), XDG_CACHE_HOME=str(home / ".cache"))
-    return env
-
-
-def steam_environment(key):
-    env = game_environment(key)
-    if key == "owner":
-        return env
-    home = Path(env["HOME"])
-    # Steam's client and installed library stay shared. Native games inherit
-    # the selected user's HOME; Steam userdata and Proton saves are bound above.
-    for relative in (".local/share/Steam", ".steam"):
-        original = Path.home() / relative
-        original.mkdir(parents=True, exist_ok=True)
-        link = home / relative
-        link.parent.mkdir(parents=True, exist_ok=True)
-        if link.is_symlink():
-            if link.resolve() != original.resolve():
-                raise ValueError("The user's Steam directory is invalid.")
-        elif link.exists():
-            raise ValueError("The user's Steam directory already contains files.")
-        else:
-            link.symlink_to(original, target_is_directory=True)
     return env
 
 

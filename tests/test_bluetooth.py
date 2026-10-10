@@ -54,6 +54,100 @@ class MissingBlueZ(Exception):
         return self.name
 
 
+class ControllerBatteryChecks(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        self.power = self.root / "power"
+        self.power.mkdir()
+        self.address = "aa:bb:cc:dd:ee:ff"
+        self.supply = self.power / ("ps-controller-battery-" + self.address)
+        self.supply.mkdir()
+        self.backend = FakeBlueZ()
+        self.backend.data[D][bluetooth.DEVICE].update({"Address": self.address.upper(), "Connected": True})
+        self.tracker = bluetooth.BatteryTracker(self.root / "history", self.power, self.root / "spool")
+
+    def sample(self, at=100):
+        devices = bluetooth.snapshot(self.backend.data)["devices"]
+        self.tracker.update(devices, self.backend.data, at)
+        return devices[0]["battery"]
+
+    def report(self, capacity, status="Discharging"):
+        (self.supply / "capacity").write_text(str(capacity))
+        (self.supply / "status").write_text(status)
+
+    def test_native_report_then_disconnect_retains_dated_battery_after_restart(self):
+        self.report(15)
+        self.assertEqual(self.sample()["percent"], 15)
+        (self.supply / "capacity").unlink()
+        self.backend.data[D][bluetooth.DEVICE]["Connected"] = False
+        battery = self.sample(110)
+        self.assertIsNone(battery["percent"])
+        self.assertEqual((battery["last_percent"], battery["last_seen"]), (15, 100))
+        self.tracker = bluetooth.BatteryTracker(self.root / "history", self.power)
+        self.assertEqual(self.sample(120)["last_percent"], 15)
+        self.assertEqual(len(self.tracker.data["events"]), 2)
+
+    def test_missing_or_invalid_report_is_unknown_never_zero_or_initial_full(self):
+        self.assertIsNone(self.sample()["percent"])
+        for percent, status in [(101, "Discharging"), (-1, "Discharging"), (100, "Unknown"), ("bad", "Charging")]:
+            self.report(percent, status)
+            self.assertIsNone(self.sample()["percent"])
+        self.report(0)
+        self.assertEqual(self.sample()["percent"], 0)
+
+    def test_low_warnings_once_per_threshold_and_rearm_on_charge(self):
+        self.report(15)
+        self.sample()
+        event = next((self.root / "spool").glob("*.json"))
+        self.assertIn("15%", event.read_text())
+        event.unlink()
+        self.sample(101)
+        self.assertFalse(event.exists())
+        self.report(5)
+        self.sample(102)
+        self.assertIn("5%", event.read_text())
+        event.unlink()
+        self.report(5, "Charging")
+        self.sample(103)
+        self.assertFalse(event.exists())
+        self.report(5)
+        self.sample(104)
+        self.assertTrue(event.exists())
+
+    def test_bluez_fallback_is_ignored_after_disconnect_and_native_takes_priority(self):
+        self.backend.data[D]["org.bluez.Battery1"] = {"Percentage": 45}
+        self.assertEqual(self.sample()["percent"], 45)
+        self.report(85)
+        self.assertEqual(self.sample()["percent"], 85)
+        (self.supply / "capacity").unlink()
+        self.backend.data[D][bluetooth.DEVICE]["Connected"] = False
+        self.assertIsNone(self.sample()["percent"])
+
+    def test_usb_transport_is_reported_without_bluetooth_connection(self):
+        real = self.root / "0003:054C:0CE6.0007/power_supply" / self.supply.name
+        real.mkdir(parents=True)
+        self.supply.rmdir()
+        self.supply.symlink_to(real, target_is_directory=True)
+        self.report(5, "Charging")
+        self.backend.data[D][bluetooth.DEVICE]["Connected"] = False
+        battery = self.sample()
+        self.assertEqual((battery["transport"], battery["percent"]), ("usb", 5))
+
+    def test_controllers_do_not_share_readings_and_history_is_bounded(self):
+        second = D + "_2"
+        self.backend.data[second] = {bluetooth.DEVICE: {"Adapter": A, "Address": "11:22:33:44:55:66", "Connected": True}}
+        self.report(75)
+        devices = bluetooth.snapshot(self.backend.data)["devices"]
+        self.tracker.update(devices, self.backend.data, 100)
+        self.assertIsNone(next(d for d in devices if d["id"] == second)["battery"]["percent"])
+        for i in range(520):
+            self.report(75 if i % 2 else 85)
+            self.sample(101 + i)
+        self.assertEqual(len(self.tracker.data["events"]), 512)
+
+
 class BluetoothAvailabilityChecks(unittest.TestCase):
     def test_hardware_condition_skipped_service_reports_no_adapter_then_hotplug(self):
         with tempfile.TemporaryDirectory() as directory:

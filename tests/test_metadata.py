@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 
 MODULE = Path(__file__).resolve().parents[1] / "os/files/usr/lib/marwanos/metadata/manager.py"
 spec = importlib.util.spec_from_file_location("metadata_manager", MODULE)
@@ -51,6 +52,42 @@ class MetadataTests(unittest.TestCase):
 
     def record(self):
         return self.manager.state["games"][self.entry["id"]]
+
+    def test_custom_console_game_refresh_and_offline_cache_keep_launch_identity(self):
+        self.entry = {"id": "bloodborne", "title": "Bloodborne", "exec": ["original"]}
+        folder = self.manager.base / "custom"
+        folder.mkdir()
+        (folder / 'bloodborne.json').write_text(json.dumps({
+            "title": "Bloodborne", "provider": "PlayStation", "provider_id": "CUSA03173",
+            "source": "Emulated", "description": "An action RPG", "exec": ["untrusted"],
+            "art_urls": {"background": "https://image.api.playstation.com/example.png"},
+        }))
+        with patch.object(metadata.CustomProvider, 'fetch', side_effect=self.provider.fetch):
+            self.manager.enrich(self.entry)
+            self.assertEqual(self.record()['status'], 'ready')
+            self.assertEqual(self.record()['source'], 'Emulated')
+            self.assertNotIn('exec', self.record())
+            self.manager.request(dict(action='refresh', game_id='bloodborne'), [self.entry])
+        self.assertEqual(self.record()['provider_id'], 'CUSA03173')
+        self.assertEqual(self.provider.calls, [])
+        self.assertEqual(self.entry['exec'], ['original'])
+        self.provider.offline = True
+        restarted = metadata.Manager(self.manager.base, self.provider)
+        restarted.enrich(self.entry)
+        self.assertEqual(restarted.state['games']['bloodborne']['status'], 'ready')
+
+    def test_custom_manifest_opts_in_only_an_installed_card_and_rejects_unsafe_art(self):
+        folder = self.manager.base / 'custom'
+        folder.mkdir()
+        for name in ('bloodborne', 'absent'):
+            (folder / (name + '.json')).write_text(json.dumps({'title': name}))
+        apps = self.manager.base / 'apps.tsv'
+        apps.write_text('bloodborne\tBloodborne\t\t\tlaunch\tinstalled\nunknown\tTool\t\t\tlaunch\tinstalled\n')
+        entries = metadata.library(apps, self.manager.base / 'windows', self.manager.base)
+        self.assertEqual([e['id'] for e in entries], ['bloodborne'])
+        self.assertEqual(metadata.custom_manifest(self.manager.base, '../bloodborne'), {})
+        with self.assertRaises(ValueError):
+            metadata.CustomProvider({}).fetch('http://127.0.0.1/private', 1024)
 
     def test_unicode_names_are_not_empty_or_equated(self):
         self.assertNotEqual(metadata.normalized("鉄拳"), "")

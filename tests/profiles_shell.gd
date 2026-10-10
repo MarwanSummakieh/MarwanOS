@@ -37,8 +37,16 @@ func _run() -> void:
 	history.finish("test", 3000, 1002)
 	var alice: String = profiles.add_user("Alice", profiles.COLORS[1])
 	check(not alice.is_empty(), "new user is stored")
+	var steam := root.get_node("SteamEmbed")
+	steam.snapshot = {"phase": "ready", "client": 123, "game_id": 0}
 	var selected: bool = await profiles.select_user(alice)
 	check(selected and profiles.current().name == "Alice", "selecting a user updates identity")
+	check(steam.snapshot.get("client", 0) == 123 and steam._action == "shell", "switching users hides the Steam pane without closing its session")
+	steam.snapshot = {"phase": "ready", "client": 123, "game_id": 42}
+	selected = await profiles.select_user("owner")
+	check(not selected and profiles.active == alice, "running Steam game still prevents switching users")
+	steam.snapshot = {}
+	profiles.error = ""
 	check(history.games.is_empty(), "new user has fresh play history")
 	check(installed.apps == original_games, "switching users preserves the shared library")
 	history.sample(entry, true, 4000, 1004)
@@ -62,8 +70,15 @@ func _run() -> void:
 	var home: Control = load("res://scenes/shell_root.tscn").instantiate()
 	root.add_child(home)
 	await frames()
-	profiles.open()
+	var switch_button: Control
+	for button in home._bar_buttons:
+		if str(button.get_meta("destination", "")) == "Switch user":
+			switch_button = button
+	check(switch_button != null, "Home system menu offers Switch user")
+	if switch_button != null:
+		switch_button.pressed.emit()
 	await frames()
+	check(profiles.is_open(), "Home Switch user opens the user management picker")
 	var screen: Control = profiles._screen
 	check(screen._buttons[0].focus_mode == Control.FOCUS_ALL, "user tiles are controller focusable")
 	check(screen._buttons.size() == profiles.users.size() + 2, "picker offers users, add user and edit user")

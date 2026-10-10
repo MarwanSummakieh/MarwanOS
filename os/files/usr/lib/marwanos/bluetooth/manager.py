@@ -3,6 +3,7 @@
 import json
 import os
 from pathlib import Path
+import re
 import secrets
 import time
 
@@ -58,8 +59,90 @@ def snapshot(objects):
     return {"available": True, "status": "ready" if adapters else "no-adapter", "adapters": adapters, "devices": devices}
 
 
+class BatteryTracker:
+    """Read passive kernel/BlueZ reports; retain explicitly dated last readings."""
+    def __init__(self, folder, power_root=Path("/sys/class/power_supply"), spool=None):
+        self.folder, self.power_root = Path(folder), Path(power_root)
+        self.spool = Path(spool) if spool else None
+        try:
+            self.data = json.loads((self.folder / "battery-history.json").read_text())
+            if not isinstance(self.data.get("devices"), dict) or not isinstance(self.data.get("events"), list):
+                raise ValueError("Invalid battery history")
+        except (OSError, ValueError, AttributeError):
+            self.data = {"devices": {}, "events": []}
+        self.saved_at = 0
+
+    def update(self, devices, objects, now=None):
+        now = time.time() if now is None else now
+        reports = {}
+        for supply in self.power_root.glob("*"):
+            # Sony's driver names its supply with the controller's unique address.
+            match = re.search(r"([0-9a-f]{2}(?::[0-9a-f]{2}){5})$", supply.name.lower())
+            if not match:
+                continue
+            try:
+                capacity = int((supply / "capacity").read_text().strip())
+                status = (supply / "status").read_text().strip()
+                if 0 <= capacity <= 100 and status != "Unknown":
+                    parts = supply.resolve().parts
+                    transport = next(("usb" if part.startswith("0003:") else "bluetooth"
+                                      for part in parts if re.fullmatch(r"000[35]:[0-9a-fA-F:]+\.[0-9a-fA-F]+", part)), "")
+                    reports[match[1]] = (capacity, status, "kernel", transport)
+            except (OSError, ValueError):
+                continue
+        changed = False
+        try:
+            slots = json.loads((self.folder / "slots.json").read_text())
+            slots = slots if isinstance(slots, list) else []
+        except (OSError, ValueError):
+            slots = []
+        for device in devices:
+            address = device["address"].lower()
+            if not address:
+                continue
+            old = self.data["devices"].get(address, {})
+            device["player_slot"] = next((i + 1 for i, identity in enumerate(slots)
+                                          if isinstance(identity, str) and identity.lower().endswith(":unique:" + address)), 0)
+            report = reports.get(address)
+            props = objects.get(device["id"], {}).get("org.bluez.Battery1", {})
+            value = props.get("Percentage")
+            if report is None and device["connected"] and isinstance(value, int) and not isinstance(value, bool) and 0 <= value <= 100:
+                report = (int(value), "Unknown", "bluez", "bluetooth")
+            percent, status, source, transport = report if report else (None, "Unknown", "", "")
+            battery = {"percent": percent, "status": status, "source": source,
+                       "transport": transport,
+                       "available": report is not None,
+                       "last_percent": percent if report else old.get("last_percent"),
+                       "last_seen": now if report else old.get("last_seen", 0)}
+            record = {**battery, "connected": device["connected"], "label": device["label"],
+                      "warned": old.get("warned", 0)}
+            level = 2 if percent is not None and percent <= 10 else (1 if percent is not None and percent <= 20 else 0)
+            if report and (percent > 25 or status in ("Charging", "Full")):
+                record["warned"] = 0
+            elif level > record["warned"]:
+                if self.spool:
+                    self.spool.mkdir(parents=True, exist_ok=True, mode=0o700)
+                    atomic_json(self.spool / ("controller-battery-" + address.replace(":", "") + ".json"),
+                                {"app": "Controllers", "summary": "Controller battery low",
+                                 "body": f"{device['label']} ({address[-5:].upper()}): {percent}%. Connect a USB cable to charge."})
+                record["warned"] = level
+            signature = ("percent", "status", "transport", "available", "connected", "warned")
+            if any(record.get(key) != old.get(key) for key in signature):
+                self.data["events"].append({"at": now, "address": address,
+                    "percent": percent, "last_percent": battery["last_percent"],
+                    "status": status, "transport": transport, "available": battery["available"], "connected": device["connected"]})
+                self.data["events"] = self.data["events"][-512:]
+                changed = True
+            self.data["devices"][address] = record
+            device["battery"] = battery
+        if changed or now - self.saved_at >= 60:
+            self.folder.mkdir(parents=True, exist_ok=True, mode=0o700)
+            atomic_json(self.folder / "battery-history.json", self.data)
+            self.saved_at = now
+
+
 class Manager:
-    def __init__(self, backend, folder, clock=time.monotonic):
+    def __init__(self, backend, folder, clock=time.monotonic, battery=None):
         self.backend, self.folder, self.clock = backend, Path(folder), clock
         self.state = {"available": False, "status": "unavailable", "adapters": [], "devices": []}
         self.error, self.busy, self.request_id, self.pairing = "", "", "", ""
@@ -67,6 +150,7 @@ class Manager:
         self.deadline, self.scan_deadline = 0, 0
         self.reconnect_after, self.inhibited, self.seen_adapters = {}, set(), set()
         self.generation = 0
+        self.battery = battery or BatteryTracker(self.folder)
 
     def call(self, target, interface, method, args=(), success=None):
         generation = self.generation
@@ -80,7 +164,9 @@ class Manager:
 
     def refresh(self):
         was_unavailable = self.state["status"] == "unavailable"
-        self.state = snapshot(self.backend.objects())
+        objects = self.backend.objects()
+        self.state = snapshot(objects)
+        self.battery.update(self.state["devices"], objects)
         if was_unavailable:
             self.error = ""
 
@@ -304,7 +390,10 @@ def run():
 
     backend = Backend()
     folder = Path(os.environ["XDG_RUNTIME_DIR"]) / "marwanos/bluetooth"
-    manager = Manager(backend, folder)
+    state = Path(os.environ.get("XDG_STATE_HOME", str(Path.home() / ".local/state")))
+    data = Path(os.environ.get("XDG_DATA_HOME", str(Path.home() / ".local/share")))
+    manager = Manager(backend, folder, battery=BatteryTracker(state / "marwanos/controller",
+                      spool=data / "marwanos/notification-events"))
 
     class Agent(dbus.service.Object):
         def prompt(self, device, kind, value, success, failure):

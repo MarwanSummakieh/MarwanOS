@@ -289,10 +289,10 @@ func _spawn(exec: Array) -> void:
 		var word := str(exec[i])
 		word = word.replace("{W}", str(screen.x)).replace("{H}", str(screen.y))
 		args.append(word)
-	# Windows and Steam helpers scope their own runtime save paths. Ordinary
+	# Windows helpers scope their saves; Steam keeps the shared console session. Ordinary
 	# Linux games receive a private HOME while their installed binaries stay put.
-	if PlayHistory.is_game(Metadata.enrich(_current)) and not program in ["/usr/lib/marwanos/steamctl", "/usr/lib/marwanos/windows/manager.py", "/usr/lib/marwanos/winrun"] and OS.has_feature("linux"):
-		args = PackedStringArray(["/usr/lib/marwanos/profiles.py", "run", Profiles.active, "--", program]) + args
+	if PlayHistory.is_game(Metadata.enrich(_current)) and not str(_current.get("id", "")).begins_with(HANDOFF_PREFIX) and not program in ["/usr/lib/marwanos/steamctl", "/usr/lib/marwanos/windows/manager.py", "/usr/lib/marwanos/winrun"] and OS.has_feature("linux"):
+		args = PackedStringArray([Profiles.helper_path(), "run", Profiles.active, "--", program]) + args
 		program = "/usr/bin/python3"
 
 	ShellLog.info("spawning %s %s" % [program, " ".join(args)])
@@ -719,7 +719,8 @@ func can_close() -> bool:
 ## back underneath a window that is still there.
 ##
 ## So a flatpak entry is closed with `flatpak kill <app-id>`, which is the
-## documented way to stop a sandbox, and anything else falls back to the pid.
+## documented way to stop a sandbox. Other Linux launches close their isolated
+## process group so wrapper children cannot outlive the Close action.
 ##
 ## THE RAIL COMES BACK ON EVIDENCE, NOT ON HOPE. An earlier version armed the
 ## quiet-poll flag here and declared the process "terminated on request" on
@@ -875,6 +876,16 @@ func _kill_pid() -> void:
 	if _pid <= 0:
 		return
 	ShellLog.info("terminating pid %d" % _pid)
+	# Godot starts Linux children in their own session. Wrappers such as flock
+	# and AppImage keep the game in that process group, so killing only the
+	# wrapper leaves the game alive. Verify ownership before signalling a group:
+	# a shared group must never take the shell or an unrelated app down with it.
+	if OS.has_feature("linux") and _owns_process_group(_pid):
+		var output: Array = []
+		if OS.execute("/usr/bin/kill", ["-KILL", "--", "-%d" % _pid], output, true) != 0:
+			ShellLog.error("could not terminate process group %d; keeping the application tracked" % _pid)
+			return
+		ShellLog.info("terminated application process group %d" % _pid)
 	# The quiet-poll flag is armed HERE and only here: OS.kill is what makes a
 	# later is_process_running an engine ERROR about a reaped pid, so this is
 	# the one path that must stop asking. Every other close keeps polling and
@@ -884,11 +895,27 @@ func _kill_pid() -> void:
 	# an application that ignored a polite request is exactly the case it
 	# exists for. Anything that wants a graceful shutdown should offer its own
 	# quit, as Steam does.
+	# Also reap our direct child after signalling its group.
 	var error := OS.kill(_pid)
 	if error != OK:
 		ShellLog.error("could not terminate pid %d (error %d)" % [_pid, error])
 	else:
 		_terminating = true
+
+
+func _owns_process_group(pid: int) -> bool:
+	if pid <= 1:
+		return false
+	var file := FileAccess.open("/proc/%d/stat" % pid, FileAccess.READ)
+	if file == null:
+		return false
+	var stat := file.get_line()
+	var end := stat.rfind(")")
+	if end < 0:
+		return false
+	var fields := stat.substr(end + 1).strip_edges().split(" ", false)
+	# Fields after comm: state, parent PID, process group, session.
+	return fields.size() >= 4 and fields[2].to_int() == pid and fields[3].to_int() == pid
 
 
 ## The flatpak application id anywhere in an exec, else empty. Read from the

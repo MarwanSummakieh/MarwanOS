@@ -108,6 +108,33 @@ func _run() -> void:
 		check(original.has_focus(), "closing Options restores the originating game")
 		await press(viewport, "ui_shell_home")
 		check(home._bar_row.visible and home._bar_buttons[0].has_focus(), "PS/Home reveals and focuses the system dock")
+		home._audio_button.grab_focus()
+		await frames()
+		await press(viewport, "ui_accept")
+		var volume: Control = home._volume_popup
+		check(volume != null and home.visible and home._details == null, "Audio opens a compact slider over Home")
+		await frames()
+		var volume_rect: Rect2 = volume._panel.get_global_rect()
+		check(volume_rect.position.x >= 0 and volume_rect.end.x <= logical.x and volume_rect.position.y >= 0,
+			"volume popup fits the viewport at %s" % dimensions)
+		check(volume_rect.end.y < home._audio_button.global_position.y, "volume popup stays above Audio at %s" % dimensions)
+		await capture(viewport, "volume-%d" % dimensions.x)
+		await press(viewport, "ui_focus_next")
+		check(volume.is_ancestor_of(viewport.gui_get_focus_owner()), "Tab stays inside the volume popup")
+		if dimensions.x == 1920:
+			var outside := InputEventMouseButton.new()
+			outside.button_index = MOUSE_BUTTON_LEFT
+			outside.position = Vector2(4, 4)
+			outside.pressed = true
+			viewport.push_input(outside, true)
+			await frames()
+			outside.pressed = false
+			viewport.push_input(outside, true)
+			await frames()
+		else:
+			await press(viewport, "ui_cancel")
+		check(home._volume_popup == null and home._audio_button.has_focus(), "dismissing volume restores Audio focus")
+		home._bar_buttons[0].grab_focus()
 		await press(viewport, "ui_right")
 		await press(viewport, "ui_shell_home")
 		check(not home._bar_row.visible and original.has_focus(), "second PS/Home hides the dock and restores the game")

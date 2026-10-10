@@ -36,13 +36,26 @@ class ControllerGateTests(unittest.TestCase):
         gate.output([0] * 15, [0.] * 6)
         self.assertEqual(gate.output(buttons, axes), (buttons, axes))
 
-    def test_home_controls_never_reach_game(self):
+    def test_guide_is_reserved_but_share_reaches_game(self):
         gate = router.Gate()
         gate.set_active(True, [0] * 15, [0.] * 6)
         buttons = [1] * 15
         output, _ = gate.output(buttons, [0.] * 6)
-        self.assertEqual(output[4:6], [0, 0])
+        self.assertEqual(output[4:6], [1, 0])
         self.assertEqual(output[0], 1)
+
+    def test_share_event_keeps_game_input_active_and_guide_neutralizes_it(self):
+        broker = router.Router.__new__(router.Router)
+        slot = router.Slot(0)
+        slot.device = {"slot": slot}
+        slot.pad = Mock()
+        broker.slots = [slot]
+        slot.active(True)
+        broker.event(slot.device, 1, 314, 1)
+        self.assertTrue(slot.gate.active)
+        self.assertEqual(slot.gate.output(slot.buttons, slot.axes)[0][4], 1)
+        broker.event(slot.device, 1, 316, 1)
+        self.assertFalse(slot.gate.active)
 
     def test_overlay_and_reconnect_do_not_leave_stuck_keys(self):
         gate = router.Gate()
@@ -417,6 +430,16 @@ class MultiplayerTests(unittest.TestCase):
         for slot in self.broker.slots:
             slot.active.assert_called_once_with(False)
 
+    def test_share_on_any_player_does_not_disable_application_input(self):
+        for player in range(4):
+            with self.subTest(player=player):
+                self.broker.slots[player].buttons[4] = 1
+                self.broker.set_active(True)
+                for slot in self.broker.slots:
+                    slot.active.assert_called_once_with(True)
+                    slot.active.reset_mock()
+                self.broker.slots[player].buttons[4] = 0
+
     def test_full_connected_slots_do_not_displace_existing_players(self):
         for slot in self.broker.slots:
             slot.device = {"fd": slot.index}
@@ -438,6 +461,18 @@ class MultiplayerTests(unittest.TestCase):
         self.assertEqual(state["buttons"][0], 0)
         self.assertEqual(state["buttons"][5], 1)
         self.assertTrue(state["home"])
+
+    def test_share_snapshot_is_player_one_only_and_does_not_signal_home(self):
+        self.broker.peer, self.broker.lease = ("127.0.0.1", 999), float("inf")
+        self.broker.sequence, self.broker.token, self.broker.socket = 0, "token", Mock()
+        for player in range(4):
+            with self.subTest(player=player):
+                self.broker.slots[player].buttons[4] = 1
+                self.broker.publish()
+                state = json.loads(self.broker.socket.sendto.call_args.args[0])
+                self.assertEqual(state["buttons"][4], int(player == 0))
+                self.assertFalse(state["home"])
+                self.broker.slots[player].buttons[4] = 0
 
     def test_serial_identity_survives_usb_to_bluetooth_transport_change(self):
         identities = []

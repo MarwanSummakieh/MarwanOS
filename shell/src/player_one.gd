@@ -196,7 +196,7 @@ func _input(event: InputEvent) -> void:
 	if not (event is InputEventJoypadButton or event is InputEventJoypadMotion):
 		return
 	if ControllerRouter.is_active():
-		var reserved_home: bool = event is InputEventJoypadButton and event.button_index in [JOY_BUTTON_BACK, JOY_BUTTON_GUIDE]
+		var reserved_home: bool = event is InputEventJoypadButton and event.button_index == JOY_BUTTON_GUIDE
 		if event.device != ControllerRouter.DEVICE or (device < 0 and not reserved_home):
 			get_viewport().set_input_as_handled()
 		return

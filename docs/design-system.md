@@ -69,6 +69,12 @@ Use one main navigation structure with predictable destinations. MarwanOS includ
 
 System commands belong in an attached sidebar or bottom bar. Contextual actions open an edge-attached sidebar. Avoid floating panels containing oversized buttons. Show the active page with a subtle fill or edge marker, and controller focus with an outline; these represent different states.
 
+Audio in the Home dock and running-app Home menu opens a compact volume slider
+directly above its control, keeping the current surface visible. Drag or use
+left / right to adjust output volume; Cross toggles mute. Circle, PS/Home or an
+outside click closes it and restores Audio focus. Device and application audio
+controls remain in Settings → Audio.
+
 On Home and Stores, the bottom bar starts hidden while browsing. PS/Home toggles it and moves focus to the active destination. Pressing PS/Home again restores focus to the originating game, control or embedded store pane. Hidden navigation must be excluded from directional focus paths. Reserve bottom-bar space only while it is visible, so store content uses the available height. Keep a small PS/Home hint discoverable. An empty library or disconnected controller may initially reveal setup navigation; PS/Home remains available to recover it.
 
 Text entry uses a compact floating keyboard near the bottom center. Keep the

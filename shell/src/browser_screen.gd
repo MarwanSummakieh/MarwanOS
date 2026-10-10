@@ -1106,12 +1106,15 @@ func _extension_chosen(_purpose: String, id: String) -> void:
 
 func _sync_extension_window() -> void:
 	var active: bool = _view != null and _view.has_method("is_extension_window_open") and _view.is_extension_window_open()
-	if active and is_instance_valid(_extension_pad): _extension_pad.paused = TextInput.is_open()
+	if active and is_instance_valid(_extension_pad):
+		var blocked := TextInput.is_open() or _menu != null or _picker != null
+		if _extension_pad.paused != blocked: _extension_pad.set_paused(blocked)
 	if active: _attach_extension_panel()
 	if active == _extension_active: return
 	_extension_active = active
 	_scroll_dir = 0
 	if active:
+		Kiosk.set_native_pointer_visible(true)
 		_close_keyboard()
 		_remember_focus()
 		set_process_unhandled_input(false)
@@ -1130,8 +1133,10 @@ func _sync_extension_window() -> void:
 			_extension_toolbar.show_toolbar()
 			_extension_pad = PadKeys.new()
 			_extension_pad.mode = "pointer"
+			_extension_pad.pointer_bounds = ExtensionToolbar.panel_rect(Rect2i(DisplayServer.screen_get_position(), DisplayServer.screen_get_size()))
 			add_child(_extension_pad)
 	else:
+		Kiosk.set_native_pointer_visible(false)
 		if TextInput.is_open(): TextInput.close()
 		if is_instance_valid(_extension_toolbar): _extension_toolbar.queue_free()
 		if is_instance_valid(_extension_pad): _extension_pad.queue_free()
@@ -1151,6 +1156,7 @@ func _sync_extension_window() -> void:
 
 func _extension_command(command: String) -> void:
 	if command == "installed":
+		if is_instance_valid(_extension_pad): _extension_pad.set_paused(true)
 		_view.extension_command("hide")
 		if is_instance_valid(_extension_toolbar): _extension_toolbar.hide()
 		var items := BrowserExtensions.installed_entries()
@@ -1161,7 +1167,7 @@ func _extension_command(command: String) -> void:
 		_view.extension_command(command)
 		return
 	if not _view.has_method("extension_type_text"): return
-	if is_instance_valid(_extension_pad): _extension_pad.paused = true
+	if is_instance_valid(_extension_pad): _extension_pad.set_paused(true)
 	TextInput.open_browser_editor(func(edit: Dictionary):
 		if not _extension_active: return
 		if edit.kind == "text": _view.extension_type_text(str(edit.text))
@@ -1189,6 +1195,9 @@ func _attach_extension_panel() -> void:
 			return
 	_extension_panel_handle = handle
 	_set_extension_panel_rect()
+	var panel := ExtensionToolbar.panel_rect(Rect2i(DisplayServer.screen_get_position(), DisplayServer.screen_get_size()))
+	var target := panel.position + Vector2i(panel.size.x / 2, ExtensionToolbar.HEIGHT + 48)
+	OS.create_process("xdotool", ["mousemove", "--", str(target.x), str(target.y)])
 
 func _close_extension_window() -> void:
 	if _view != null and _view.has_method("extension_command"):

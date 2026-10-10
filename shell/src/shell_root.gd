@@ -9,7 +9,7 @@ const ConsoleButton = preload("res://src/console_button.gd")
 const StoresScreen = preload("res://src/stores_screen.gd")
 const AchievementsPage = preload("res://src/achievements_page.gd")
 const MetadataPage = preload("res://src/metadata_page.gd")
-const AudioScreen = preload("res://src/audio_screen.gd")
+const VolumePopup = preload("res://src/volume_popup.gd")
 const Card = preload("res://src/card.gd")
 const IconButton = preload("res://src/icon_button.gd")
 const AppOverlay = preload("res://src/app_overlay.gd")
@@ -56,7 +56,9 @@ var _open_hint: Control = null
 var _options_hint: Control = null
 var _overlay: AppOverlay = null
 var _achievement_toast: AchievementToast = null
-## Auxiliary Audio, Achievements and Metadata surfaces restore Home on Back.
+var _volume_popup: VolumePopup = null
+var _audio_button: Control = null
+## Auxiliary Achievements and Metadata surfaces restore Home on Back.
 var _details: Control = null
 ## The bar's focusable cluster, in the order they sit. Kept as one array as
 ## well as four members because every wiring loop below wants "all of them" --
@@ -562,6 +564,8 @@ func _build_topbar() -> Control:
 		button.pressed.connect(item[2])
 		bar.add_child(button)
 		_bar_buttons.append(button)
+		if item[1] == "Audio":
+			_audio_button = button
 		if item[1] == "Settings":
 			_gear_button = button
 		if item[1] == "Power":
@@ -954,6 +958,8 @@ func _on_network_changed(state: String) -> void:
 ## PS/Home toggles the dock on Home and Stores, before embedded Steam can
 ## consume it. Running applications retain their existing system overlay.
 func _input(event: InputEvent) -> void:
+	if _volume_popup != null:
+		return
 	if TextInput.handle_input(event):
 		return
 	if _handle_home_button(event):
@@ -1016,7 +1022,7 @@ func _handle_bar_return(event: InputEvent) -> void:
 func _bar_input_live() -> bool:
 	if not visible or _bar_row == null:
 		return false
-	return _process_menu == null and _details == null and _card_menu == null
+	return _process_menu == null and _details == null and _card_menu == null and _volume_popup == null
 
 
 ## Remember content focus, then focus the current destination when requested.
@@ -1212,6 +1218,8 @@ func _close_process_menu() -> void:
 
 
 func _unhandled_input(event: InputEvent) -> void:
+	if _volume_popup != null:
+		return
 	if _details != null or _card_menu != null or _stores != null:
 		if event.is_action_pressed("ui_cancel") and _stores != null:
 			get_viewport().set_input_as_handled()
@@ -1337,10 +1345,21 @@ func _open_settings() -> void:
 	Settings.open()
 
 func _open_audio() -> void:
-	_details = AudioScreen.new()
-	_details.closed.connect(func(): _close_details.call_deferred(), CONNECT_ONE_SHOT)
-	_hand_screen_over()
-	get_tree().root.add_child(_details)
+	if _volume_popup != null:
+		_close_volume_popup()
+		return
+	_volume_popup = VolumePopup.new()
+	_volume_popup.anchor_control = _audio_button
+	_volume_popup.closed.connect(_close_volume_popup.call_deferred, CONNECT_ONE_SHOT)
+	add_child(_volume_popup)
+
+func _close_volume_popup() -> void:
+	if _volume_popup == null:
+		return
+	_volume_popup.dismiss()
+	_volume_popup = null
+	if _audio_button.is_visible_in_tree():
+		_audio_button.grab_focus()
 
 func _open_card_menu() -> void:
 	if _card_menu != null or _details != null or not visible:

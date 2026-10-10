@@ -1,6 +1,7 @@
 # Controller routing
 
-PC1 reserves Guide and Share/View for its own home menu. D-pad and left stick
+PC1 reserves Guide (PS/Xbox) for its own home menu. Share/Create/View is passed
+to games as an ordinary controller button. D-pad and left stick
 navigate; the right stick moves the compact keyboard while it is open. Keyboard
 position is saved. Files, browser tabs, downloads, file uploads, installation,
 minimize/resume, Close and application removal have controller-accessible controls.
@@ -19,7 +20,7 @@ stable `pc1/application/slotN` physical label. A replacement model changes its
 identity rather than inheriting the previous pad's type. Other connected virtual
 devices are left intact. Each physical pad sends buttons, sticks,
 triggers and rumble to its own application slot. The first slot drives ordinary
-PC1 navigation; Guide and Share/View from any slot open the appliance menu.
+PC1 navigation; Guide from any slot opens the appliance menu.
 
 Slot identities are saved atomically in
 `$XDG_STATE_HOME/marwanos/controller/slots.json` (normally

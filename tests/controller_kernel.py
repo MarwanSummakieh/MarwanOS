@@ -243,6 +243,14 @@ def run():
                 second.button(1, False)
                 mode(True)
 
+                for index, fixture in enumerate(fixtures):
+                    fixture.button(4, True)
+                    assert any(e[2:] == (1, 314, 1) for e in events(output[index])), "Share missing from application slot"
+                    time.sleep(.04)
+                    assert all(slot.gate.active for slot in broker.slots[:3]), "Share disabled application input"
+                    fixture.button(4, False)
+                    assert any(e[2:] == (1, 314, 0) for e in events(output[index])), "Share release missing"
+
                 effects = [upload(0), upload(1, 10000, 22000)]
                 assert router.FFEffect.from_buffer_copy(next(iter(first.effects.values()))).u.rumble.strong_magnitude == 25000
                 assert router.FFEffect.from_buffer_copy(next(iter(second.effects.values()))).u.rumble.weak_magnitude == 22000
@@ -263,7 +271,7 @@ def run():
                 second.button(5, True)
                 wait_for(lambda: first.playback[-1][1] == 0, "player two Home did not cancel rumble")
                 assert not broker.slots[0].gate.active and not broker.slots[1].gate.active
-                assert not [e for fd in output for e in events(fd) if e[2] == 1 and e[3] in (314, 316) and e[4]], "Home escaped to game"
+                assert not [e for fd in output for e in events(fd) if e[2] == 1 and e[3] == 316 and e[4]], "Home escaped to game"
                 second.button(5, False)
                 mode(True)
                 play(0, effects[0])

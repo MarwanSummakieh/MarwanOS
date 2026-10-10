@@ -103,7 +103,16 @@ func _rebuild() -> void:
 				var id := str(device.id)
 				var connected := bool(device.get("connected", false))
 				var paired := bool(device.get("paired", false))
-				_row(id, str(device.get("label", "Device")), "Connected" if connected else ("Paired · press to reconnect" if paired else "Press to pair"), func(): Bluetooth.request("disconnect" if connected else ("connect" if paired else "pair"), id))
+				var title := str(device.get("label", "Device"))
+				var slot := int(device.get("player_slot", 0))
+				if slot > 0:
+					title = "Player %d · %s" % [slot, title]
+				var detail := "Connected" if connected else ("Paired · press to reconnect" if paired else "Press to pair")
+				if device.get("battery", {}).get("transport", "") == "usb":
+					detail = "Connected via USB"
+				if paired or connected:
+					detail += " · " + Bluetooth.battery_text(device)
+				_row(id, title, detail, func(): Bluetooth.request("disconnect" if connected else ("connect" if paired else "pair"), id))
 				if _forget_armed == id:
 					_row("forget:" + id, "Forget this device?", "A to remove its saved pairing", func(): Bluetooth.request("remove", id); _forget_armed = "")
 			_label("Put your controller in pairing mode. Paired controllers reconnect automatically when available.")
