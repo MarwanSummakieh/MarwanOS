@@ -78,6 +78,12 @@ controller fixture initially missed a hardcoded click at 1920×1080, then passed
 on its intended 1600×900 display. Initial failures and successful reruns are
 retained; the final standard CI suite passed without those harness adjustments.
 
+`bootc container lint` exited successfully: **11 checks passed, one skipped,
+two warnings**. The warnings are `nonempty-run-tmp` (runtime directory content)
+and `var-tmpfiles` (image-owned `/var` state without tmpfiles entries, including
+the systemd catalog and random-seed files). These remain image-hygiene findings
+for release acceptance; they were not treated as failures by bootc.
+
 Local evidence is under `out/release-candidate-20261010/`: `ci-final/`,
 `evidence/`, `native-controller/`, `engine-provenance.json`,
 `candidate-manifest.json` and the immutable `source-final.tar`.
