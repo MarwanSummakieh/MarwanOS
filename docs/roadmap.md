@@ -1,6 +1,6 @@
 # PC1 / MarwanOS roadmap
 
-Updated 2026-10-07 from the owner's priorities and installation record. This is the current backlog;
+Updated 2026-10-10 for release-candidate consolidation. This is the current backlog;
 older phase plans and ADRs remain historical context where they disagree.
 Steam embedding implemented and remotely tested on the PC1 bench on 2026-10-09.
 
@@ -14,7 +14,13 @@ features. An integrated Flathub store is removed from the roadmap.
 
 ## Remaining work
 
-**Nine tracked OS tasks remain.** Automatic metadata/presentation, installed
+The [October 10 candidate record](release-candidate-20261010.md) supersedes older
+image and hardware inventory below: candidate13 fresh installation/reboot passed,
+two wireless controllers and a Bluetooth adapter are available, and display-only
+Rest/PS wake has physical confirmation. The new candidate consolidates subsequent
+source and bench work; its image and hardware gates must be recorded separately.
+
+**Release integration and physical acceptance remain open.** Automatic metadata/presentation, installed
 Tekken verification, persistent play history and achievements are complete.
 
 | Priority | Work | Status / dependency |

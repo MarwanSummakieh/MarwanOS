@@ -21,39 +21,22 @@ affiliated with Sony.
 - An integrated browser and file manager are required product features.
 - The unified game library prioritizes Playnite-style ease of use, automatic
   metadata, persistent play history, controller features and achievements.
-- Bluetooth pairing is required; hardware validation is waiting for the Bluetooth
-  dongle. An integrated Flathub store is outside the product scope.
+- Bluetooth pairing is required; sustained two-pad hardware acceptance remains
+  open. An integrated Flathub store is outside the product scope.
 - Boot, application handoff, and recovery remain inside the console experience.
 
-See the [current roadmap](docs/roadmap.md) for priorities, dependencies and
-remaining hardware acceptance. Tekken installation, metadata/cache verification
-and user-confirmed physical controller gameplay completed on 2026-10-06;
-the final candidate's actual Metadata Refresh and image-owned reboot preserve
-its native input profile, artwork and history. Genuine achievements now pass
-end to end, including a passive gameplay toast and persistent 2/47 progress.
-Candidate10 passed its initial PC1 compositor/postboot gates and offline VM
-installation, but later normal compositor exit reproduces an NVIDIA fault;
-release validation fails for that candidate. Candidate11's targeted cleanup is
-now published and verified on real PC1 NVIDIA hardware: idle and postgame normal
-SIGTERM, full reboot shutdown, and final compositor/postboot gates pass without
-a compositor fault. Its build passes 214 backend tests with two optional skips
-and the shell suites; all 11 focused ELF regressions pass. Candidate11 raw media
-and its branded offline ISO are built and checksum-verified; fresh installation
-and broader release acceptance remain open. See the
-[candidate11 evidence](docs/candidate11-teardown-acceptance-20261007.md) and
-[status checkpoint](docs/status-2026-10-07.md).
-The latest source checkpoint adds NVIDIA Xorg display selection and automatic
-175 Hz startup, native virtual-controller hotplug and hardware identities,
-Steam Input recapture protection, and duplicate Steam-card merging. The owner
-confirmed smooth Steam display and Silksong menu controls on PC1. These changes
-still need a replacement image and full reboot validation. Current source
-validation passes 248 backend tests with two optional skips; see the
-[display investigation](docs/steam-display-corruption-20261007.md).
-Nine tracked tasks remain. The owner has requested physical acceptance; the
-[session record](docs/physical-acceptance-20261007.md) tracks pending observations.
-Only one physical controller is available and there is no Bluetooth adapter, so
-two-pad and Bluetooth checks await hardware. Sleep testing remains deferred.
-Candidate10's passing installer-media evidence is scoped to its VM.
+The October 10 release candidate consolidates the console UI, embedded browser,
+native Downloads, controller recovery/latency/battery, display-only Rest,
+managed Windows installation and local-user work. Component exports are
+checkpointed in their owning repositories and pinned by exact commit and blob.
+See [the candidate record](docs/release-candidate-20261010.md) for source identity,
+checks, image provenance and remaining acceptance.
+
+Candidate13 is the accepted base: its PC1 reboot and offline controller-operated
+VM installation, USB-absent boot and installed reboot passed. Later bench/source
+changes require their own candidate acceptance. PC1 now has two wireless
+DualSense controllers and a UGREEN Bluetooth adapter. Display-only Rest and
+wireless PS wake have physical confirmation; true system-suspend wake does not.
 
 Development is organized through the [PC1 GitHub Project](https://github.com/users/MarwanSummakieh/projects/3)
 and [six repositories](docs/repositories.md), with pinned component copies in
@@ -82,7 +65,7 @@ other documents describe their dated builds.
 | Windows installation | EXE/MSI setup from Files, portable apps, explicit program selection, launch, minimize/resume, close and confirmed managed-prefix removal. The final image's service and first-use runtime passed the real 7-Zip lifecycle; see [the contract and validation](docs/windows-installation.md) |
 | Steam | Native client preferred, legacy Flatpak fallback, shared launch/stop helper and controller routing; account/game compatibility requires target validation |
 | Browser and files | Embedded Chromium with tabs, history/bookmarks, downloads, controller file uploads and web dialogs; Files search/path/history, split view, previews, cancellable copy/move, rename, trash and restore. See [built-in tools](docs/built-in-tools.md). |
-| Verification | Candidate11 passes NVIDIA normal shutdown/reboot and final compositor/postboot gates. Its raw media and branded ISO are built and checksum-verified; fresh offline installation and USB-absent boot remain pending. Latest source passes 248 backend tests with two optional skips, controller shell checks and component-pin verification; 37 controller policy checks and the real Linux uinput fixture pass. The latest display/controller changes are not baked into candidate11. Candidate10 remains release FAIL despite its separate 15/15 VM installation pass. Broader physical acceptance remains open. |
+| Verification | Candidate13 PC1 reboot and offline VM installation/USB-absent boot pass. The October 10 candidate consolidates subsequent source and bench work; see its candidate record for current checks, image identity and acceptance limits. |
 
 ## Architecture
 

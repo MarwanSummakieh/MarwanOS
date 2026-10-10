@@ -43,16 +43,28 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Verify pinned component integration copies
+        run: python3 scripts/components.py --verify
+
       - name: Check installation flows before publishing
         run: |
           sudo apt-get update
-          sudo apt-get install -y xvfb python3-pefile python3-pil python3-dbus python3-gi dbus-daemon squashfs-tools gcc g++
-          /usr/bin/python3 -m unittest discover -s tests -v
+          sudo apt-get install -y aria2 xvfb python3-pefile python3-pil python3-dbus python3-gi python3-xlib dbus-daemon squashfs-tools gcc g++
+          mkdir -p out/release-checks
+          /usr/bin/python3 -m unittest discover -s tests -v 2>&1 | tee out/release-checks/backend.log
 
       - name: Check controller flows before publishing
         run: |
-          sudo apt-get install -y curl unzip libfontconfig1 libxkbcommon0 libgl1 libasound2t64
-          bash scripts/check-shell.sh
+          sudo apt-get install -y curl unzip libfontconfig1 libxkbcommon0 libgl1 libasound2t64 xdotool dbus-x11 at-spi2-core gir1.2-atspi-2.0 gir1.2-gtk-3.0
+          bash scripts/check-shell.sh 2>&1 | tee out/release-checks/shell.log
+
+      - name: Preserve release-check evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-checks-${{ github.sha }}
+          path: out/release-checks/
+          if-no-files-found: ignore
 
       # A hosted runner has roughly 25 GB free. Base layers plus akmods plus the
       # finished image comfortably exceed that during the build, and running out
@@ -100,9 +112,22 @@ jobs:
 
       - name: Push
         run: |
-          podman push "${{ steps.ref.outputs.image }}:${{ steps.ref.outputs.tag }}"
+          podman push --digestfile out/release-checks/image.digest "${{ steps.ref.outputs.image }}:${{ steps.ref.outputs.tag }}"
           podman push "${{ steps.ref.outputs.image }}:${{ steps.ref.outputs.tag }}" \
             "${{ steps.ref.outputs.image }}:${{ steps.ref.outputs.version }}"
+
+      - name: Record candidate provenance
+        run: |
+          git rev-parse HEAD > out/release-checks/source.commit
+          cp pc1-components.json out/release-checks/
+          printf '%s\n' '${{ steps.ref.outputs.image }}:${{ steps.ref.outputs.tag }}' > out/release-checks/image.ref
+          printf '%s\n' '${{ steps.ref.outputs.version }}' > out/release-checks/image.version
+
+      - name: Preserve candidate provenance
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-image-${{ github.sha }}
+          path: out/release-checks/
 
       - name: Summary
         run: |
