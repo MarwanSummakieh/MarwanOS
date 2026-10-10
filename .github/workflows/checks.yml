@@ -30,6 +30,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Install editor runtime dependencies
-        run: sudo apt-get update && sudo apt-get install -y curl unzip libfontconfig1 libxkbcommon0 libgl1 libasound2t64 xvfb xdotool dbus-x11 at-spi2-core gir1.2-atspi-2.0 gir1.2-gtk-3.0 python3-gi python3-dbus python3-xlib
+        run: sudo apt-get update && sudo apt-get install -y curl unzip libfontconfig1 libxkbcommon0 libgl1 libasound2t64 xvfb xdotool x11-utils dbus-x11 at-spi2-core gir1.2-atspi-2.0 gir1.2-gtk-3.0 python3-gi python3-dbus python3-xlib
       - name: Exercise controller, files, keyboard and app lifecycle
         run: bash scripts/check-shell.sh

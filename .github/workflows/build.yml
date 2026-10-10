@@ -55,7 +55,7 @@ jobs:
 
       - name: Check controller flows before publishing
         run: |
-          sudo apt-get install -y curl unzip libfontconfig1 libxkbcommon0 libgl1 libasound2t64 xdotool dbus-x11 at-spi2-core gir1.2-atspi-2.0 gir1.2-gtk-3.0
+          sudo apt-get install -y curl unzip libfontconfig1 libxkbcommon0 libgl1 libasound2t64 xdotool x11-utils dbus-x11 at-spi2-core gir1.2-atspi-2.0 gir1.2-gtk-3.0
           bash scripts/check-shell.sh 2>&1 | tee out/release-checks/shell.log
 
       - name: Preserve release-check evidence
