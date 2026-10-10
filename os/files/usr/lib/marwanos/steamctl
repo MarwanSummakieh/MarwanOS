@@ -42,6 +42,8 @@ def libraries(home):
 
 
 def command(arguments):
+    # Steam's CEF controls must expose focused editors to the system keyboard.
+    arguments = ["-cef-force-accessibility", *arguments]
     if shutil.which("steam"):
         return ["steam", *arguments]
     if shutil.which("flatpak"):
@@ -101,6 +103,7 @@ def main():
         argv = command(["-silent"] if args.action == "background" else ["-gamepadui"])
         if args.action == "launch":
             argv.append("steam://rungameid/" + args.appid)
+        # Keep the console's HOME and remembered Steam login for every local user.
         os.execvp(argv[0], argv)
 
 

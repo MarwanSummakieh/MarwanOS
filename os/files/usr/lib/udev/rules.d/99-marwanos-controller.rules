@@ -1,1 +1,9 @@
 KERNEL=="uinput", SUBSYSTEM=="misc", GROUP="input", MODE="0660", OPTIONS+="static_node=uinput"
+# The broker reads physical evdev capabilities directly and owns their input.
+# SDL clients must enumerate only routed pads, even when their VID/PID matches
+# the hardware. Keep classification, rather than a model-ID allowlist, separate.
+# ID_CLASS also prevents SDL2's legacy fallback from guessing these are pads.
+# Steam Input's uinput outputs must remain visible to games. Bluetooth UHID
+# sources live under virtual/misc/uhid, so they still belong to the broker.
+SUBSYSTEM=="input", DEVPATH!="/devices/virtual/input/*", ENV{ID_INPUT_JOYSTICK}=="1", ENV{ID_INPUT_JOYSTICK}="0", ENV{ID_CLASS}="pc1-owned"
+SUBSYSTEM=="input", ATTRS{phys}=="pc1/application/slot[1-4]", ENV{ID_INPUT_JOYSTICK}="1", ENV{ID_CLASS}="joystick"

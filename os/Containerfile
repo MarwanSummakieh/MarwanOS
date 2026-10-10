@@ -469,6 +469,14 @@ RUN --network=none set -euxo pipefail; \
 
 
 
+# Keep the Fedora toolchain and patched source RPM outside the appliance image.
+FROM ${BASE_IMAGE}:${BASE_TAG}@${BASE_DIGEST} AS gamescope-build
+RUN --mount=type=cache,dst=/var/cache/libdnf5,sharing=locked \
+    dnf -y install rpm-build dnf5-plugins python3 patch
+COPY scripts/build-gamescope-rpm.sh /build/scripts/build-gamescope-rpm.sh
+COPY os/gamescope/ /build/os/gamescope/
+RUN bash /build/scripts/build-gamescope-rpm.sh --output /payload
+
 FROM ${BASE_IMAGE}:${BASE_TAG}@${BASE_DIGEST} AS windows-setup-bridge
 RUN --mount=type=cache,dst=/var/cache/libdnf5,sharing=locked \
     dnf -y install mingw64-gcc
@@ -501,8 +509,9 @@ RUN set -euxo pipefail; \
 # nvidia.ko modules and no Vulkan ICD, no EGL, no nvidia-smi -- a machine on
 # which gamescope fails in a way indistinguishable from the compositor problem
 # M1's spike exists to investigate. Upstream ublue's own installer script
-# installs /rpms/nvidia/* from this sidecar; we take the subset a Wayland
-# appliance needs. The ICD assertion at the end is the regression guard.
+# installs /rpms/nvidia/* from this sidecar; we take the console's required
+# subset, including NVIDIA's Xorg/GLX server modules for ADR 0013. The ICD and
+# common-version assertions below guard the installed driver set.
 #
 # i686 userspace (32-bit GL/Vulkan for Proton's 32-bit games) is deliberately
 # deferred to Phase 1: it drags multilib glibc into the image and nothing in
@@ -558,7 +567,8 @@ RUN --mount=type=cache,dst=/var/cache/libdnf5,sharing=locked \
         /tmp/rpms/nvidia/nvidia-driver-[0-9]*.x86_64.rpm \
         /tmp/rpms/nvidia/nvidia-driver-common-[0-9]*.x86_64.rpm \
         /tmp/rpms/nvidia/nvidia-driver-libs-[0-9]*.x86_64.rpm \
-        /tmp/rpms/nvidia/nvidia-driver-cuda-libs-[0-9]*.x86_64.rpm; \
+        /tmp/rpms/nvidia/nvidia-driver-cuda-libs-[0-9]*.x86_64.rpm \
+        /tmp/rpms/nvidia/xorg-x11-nvidia-[0-9]*.x86_64.rpm; \
     rm -rf /tmp/rpms; \
     dnf clean all; \
     rpm -q nvidia-driver-libs >/dev/null; \
@@ -573,7 +583,7 @@ RUN --mount=type=cache,dst=/var/cache/libdnf5,sharing=locked \
     : "second version and failed a build whose install was perfect."; \
     test "$(rpm -q --qf '%{VERSION}\n' \
         nvidia-driver nvidia-driver-common nvidia-driver-libs \
-        nvidia-driver-cuda-libs nvidia-kmod-common nvidia-modprobe \
+        nvidia-driver-cuda-libs nvidia-kmod-common nvidia-modprobe xorg-x11-nvidia \
         | sort -u | wc -l)" = 1; \
     ldconfig -p | grep -q 'libcuda\.so\.1'
 
@@ -688,11 +698,12 @@ RUN --mount=type=cache,dst=/var/cache/libdnf5,sharing=locked \
 #                            it is running on. The RULE is not shipped here --
 #                            marwanos-devmode-sudo.service installs it per boot
 #                            off the same flag.
+COPY --from=gamescope-build /payload/gamescope-3.16.23-1.pc1.3.fc43.x86_64.rpm /tmp/pc1-gamescope/
 RUN --mount=type=cache,dst=/var/cache/libdnf5,sharing=locked \
     set -euxo pipefail; \
     dnf -y install \
         greetd \
-        gamescope \
+        /tmp/pc1-gamescope/gamescope-3.16.23-1.pc1.3.fc43.x86_64.rpm \
         cage \
         xdotool \
         xterm \
@@ -710,6 +721,8 @@ RUN --mount=type=cache,dst=/var/cache/libdnf5,sharing=locked \
         libXi \
         libxkbcommon; \
     dnf clean all; \
+    test "$(rpm -q --qf '%{VERSION}-%{RELEASE}' gamescope)" = 3.16.23-1.pc1.3.fc43; \
+    rm -rf /tmp/pc1-gamescope; \
     : "xterm's launcher entry, removed -- see the xterm note above. uxterm's"; \
     : "is named too in case a future Fedora ships one (Debian's package"; \
     : "does); rm -f on a file that does not exist is the cheap way to keep"; \
@@ -1679,25 +1692,36 @@ RUN chmod 4755 /usr/lib/marwanos/mowser/chrome-sandbox
 # Installers get a separate display and run as player, never root.
 RUN --mount=type=cache,dst=/var/cache/libdnf5,sharing=locked \
     set -euxo pipefail; \
-    dnf -y install python3 python3-pefile python3-pillow python3-dbus python3-gobject xorg-x11-server-Xvfb xorg-x11-server-Xorg openbox xcompmgr xset \
-        pipewire pipewire-pulseaudio pipewire-alsa wireplumber pulseaudio-utils alsa-lib; \
+    dnf -y install aria2 python3 python3-pefile python3-pillow python3-xlib python3-dbus python3-gobject at-spi2-core at-spi2-atk xorg-x11-server-Xvfb xorg-x11-server-Xorg openbox xcompmgr xset xrandr \
+        pipewire pipewire-pulseaudio pipewire-alsa wireplumber pulseaudio-utils alsa-lib bluez; \
     dnf clean all; \
     chmod 0755 /usr/lib/marwanos/windows/manager.py; \
-    chmod 0755 /usr/lib/marwanos/steamctl /usr/lib/marwanos/controller/router.py; \
+    chmod 0755 /usr/lib/marwanos/steamctl /usr/lib/marwanos/controller/router.py /usr/lib/marwanos/display/x11-mode; \
     chmod 0644 /usr/lib/udev/rules.d/99-marwanos-controller.rules \
         /usr/lib/modules-load.d/marwanos-controller.conf; \
-    python3 -m py_compile /usr/lib/marwanos/steamctl /usr/lib/marwanos/controller/router.py; \
+    python3 -m py_compile /usr/lib/marwanos/profiles.py /usr/lib/marwanos/steamctl /usr/lib/marwanos/controller/router.py /usr/lib/marwanos/steam_embed.py /usr/lib/marwanos/text_input.py; \
     chmod 0644 /usr/lib/systemd/system/marwanos-windows.service; \
     install -d /usr/lib/systemd/system/multi-user.target.wants; \
     ln -sf ../marwanos-windows.service \
         /usr/lib/systemd/system/multi-user.target.wants/marwanos-windows.service; \
-    python3 -m py_compile /usr/lib/marwanos/windows/manager.py; \
+    python3 -m py_compile /usr/lib/marwanos/windows/manager.py /usr/lib/marwanos/windows/download_flow.py; \
     python3 -m py_compile /usr/lib/marwanos/notifications/server.py; \
     install -d /usr/lib/systemd/user/default.target.wants; \
     ln -sf ../marwanos-notifications.service /usr/lib/systemd/user/default.target.wants/marwanos-notifications.service; \
+    chmod 0644 /usr/lib/systemd/user/marwanos-downloads.service /usr/lib/marwanos/downloads/manager.py; \
+    python3 -m py_compile /usr/lib/marwanos/downloads/manager.py; \
+    command -v aria2c; \
+    ln -sf ../marwanos-downloads.service /usr/lib/systemd/user/default.target.wants/marwanos-downloads.service; \
     chmod 0644 /usr/lib/systemd/user/marwanos-audio.service /usr/lib/marwanos/audio/manager.py; \
     python3 -m py_compile /usr/lib/marwanos/audio/manager.py; \
     ln -sf ../marwanos-audio.service /usr/lib/systemd/user/default.target.wants/marwanos-audio.service; \
+    chmod 0644 /usr/lib/systemd/user/marwanos-metadata.service /usr/lib/marwanos/metadata/manager.py; \
+    ln -sf ../marwanos-metadata.service /usr/lib/systemd/user/default.target.wants/marwanos-metadata.service; \
+    python3 -m compileall -q /usr/lib/marwanos/achievements /usr/lib/marwanos/bluetooth; \
+    chmod 0644 /usr/lib/systemd/user/marwanos-achievements.service /usr/lib/systemd/user/marwanos-bluetooth.service; \
+    ln -sf ../marwanos-achievements.service /usr/lib/systemd/user/default.target.wants/marwanos-achievements.service; \
+    ln -sf ../marwanos-bluetooth.service /usr/lib/systemd/user/default.target.wants/marwanos-bluetooth.service; \
+    ln -sf ../bluetooth.service /usr/lib/systemd/system/multi-user.target.wants/bluetooth.service; \
     ln -sf ../pipewire.service /usr/lib/systemd/user/default.target.wants/pipewire.service; \
     ln -sf ../pipewire-pulse.service /usr/lib/systemd/user/default.target.wants/pipewire-pulse.service; \
     ln -sf ../wireplumber.service /usr/lib/systemd/user/default.target.wants/wireplumber.service; \

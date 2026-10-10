@@ -1,11 +1,12 @@
 // PC1 boot identity, carried from the Windows PC1 repository. The firmware
-// frame already shows the large PC1 mark on this pale field. Plymouth keeps it
+// frame already shows the large PC1 mark on this charcoal field. Plymouth keeps it
 // in exactly the same place, reveals "Powered by" and the original MarwanOS
 // artwork while the Godot shell comes up.
 // scripts/make-splash.sh owns every raster; edit the sources there.
 
-Window.SetBackgroundTopColor(0.85098, 0.85490, 0.86667);
-Window.SetBackgroundBottomColor(0.81176, 0.81961, 0.83529);
+// BACKGROUND (#11161C), shared with the shell and its engine boot frame.
+Window.SetBackgroundTopColor(0.066667, 0.086275, 0.109804);
+Window.SetBackgroundBottomColor(0.066667, 0.086275, 0.109804);
 
 field.image = Image("field.png");
 field.scaled = field.image.Scale(Window.GetWidth(), Window.GetHeight());

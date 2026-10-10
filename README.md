@@ -14,19 +14,29 @@ affiliated with Sony.
   appear in the library. Prefixes are managed automatically; ordinary EXE/MSI
   setup wizards use the controller pointer and on-screen keyboard.
 - Known recipes can install unattended in the background. Other installers run
-  interactively, followed by explicit selection of the installed program.
+  interactively, then identifiable programs appear on home automatically;
+  ambiguous or interrupted installs offer program selection in Downloads.
 - Steam remains a supported source of games. PC1 must retain its home/overlay
   controls instead of surrendering the experience to Steam's interface.
 - An integrated browser and file manager are required product features.
 - The unified game library prioritizes Playnite-style ease of use, automatic
   metadata, persistent play history, controller features and achievements.
-- Bluetooth pairing is required; hardware validation is waiting for the Bluetooth
-  dongle. An integrated Flathub store is outside the product scope.
+- Bluetooth pairing is required; sustained two-pad hardware acceptance remains
+  open. An integrated Flathub store is outside the product scope.
 - Boot, application handoff, and recovery remain inside the console experience.
 
-See the [current roadmap](docs/roadmap.md) for priorities, dependencies and
-Tekken 8's pending metadata acceptance; installation and library registration
-completed on 2026-10-06.
+The October 10 release candidate consolidates the console UI, embedded browser,
+native Downloads, controller recovery/latency/battery, display-only Rest,
+managed Windows installation and local-user work. Component exports are
+checkpointed in their owning repositories and pinned by exact commit and blob.
+See [the candidate record](docs/release-candidate-20261010.md) for source identity,
+checks, image provenance and remaining acceptance.
+
+Candidate13 is the accepted base: its PC1 reboot and offline controller-operated
+VM installation, USB-absent boot and installed reboot passed. Later bench/source
+changes require their own candidate acceptance. PC1 now has two wireless
+DualSense controllers and a UGREEN Bluetooth adapter. Display-only Rest and
+wireless PS wake have physical confirmation; true system-suspend wake does not.
 
 Development is organized through the [PC1 GitHub Project](https://github.com/users/MarwanSummakieh/projects/3)
 and [six repositories](docs/repositories.md), with pinned component copies in
@@ -34,23 +44,29 @@ this OS integration repository.
 
 ## Current implementation
 
-This is a bootable development distro. The current build runs in a UEFI VM
-with its integrated browser, Files, controller input and Windows application
-lifecycle verified. Physical NVIDIA/controller/TV acceptance remains necessary.
-See the [current acceptance record](docs/acceptance-2026-10-05.md) for evidence,
-artifact details and supported feature boundaries. Historical observations in
-other documents describe their dated builds.
+This is a bootable development distro. Candidate14 has its own offline UEFI VM
+installation, USB-absent boot, reboot, update/rollback and persistence evidence.
+Release remains blocked by machine-ID changes across images and an initial
+same-digest update report; physical acceptance also remains necessary.
+See [the lifecycle record](docs/candidate14-installation-acceptance-20261010.md) and
+[the candidate record](docs/release-candidate-20261010.md) for
+current results. The [candidate11 teardown](docs/candidate11-teardown-acceptance-20261007.md),
+[earlier acceptance record](docs/acceptance-20261006.md) and
+[media record](docs/acceptance-2026-10-05.md) describe their dated builds.
 
 | Area | State |
 |---|---|
-| OS | Fedora 43 / Universal Blue bootc image, pinned NVIDIA open-module sidecar, Plymouth splash, supervised gamescope session and Xorg/Openbox compatibility session for VMs |
+| OS | Fedora 43 / Universal Blue bootc image, pinned NVIDIA open-module sidecar, Plymouth splash, accelerated Xorg/Openbox on connected NVIDIA displays and VMs, gamescope on other GPUs; see [ADR 0013](docs/adr/0013-nvidia-xorg-display.md) |
 | Shell | Godot 4.7.1, controller navigation, library rail, app overlay, compact movable keyboard with saved position, settings, Wi-Fi, updates, power and diagnostics |
-| Controller ownership | Exclusive Linux input broker, shell-owned Home/Share, gated virtual application controller, neutral controls on handoff/disconnect; see [controller routing](docs/controller-routing.md) |
-| Library | Desktop applications, native and legacy Flatpak Steam libraries including custom library folders, standalone Windows executables and managed umu applications |
+| Controller ownership | Exclusive Linux input broker, four remembered player slots with virtual devices only for attached pads, hardware model identities, native virtual-device hotplug, Linux rumble forwarding, Steam Input recapture protection, all-pad Home and gated game input; physical Tekken hotplug/rumble and two-pad acceptance pending; see [controller routing](docs/controller-routing.md) |
+| Library | Desktop applications, Steam libraries, standalone Windows executables and managed umu apps; automatic Steam Store metadata/artwork with persistent offline cache, continuous Home game actions and Options → Metadata refresh/match; Settings refreshes all games; see [metadata evidence](docs/game-metadata.md) |
+| History and achievements | Persistent actual foreground sessions, totals and recent sorting; per-profile local/Steam achievement providers, automatic keyless Steam catalogs, progress, offline viewing and first-sync-safe unlock notifications. Unsupported schemas/profiles stay explicit; see [achievements](docs/achievements.md) |
+| Bluetooth | Controller pairing page, BlueZ agent, codes/confirmation, trust/removal/reconnect; actual dongle acceptance pending; see [Bluetooth](docs/bluetooth.md) |
+| Downloads | Native shell queue for HTTP/HTTPS, torrents and browser progress, persistent Linux transfer service, pause/resume, file selection and installer receipts; source integration, target acceptance pending. See [native Downloads](docs/native-downloads.md) and [download flow](docs/download-install-flow.md). |
 | Windows installation | EXE/MSI setup from Files, portable apps, explicit program selection, launch, minimize/resume, close and confirmed managed-prefix removal. The final image's service and first-use runtime passed the real 7-Zip lifecycle; see [the contract and validation](docs/windows-installation.md) |
 | Steam | Native client preferred, legacy Flatpak fallback, shared launch/stop helper and controller routing; account/game compatibility requires target validation |
 | Browser and files | Embedded Chromium with tabs, history/bookmarks, downloads, controller file uploads and web dialogs; Files search/path/history, split view, previews, cancellable copy/move, rename, trash and restore. See [built-in tools](docs/built-in-tools.md). |
-| Verification | 55 Python regressions, controller shell suites, real Chromium workflows, kernel input routing, Windows-app lifecycle, controller-only USB installation and installed-system cold boot. Physical controller/TV/NVIDIA acceptance remains separate |
+| Verification | Candidate14 offline VM installation, USB-absent boot, reboot, update, rollback/return and representative persistence pass; six boots pass 30 health checks each. Machine-ID persistence and the initial update-check result block release; physical testing remains open. See the candidate and lifecycle records. |
 
 ## Architecture
 

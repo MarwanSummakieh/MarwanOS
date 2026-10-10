@@ -24,9 +24,18 @@ on:
       - "scripts/check-*.sh"
       - ".github/workflows/build.yml"
   workflow_dispatch:
+    inputs:
+      image_tag:
+        description: 'Candidate image tag (leave empty for main latest)'
+        required: false
+        type: string
 
 env:
   IMAGE_NAME: marwanos
+
+defaults:
+  run:
+    shell: bash
 
 jobs:
   build:
@@ -38,16 +47,30 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Verify pinned component integration copies
+        run: python3 scripts/components.py --verify
+
       - name: Check installation flows before publishing
         run: |
+          set -euo pipefail
           sudo apt-get update
-          sudo apt-get install -y xvfb python3-pefile python3-pil
-          /usr/bin/python3 -m unittest discover -s tests -v
+          sudo apt-get install -y aria2 xvfb python3-pefile python3-pil python3-dbus python3-gi python3-xlib dbus-daemon squashfs-tools gcc g++
+          mkdir -p out/release-checks
+          /usr/bin/python3 -m unittest discover -s tests -v 2>&1 | tee out/release-checks/backend.log
 
       - name: Check controller flows before publishing
         run: |
-          sudo apt-get install -y curl unzip libfontconfig1 libxkbcommon0 libgl1 libasound2t64
-          bash scripts/check-shell.sh
+          set -euo pipefail
+          sudo apt-get install -y curl unzip libfontconfig1 libxkbcommon0 libgl1 libasound2t64 xdotool x11-utils dbus-x11 at-spi2-core gir1.2-atspi-2.0 gir1.2-gtk-3.0
+          bash scripts/check-shell.sh 2>&1 | tee out/release-checks/shell.log
+
+      - name: Preserve release-check evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-checks-${{ github.sha }}
+          path: out/release-checks/
+          if-no-files-found: ignore
 
       # A hosted runner has roughly 25 GB free. Base layers plus akmods plus the
       # finished image comfortably exceed that during the build, and running out
@@ -64,16 +87,25 @@ jobs:
       # rejected, so normalise it rather than hardcoding the name.
       - name: Compute image reference
         id: ref
+        env:
+          REQUESTED_TAG: ${{ inputs.image_tag }}
         run: |
           owner="$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')"
           echo "image=ghcr.io/${owner}/${IMAGE_NAME}" >> "$GITHUB_OUTPUT"
           echo "version=0.0.$(date -u +%Y%m%d%H%M)" >> "$GITHUB_OUTPUT"
+          tag="${REQUESTED_TAG:-latest}"
+          [[ "$tag" =~ ^[a-zA-Z0-9_][a-zA-Z0-9_.-]{0,127}$ ]] || exit 1
+          if [[ "$tag" == latest && "${{ github.ref }}" != refs/heads/main ]]; then
+            echo 'Feature branches require a candidate image tag.' >&2
+            exit 1
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
 
       - name: Build
         run: |
           podman build \
             --file os/Containerfile \
-            --tag "${{ steps.ref.outputs.image }}:latest" \
+            --tag "${{ steps.ref.outputs.image }}:${{ steps.ref.outputs.tag }}" \
             --build-arg "MARWANOS_VERSION=${{ steps.ref.outputs.version }}" \
             --build-arg "MARWANOS_COMMIT=$(git rev-parse --short HEAD)" \
             --build-arg "MARWANOS_BUILD_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
@@ -86,13 +118,27 @@ jobs:
 
       - name: Push
         run: |
-          podman push "${{ steps.ref.outputs.image }}:latest"
-          podman push "${{ steps.ref.outputs.image }}:latest" \
+          podman push --digestfile out/release-checks/image.digest "${{ steps.ref.outputs.image }}:${{ steps.ref.outputs.tag }}"
+          podman push "${{ steps.ref.outputs.image }}:${{ steps.ref.outputs.tag }}" \
             "${{ steps.ref.outputs.image }}:${{ steps.ref.outputs.version }}"
+
+      - name: Record candidate provenance
+        run: |
+          git rev-parse HEAD > out/release-checks/source.commit
+          cp pc1-components.json out/release-checks/
+          printf '%s\n' '${{ steps.ref.outputs.image }}:${{ steps.ref.outputs.tag }}' > out/release-checks/image.ref
+          printf '%s\n' '${{ steps.ref.outputs.version }}' > out/release-checks/image.version
+
+      - name: Preserve candidate provenance
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-image-${{ github.sha }}
+          path: out/release-checks/
 
       - name: Summary
         run: |
-          echo "Pushed ${{ steps.ref.outputs.image }}:latest" >> "$GITHUB_STEP_SUMMARY"
+          echo "Pushed ${{ steps.ref.outputs.image }}:${{ steps.ref.outputs.tag }}" >> "$GITHUB_STEP_SUMMARY"
           echo "Version ${{ steps.ref.outputs.version }}" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "On the target: \`bootc upgrade && systemctl reboot\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "Stage on the target: \`bootc switch ${{ steps.ref.outputs.image }}:${{ steps.ref.outputs.tag }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "Reboot and complete physical acceptance before release promotion." >> "$GITHUB_STEP_SUMMARY"

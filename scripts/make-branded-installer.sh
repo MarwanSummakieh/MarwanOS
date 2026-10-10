@@ -1,11 +1,19 @@
 #!/usr/bin/env bash
 # Remaster a bootc Anaconda ISO while preserving its boot records and OCI payload.
 set -euo pipefail
+# Extraction and new runtime files must remain accessible to D-Bus/desktop
+# users even when a caller used a private umask for its administrator config.
+umask 022
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SOURCE="$(realpath "${1:?usage: make-branded-installer.sh source.iso output.iso}")"
 OUTPUT="$(realpath -m "${2:?output ISO required}")"
 [[ "$SOURCE" != "$OUTPUT" ]] || { echo 'Source and output must differ' >&2; exit 1; }
 [[ ! -e "$OUTPUT" ]] || { echo 'Output already exists' >&2; exit 1; }
+FONT=/usr/share/fonts/dejavu-sans-fonts/DejaVuSans.ttf
+[[ -s "$FONT" && -r "$FONT" ]] || {
+    echo "Missing installer font: $FONT (install dejavu-sans-fonts on the build host)" >&2
+    exit 1
+}
 for tool in xorriso unsquashfs mksquashfs magick python3 grub2-mkfont dnf rpm2cpio cpio mcopy implantisomd5 checkisomd5; do command -v "$tool" >/dev/null; done
 WORK="$(mktemp -d /var/tmp/pc1-media.XXXXXX)"
 echo "Work directory: $WORK"
@@ -17,13 +25,13 @@ xorriso -osirrox on -indev "$SOURCE" \
     -extract /images/pxeboot/initrd.img "$WORK/source/initrd.img" \
     -extract /images/efiboot.img "$WORK/patch/images/efiboot.img" \
     -extract /EFI/BOOT/grub.cfg "$WORK/source/grub.cfg"
-unsquashfs -d "$WORK/root" "$WORK/source/install.img"
+python3 "$REPO_ROOT/scripts/extract-installer-runtime.py" "$WORK/source/install.img" "$WORK/root"
 python3 "$REPO_ROOT/scripts/brand-installer.py" "$WORK/root"
 python3 "$REPO_ROOT/scripts/brand-installer.py" kickstart-pair \
     "$WORK/source/osbuild.ks" "$WORK/source/osbuild-base.ks" \
     "$WORK/patch/osbuild.ks" "$WORK/patch/osbuild-base.ks"
 bash "$REPO_ROOT/scripts/brand-installer-boot.sh" "$WORK" "$REPO_ROOT"
-grub2-mkfont -s 24 -o "$WORK/patch/boot/grub2/pc1.pf2" /usr/share/fonts/dejavu-sans-fonts/DejaVuSans.ttf
+grub2-mkfont -s 24 -o "$WORK/patch/boot/grub2/pc1.pf2" "$FONT"
 THEME="$REPO_ROOT/os/files/usr/share/plymouth/themes/marwanos"
 PIX="$WORK/root/usr/share/anaconda/pixmaps"
 magick "$THEME/field.png" -resize '300x900!' \
@@ -38,7 +46,7 @@ magick "$THEME/field.png" -resize '1280x720!' \
     \( "$THEME/marwanos.png" -resize 300x \) -geometry +0+335 -composite \
     -depth 8 -alpha off "$WORK/patch/boot/grub2/pc1.png"
 cp "$REPO_ROOT/os/installer/grub-theme.txt" "$WORK/patch/boot/grub2/pc1-theme.txt"
-magick -size 8x8 xc:'#1c1c1e' -depth 8 "PNG24:$WORK/patch/boot/grub2/selection_c.png"
+magick -size 8x8 xc:'#BCD9EC' -depth 8 "PNG24:$WORK/patch/boot/grub2/selection_c.png"
 python3 "$REPO_ROOT/scripts/brand-installer-grub.py" "$WORK"
 # USB firmware loads the FAT EFI partition, not the ISO's /EFI directory.
 # Keep its menu in sync and replace the appended partition as well as the
