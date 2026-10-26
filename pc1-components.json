@@ -225,13 +225,13 @@
     },
     "installers": {
       "repository": "https://github.com/MarwanSummakieh/pc1-installers.git",
-      "commit": "36cff99c6de822f0874728eca919c4c9553fee30",
+      "commit": "78263d5bdc06c96b147ba455c0efaad14167a000",
       "files": {
         "docs/download-install-flow.md": "f7e65bed987f1580f66a061c0556f66cdb2d31d6",
         "docs/fitgirl-controller-bench-20261005.md": "a37fe7edced4c29be70a184a4fe909dfc1451613",
         "docs/windows-installation.md": "935f4bfdd0010b68af921f144eba0f6dab0e3be2",
         "os/files/usr/lib/marwanos/windows/download_flow.py": "fda6e68310f1caca4b12a69147faeecd52424d1a",
-        "os/files/usr/lib/marwanos/windows/manager.py": "927f089cbcb5881c965611274247dc2ae0ab6caa",
+        "os/files/usr/lib/marwanos/windows/manager.py": "dd9add5d04225b2d42150613f0b7f2856e860dc3",
         "os/files/usr/lib/marwanos/windows/recipes.json": "f9c80165c2fb82f5f0b6a4862468b6da7635e8cd",
         "os/files/usr/lib/marwanos/windows/setup_bridge.c": "bd98968f2548170f5be57dbf15d6af1d31e6af81",
         "os/files/usr/lib/marwanos/winrun": "3bbe4933bac845431000aad082c73d65ea9128d7",
@@ -243,7 +243,7 @@
         "tests/test_download_flow.py": "116fda872db6acf13dd8d86e2e81b74f14cbee91",
         "tests/test_windows_icons.py": "3f0ed62d76b4917d2e5cceb64deb26e077f3415e",
         "tests/test_windows_installation.py": "90632d8ea437ecc00d8b4150fda5f94f3f1d698c",
-        "tests/test_windows_local.py": "22b3962cf3017417511fd365c735dd4db1c29058"
+        "tests/test_windows_local.py": "a42d74e3467da4244db6884a4cc66aebac9ea71d"
       }
     },
     "controllers": {
@@ -262,7 +262,7 @@
     },
     "services": {
       "repository": "https://github.com/MarwanSummakieh/pc1-services.git",
-      "commit": "e932d27341acf88ad66ebdd87054378b344d1601",
+      "commit": "79692bc167f60b90f00b1b0efec9814f0bc674b7",
       "files": {
         "docs/achievements.md": "ee0e5afe1710a7bb236271e15506e01fe8ffd228",
         "docs/audio-manager.md": "40584e279d4961b74293c48a1c8ad36d4532c925",
@@ -277,7 +277,7 @@
         "os/files/usr/lib/marwanos/downloads/manager.py": "6ebfc6853b209a9607edf42e9e0936c1040ea083",
         "os/files/usr/lib/marwanos/metadata/manager.py": "9961e2cfb95b5ecc8cf7b9610b9439027402e274",
         "os/files/usr/lib/marwanos/notifications/server.py": "c35fa335b5bc596f45ddf471e028e252f67d37e7",
-        "os/files/usr/lib/marwanos/profiles.py": "3fde2d4fa92a0359937af88f844ffbdc93181a4b",
+        "os/files/usr/lib/marwanos/profiles.py": "346433203bfc0e41613359ad47771a263d87b6f3",
         "os/files/usr/lib/systemd/user/marwanos-achievements.service": "d48e159feaa1f27d13dc97ea75591b1a49292721",
         "os/files/usr/lib/systemd/user/marwanos-audio.service": "7cf5d142825335f9293fc8d67ca8981d29ec1a11",
         "os/files/usr/lib/systemd/user/marwanos-bluetooth.service": "67078fdaf34b4c9253a31ed69b27fae6389e630e",
@@ -293,7 +293,7 @@
         "tests/test_downloads.py": "1aed2426f9bf8d2f2d27c5f8e2e47fce18d97c5b",
         "tests/test_metadata.py": "78bf48824b0f6e90fd6758c9b875e820b74e45f3",
         "tests/test_notifications.py": "2ec4f95e1c828c4cb376030d2b1897f940b1903e",
-        "tests/test_profiles.py": "0ffffd7b43d46bca10c2a20a929d6511aac13ba7"
+        "tests/test_profiles.py": "94c14940e860f0410e333582f69f4e9e8f2941d4"
       }
     },
     "fdm": {
