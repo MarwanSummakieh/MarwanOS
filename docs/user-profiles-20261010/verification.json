@@ -1,0 +1,17 @@
+{
+  "shell_pid": 43827,
+  "live_services_active": true,
+  "persistent_override_enabled": true,
+  "engine_preserved": true,
+  "startup_picker_inspected": true,
+  "existing_user_activation_succeeded": true,
+  "profile_bindings": 7,
+  "home_and_settings_navigation": "Linux shell regression suite passed",
+  "backend_tests": {
+    "test_profiles": 14,
+    "test_steam_integration": 3,
+    "test_achievements": 28
+  },
+  "actual_gameplay_save_roundtrip": "pending",
+  "reboot_validation": "pending"
+}

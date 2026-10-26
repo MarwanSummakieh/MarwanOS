@@ -61,7 +61,9 @@ PC1-workspace/
   pc1-fdm/          independent Git repository, with upstream FDM history
 ```
 
-The original `MarwanOS` checkout stays on `main`. The existing `PC1` Windows
+The original `MarwanOS` checkout currently uses `codex/automatic-game-metadata`
+for the latest integration and acceptance work, tracked by draft PR #7. The
+`main` branch has not been promoted to that checkpoint. The existing `PC1` Windows
 checkout and older `.claude/worktrees` are retained. Use a component's own
 repository for its source changes and the `pc1-os` worktree for OS integration.
 

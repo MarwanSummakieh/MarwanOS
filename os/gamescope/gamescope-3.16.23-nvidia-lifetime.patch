@@ -1,0 +1,119 @@
+--- a/src/rendervulkan.cpp
++++ b/src/rendervulkan.cpp
+@@ -11,6 +11,8 @@
+ #include <bitset>
+ #include <thread>
+ #include <dlfcn.h>
++#include "nvidia_dispatch_lifetime.hpp"
++#include "nvidia_output_cleanup.hpp"
+ #include "vulkan_include.h"
+ #include "Utils/Algorithm.h"
+ 
+@@ -684,6 +686,11 @@
+ 	#define VK_FUNC(x) vk.x = (PFN_vk##x) vk.GetDeviceProcAddr(device(), "vk"#x);
+ 	VULKAN_DEVICE_FUNCTIONS
+ 	#undef VK_FUNC
++
++	VkPhysicalDeviceProperties dispatchProperties = {};
++	vk.GetPhysicalDeviceProperties(physDev(), &dispatchProperties);
++	retain_nvidia_dispatch_owner(dispatchProperties.vendorID,
++		reinterpret_cast<const void *>(vk.FreeCommandBuffers));
+ 
+ 	vk.GetDeviceQueue(device(), m_queueFamily, 0, &m_queue);
+ 	if ( m_queueFamily == m_generalQueueFamily )
+@@ -1933,6 +1940,33 @@
+ 
+ CVulkanDevice g_device;
+ 
++void CVulkanDevice::releaseCommandBuffers()
++{
++	m_pendingCmdBufs.clear();
++	m_unusedCmdBufs.clear();
++}
++
++void vulkan_shutdown_output(void (*release_client_buffers)())
++{
++	// The embedded compositor has stopped painting, but its backend and the
++	// NVIDIA driver are still alive. Swapchain backends have a detached present
++	// worker and are outside this narrowly diagnosed DRM shutdown path.
++	if ( !GetBackend() || !GetBackend()->IsSessionBased() ||
++	     GetBackend()->UsesVulkanSwapchain() || !g_device.device() )
++		return;
++	VkPhysicalDeviceProperties properties = {};
++	g_device.vk.GetPhysicalDeviceProperties(g_device.physDev(), &properties);
++	if ( properties.vendorID != 0x10de )
++		return;
++
++	extern void ClearUpscaleImages();
++	release_nvidia_output_before_driver_exit(g_device, g_output, []() {
++		ClearUpscaleImages();
++		g_reshadeManager.clear();
++	}, release_client_buffers);
++	std::fprintf(stderr, "marwanos: released NVIDIA embedded Vulkan output and command buffers before backend teardown pid=%ld\n", static_cast<long>(getpid()));
++}
++
+ static bool allDMABUFsEqual( wlr_dmabuf_attributes *pDMA )
+ {
+ 	if ( pDMA->n_planes == 1 )
+--- a/src/rendervulkan.hpp
++++ b/src/rendervulkan.hpp
+@@ -562,6 +562,7 @@
+ };
+ 
+ extern VulkanOutput_t g_output;
++void vulkan_shutdown_output(void (*release_client_buffers)());
+ 
+ struct SamplerState
+ {
+@@ -776,6 +777,7 @@
+ 	void wait(uint64_t sequence, bool reset = true);
+ 	void waitIdle(bool reset = true);
+ 	void garbageCollect();
++	void releaseCommandBuffers();
+ 	inline VkDescriptorSet descriptorSet()
+ 	{
+ 		VkDescriptorSet ret = m_descriptorSets[m_currentDescriptorSet];
+--- a/src/steamcompmgr.cpp
++++ b/src/steamcompmgr.cpp
+@@ -6564,6 +6564,9 @@
+ 	}
+ 
+ 	g_VirtualConnectorFocuses.clear();
++
++	// Release remaining Vulkan globals before backend/driver exit handlers.
++	vulkan_shutdown_output([]() { s_BufferMemos.Clear(); });
+ 
+     gamescope::IBackend::Set( nullptr );
+ 
+--- a/src/BufferMemo.h
++++ b/src/BufferMemo.h
+@@ -50,6 +50,7 @@
+ 
+         void MemoizeBuffer( wlr_buffer *pBuffer, OwningRc<CVulkanTexture> pTexture );
+         void UnmemoizeBuffer( wlr_buffer *pBuffer );
++        void Clear();
+     private:
+         mutable std::mutex m_mutBufferMemos;
+         std::unordered_map<wlr_buffer *, CBufferMemo> m_BufferMemos;
+--- a/src/BufferMemo.cpp
++++ b/src/BufferMemo.cpp
+@@ -72,6 +72,19 @@
+         pMemo->Finalize();
+     }
+ 
++    void CBufferMemoizer::Clear()
++    {
++        // Match destroy callbacks: Wayland lock before the memo-map mutex.
++        // Memo destructors unlink their listeners before dropping private
++        // texture refs, so later client destruction cannot revisit the map.
++        wlserver_lock();
++        {
++            std::scoped_lock lock{ m_mutBufferMemos };
++            m_BufferMemos.clear();
++        }
++        wlserver_unlock();
++    }
++
+     void CBufferMemoizer::UnmemoizeBuffer( wlr_buffer *pBuffer )
+     {
+         memo_log.debugf( "Unmemoizing buffer: wlr_buffer %p", pBuffer );

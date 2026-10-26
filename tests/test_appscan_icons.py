@@ -46,6 +46,8 @@ class AppscanIconsTests(unittest.TestCase):
         return path
 
     def run_function(self, name, *arguments, dependencies=(), before=""):
+        if name in ("steam_art", "steam_icon"):
+            dependencies = ("icon_path",) + dependencies
         setup = "\n".join([
             "set -uo pipefail",
             "PATH=/usr/bin:$PATH",
@@ -95,6 +97,41 @@ class AppscanIconsTests(unittest.TestCase):
         self.assertEqual(self.run_function("steam_art", "570"), shell_path(portrait))
         square = self.asset(self.cache / "570/icon.jpg")
         self.assertEqual(self.run_function("steam_art", "570"), shell_path(square))
+
+    def test_steam_shortcut_icon_survives_canonical_game_deduplication(self):
+        icon = self.asset(self.theme / "96x96/apps/steam_icon_1030300.png")
+        self.assertEqual(self.run_function("steam_art", "1030300"), shell_path(icon))
+        self.assertEqual(self.run_function("steam_icon", "1030300"), shell_path(icon))
+
+    def test_steam_manifest_replaces_only_its_matching_desktop_shortcut(self):
+        canonical = 'steam.1030300\tHollow Knight: Silksong\t\t\t/usr/lib/marwanos/steamctl launch 1030300\tinstalled'
+        shortcut = 'Hollow Knight Silksong\tHollow Knight: Silksong\tPlay this game on Steam\t/icon.png\t/usr/bin/steam steam://rungameid/1030300\tinstalled'
+        other = shortcut.replace('1030300', '367520')
+        rows = '\n'.join((shortcut, canonical, other))
+        output = self.run_function('deduplicate_steam_shortcuts', canonical,
+                                   before='exec <<< ' + shlex.quote(rows)).splitlines()
+        self.assertEqual(output, [canonical, other])
+        # Cached desktop rows become visible again when the manifest disappears.
+        self.assertEqual(self.run_function('deduplicate_steam_shortcuts', '',
+                                          before='exec <<< ' + shlex.quote(shortcut)).strip(), shortcut)
+
+    def test_flatpak_shortcuts_merge_but_unrelated_uri_arguments_do_not(self):
+        canonical = 'steam.570\tExample\t\t\t/usr/lib/marwanos/steamctl launch 570\tinstalled'
+        shortcut = 'shortcut\tExample\t\t\t/usr/bin/flatpak run com.valvesoftware.Steam steam://rungameid/570\tinstalled'
+        unrelated = shortcut.replace('/usr/bin/flatpak run com.valvesoftware.Steam', '/usr/bin/echo')
+        output = self.run_function('deduplicate_steam_shortcuts', canonical,
+                                   before='exec <<< ' + shlex.quote(shortcut + '\n' + unrelated))
+        self.assertEqual(output.strip(), unrelated)
+
+    def test_native_steam_uses_console_launch_but_game_shortcuts_keep_their_url(self):
+        desktop = self.root / 'steam.desktop'
+        desktop.write_text('[Desktop Entry]\nType=Application\nExec=steam %U\n')
+        self.assertEqual(self.run_function('exec_line', shell_path(desktop), dependencies=('desktop_get',)),
+                         '/usr/lib/marwanos/steamctl signin')
+        game = self.root / 'Hollow Knight Silksong.desktop'
+        game.write_text('[Desktop Entry]\nExec=steam steam://rungameid/1030300\n')
+        output = self.run_function('exec_line', shell_path(game), dependencies=('desktop_get',))
+        self.assertTrue(output.endswith('steam steam://rungameid/1030300'), output)
 
     def test_new_icon_triggers_a_rescan_without_an_application_install(self):
         directory = self.theme / "256x256/apps"

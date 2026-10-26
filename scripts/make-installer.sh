@@ -38,6 +38,19 @@ REGISTRY="${REGISTRY:-ghcr.io}"
 IMAGE_NAME="${IMAGE_NAME:-marwanos}"
 TAG="${TAG:-latest}"
 IMAGE_REF="${REGISTRY}/${GHCR_USER}/${IMAGE_NAME}:${TAG}"
+# TAG may pin a candidate as tag@sha256:... . rpm-ostree's container parser
+# rejects an installed origin containing both. Give BIB the same immutable
+# digest without the informational tag; preserve registry ports/namespaces.
+if [[ "$TAG" == *@* ]]; then
+    PINNED_TAG="${TAG%%@*}"
+    PINNED_DIGEST="${TAG#*@}"
+    if [[ ! "$PINNED_TAG" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ||
+          ! "$PINNED_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+        echo 'Invalid pinned TAG: expected tag@sha256:<64 lowercase hexadecimal digits>.' >&2
+        exit 2
+    fi
+    IMAGE_REF="${REGISTRY}/${GHCR_USER}/${IMAGE_NAME}@${PINNED_DIGEST}"
+fi
 
 ADMIN_USER="${ADMIN_USER:-marwan}"
 SSH_KEY_FILE="${SSH_KEY_FILE:-${HOME}/.ssh/id_ed25519.pub}"

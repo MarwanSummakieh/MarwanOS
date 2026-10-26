@@ -11,6 +11,9 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
+# Local builds use the same component-integrity gate as published candidates.
+python3 "$REPO_ROOT/scripts/components.py" --verify
+
 # Defaulted rather than required. Relying on the environment meant the script
 # broke depending on how the shell was invoked -- `bash -lc` is a login shell and
 # does not read ~/.bashrc, and PowerShell mangles $VAR on its way to WSL. Override

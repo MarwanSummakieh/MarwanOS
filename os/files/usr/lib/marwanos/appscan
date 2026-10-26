@@ -40,9 +40,8 @@
 #
 # STEAM GAMES ARE IN THE LISTING TOO, because the rail's brief is the whole
 # library and a game installed INSIDE Steam is invisible to every desktop-entry
-# walk above: Steam on Linux does not drop a .desktop file per game (that is a
-# per-title "create shortcut" action someone takes with a mouse, not an install
-# side effect). So the scanner also reads Steam's own installation records --
+# walk above unless Steam also creates a desktop shortcut. Those optional
+# shortcuts cannot be the installation record. The scanner reads manifests --
 # one appmanifest_<appid>.acf per installed app under steamapps/ -- and emits a
 # card per fully-installed game that launches back through Steam. A machine
 # without Steam, or with Steam and no games, simply contributes zero rows: no
@@ -415,6 +414,13 @@ exec_line() {
     exec_raw="$(desktop_get "$file" Exec)"
     [ -n "$exec_raw" ] || return 0
 
+    # Use the same console launch contract as Steam games. Gamescope can hide
+    # this omission by selecting Big Picture itself; Xorg exposes desktop UI.
+    if [ "${file##*/}" = steam.desktop ] && [[ "$exec_raw" =~ ^(/usr/bin/)?steam($|[[:space:]]) ]]; then
+        printf '/usr/lib/marwanos/steamctl signin'
+        return 0
+    fi
+
     for word in $exec_raw; do
         case "$word" in
             %*) continue ;;
@@ -502,6 +508,31 @@ scan() {
     done
 }
 
+## A Steam-created desktop shortcut and a library manifest are one game.
+## Filter at publication, after the separately cached sources are joined, so
+## installing/removing a manifest updates this decision without a desktop edit.
+## Keep shortcuts without a manifest, and never merge games by display title.
+deduplicate_steam_shortcuts() {
+    local canonical="$1" id row rest exec_cmd program appid field
+    local -A games=()
+    while IFS=$'\t' read -r id rest; do
+        [[ "$id" =~ ^steam\.([0-9]+)$ ]] && games["${BASH_REMATCH[1]}"]=1
+    done <<< "$canonical"
+    while IFS= read -r row; do
+        rest="$row"
+        for field in 1 2 3 4; do rest="${rest#*$'\t'}"; done
+        exec_cmd="${rest%%$'\t'*}"
+        program="${exec_cmd%% *}"
+        if [[ "${program##*/}" = steam || ( "${program##*/}" = flatpak && "$exec_cmd" = *"com.valvesoftware.Steam "* ) ]]; then
+            if [[ "$exec_cmd" =~ (^|[[:space:]])steam://rungameid/([0-9]+)($|[[:space:]]) ]]; then
+                appid="${BASH_REMATCH[2]}"
+                [ -n "${games[$appid]:-}" ] && continue
+            fi
+        fi
+        printf '%s\n' "$row"
+    done
+}
+
 
 ## Reads one top-level value out of a Valve KeyValues (.acf) file.
 ##
@@ -585,7 +616,7 @@ steam_art() {
         "$STEAM_ART_DIR/$appid.jpg"; do
         [ -f "$candidate" ] && { printf '%s' "$candidate"; return 0; }
     done
-    return 0
+    icon_path "steam_icon_$appid"
 }
 
 
@@ -604,6 +635,7 @@ steam_art() {
 ## that, this cache only filled if somebody had opened Steam's own interface by
 ## hand, which on an appliance with no desktop is a thing that never happens.
 ##
+## A Steam-created desktop shortcut's themed icon is also a local fallback.
 ## Both layouts the client has used are checked -- flat `<appid>_icon.jpg` and
 ## the per-app subdirectory newer clients write -- because which one exists
 ## depends on the Steam version that populated the cache, and two stats are
@@ -615,7 +647,7 @@ steam_icon() {
         "$STEAM_LIBCACHE/$appid/icon.jpg"; do
         [ -f "$candidate" ] && { printf '%s' "$candidate"; return 0; }
     done
-    return 0
+    icon_path "steam_icon_$appid"
 }
 
 
@@ -1174,23 +1206,20 @@ while :; do
     if [ "$dirs_now" != "$last_dirs" ] || [ "$pending_now" != "$last_pending" ] \
         || [ "$steam_now" != "$last_steam" ] || [ "$windows_now" != "$last_windows" ]; then
         if [ "$dirs_now" != "$last_dirs" ]; then
-            last_dirs="$dirs_now"
             installed_listing="$(scan)"
         fi
         if [ "$windows_now" != "$last_windows" ]; then
             last_windows="$windows_now"
             windows_listing="$(scan_windows)"
         fi
-        if [ "$steam_now" != "$last_steam" ]; then
+        if [ "$steam_now" != "$last_steam" ] || [ "$dirs_now" != "$last_dirs" ]; then
             last_steam="$steam_now"
             steam_listing="$(scan_steam)"
 
             # Published here rather than beside apps.tsv below, because this is
-            # the only branch whose inputs it depends on: gameart rows are made
-            # of Steam manifests, Steam's cache and storeart's directory, and
-            # all three are exactly what steam_signature watches. A pending
-            # install finishing or a desktop file appearing changes apps.tsv
-            # and cannot change this.
+            # its inputs include manifests, Steam's cache and themed shortcut
+            # icons. Directory changes also refresh this branch so an icon
+            # arriving after its manifest updates the canonical card.
             #
             # Written on the first cycle whatever the machine looks like --
             # last_steam starts empty and no real signature is -- so the shell
@@ -1203,6 +1232,7 @@ while :; do
                 && mv -f "$GAMEART.tmp" "$GAMEART"; } \
                 || err "cannot write $GAMEART -- game cards will fall back to their apps.tsv icon"
         fi
+        last_dirs="$dirs_now"
         last_pending="$pending_now"
 
         # Sorted by name so the rail's order is stable across rescans -- a rail
@@ -1215,6 +1245,7 @@ while :; do
                       printf '%s' "${steam_listing:+$steam_listing$'\n'}"; \
                       printf '%s' "${windows_listing:+$windows_listing$'\n'}"; \
                       pending; } \
+            | deduplicate_steam_shortcuts "$steam_listing" \
             | grep -v '^$' | sort -t"$(printf '\t')" -k2,2f)"
         count=0
         [ -n "$listing" ] && count="$(printf '%s\n' "$listing" | wc -l)"

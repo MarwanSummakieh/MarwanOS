@@ -1,0 +1,83 @@
+{
+  "previous_binary_sha256": "b58d4c575465a4dedce792e44613de54b7a9d8dd1252ff56e2b4aa031a7307f7",
+  "previous_engine_sha256": "de9d689c9b55bf26af5906f03fc2a8968b6b7e94b50d0a0938066fde5025ce58",
+  "baseline_source_sha256": "f8e86dad768b4b809eb1546f09e33379b485e9bd00fbafc5701a116682258e63",
+  "base_source_archive": "/var/tmp/marwanos-browser-extension-panel-20261010/browser-panel-source.tar.gz",
+  "binary_sha256": "8fae6b37056ae1a7041f24fb710f76d48f55ee8b0aabb17de291df23525fc58a",
+  "source_archive": "/var/tmp/pc1-user-profiles-20261010/source.tar.gz",
+  "source_sha256": "c31bd253cb95d9ff0e202ea28dfd23f2c9be1d149ccffb3fb51f6603e7cda9f5",
+  "changed_source_files": [
+    "os/files/usr/lib/marwanos/achievements/manager.py",
+    "os/files/usr/lib/marwanos/profiles.py",
+    "os/files/usr/lib/marwanos/steamctl",
+    "os/files/usr/lib/marwanos/windows/manager.py",
+    "os/files/usr/lib/marwanos/winrun",
+    "shell/project.godot",
+    "shell/src/achievements.gd",
+    "shell/src/browser.gd",
+    "shell/src/browser_screen.gd",
+    "shell/src/icons.gd",
+    "shell/src/launcher.gd",
+    "shell/src/play_history.gd",
+    "shell/src/profiles.gd",
+    "shell/src/settings_screen.gd",
+    "shell/src/setup.gd",
+    "shell/src/shell_root.gd",
+    "shell/src/steam_embed.gd",
+    "shell/src/users_screen.gd",
+    "shell/src/windows_install.gd",
+    "tests/achievements_shell.gd",
+    "tests/play_history_shell.gd",
+    "tests/profiles_shell.gd",
+    "tests/test_profiles.py"
+  ],
+  "previous_backend_sha256": {
+    "/usr/lib/marwanos/windows/manager.py": "6146d7595a28a3abba4563c8a783b7f0e834706bd042c9aab97a7728619cc0dc",
+    "/usr/lib/marwanos/achievements/manager.py": "8ec8c731253ff5a052b20884ecdeb9dcbc7d59146d0bf435329b1b3dc3d9b405",
+    "/usr/lib/marwanos/steamctl": "490d4722cf2afe49269a59420f764679aea03dd6d6ee98adb58ae482cf430ff9",
+    "/usr/lib/marwanos/winrun": "53c31951cf6862f0535784d7b8b95661c0fa44bd05f738812f8ef6fe9ddf45ac"
+  },
+  "checks": [
+    "profiles_shell",
+    "design_shell",
+    "play_history_shell",
+    "achievements_shell",
+    "console_refinement_shell",
+    "browser_shell"
+  ],
+  "change": "Local users, shared installations and personal standard saves; Home and Settings user management",
+  "deployed_at": "2026-10-10T10:20:04.207775+00:00",
+  "shell_pid": 43827,
+  "rollback_binary": "/var/marwanos/console-design-20261009/marwanos-shell.before-user-profiles-20261010",
+  "rollback_wrapper": "/var/marwanos/user-profiles-20261010/backup/wrapper",
+  "helper": "/var/marwanos/user-profiles-20261010/profiles.py",
+  "unit": "/etc/systemd/system/marwanos-user-profiles.service",
+  "exported_startup_preflight": true,
+  "engine_preserved": true,
+  "backend_mounts": [
+    {
+      "source": "/var/marwanos/user-profiles-20261010/windows/manager.py",
+      "target": "/usr/lib/marwanos/windows/manager.py",
+      "previous_sha256": "6146d7595a28a3abba4563c8a783b7f0e834706bd042c9aab97a7728619cc0dc",
+      "sha256": "068d66176b2a4b83eb86250304f21741971b0a27b57b5be0bf355c4ef66a3934"
+    },
+    {
+      "source": "/var/marwanos/user-profiles-20261010/achievements/manager.py",
+      "target": "/usr/lib/marwanos/achievements/manager.py",
+      "previous_sha256": "8ec8c731253ff5a052b20884ecdeb9dcbc7d59146d0bf435329b1b3dc3d9b405",
+      "sha256": "0e39cc2d52b7e95fb28260abed05437d25481a942f7aabfe838e9677f2d9a932"
+    },
+    {
+      "source": "/var/marwanos/user-profiles-20261010/steamctl",
+      "target": "/usr/lib/marwanos/steamctl",
+      "previous_sha256": "490d4722cf2afe49269a59420f764679aea03dd6d6ee98adb58ae482cf430ff9",
+      "sha256": "bbaa48ca5c4641419cb1bb4b0fb32e0797ca8b2c50f0bbafd902876f994822cf"
+    },
+    {
+      "source": "/var/marwanos/user-profiles-20261010/winrun",
+      "target": "/usr/lib/marwanos/winrun",
+      "previous_sha256": "53c31951cf6862f0535784d7b8b95661c0fa44bd05f738812f8ef6fe9ddf45ac",
+      "sha256": "2aa8414e76f3beac11275ad580042a1f4ac52d4452d8cc54a76bd84e0defe4d3"
+    }
+  ]
+}

@@ -76,6 +76,15 @@ if [[ -e $STAMP ]]; then
 fi
 : >"$STAMP"
 
+# This transition repairs gamescope's direct-DRM scanout only. NVIDIA and VM
+# sessions now use Xorg, where restarting the session adds a visible bounce and
+# starts plymouth against a player-owned terminal without repairing anything.
+if ! pgrep -x gamescope-wl >/dev/null 2>&1 && ! pgrep -x gamescope >/dev/null 2>&1; then
+    log "no direct-DRM gamescope session; link scrub is unnecessary"
+    trap - EXIT INT TERM
+    exit 0
+fi
+
 if ! systemctl is-active --quiet greetd; then
     warn "greetd is not active; the scrub has nothing to bounce"
     trap - EXIT INT TERM
@@ -159,5 +168,13 @@ while ! pgrep -x gamescope-wl >/dev/null 2>&1; do
     ((reaped > 100)) && { warn "gamescope has not come back after 20s"; break; }
     sleep 0.2
 done
-plymouth quit
-log "session back after $((reaped * 200))ms; plymouthd reaped"
+# The splash is already deactivated. A normal quit switches to the detailed
+# text theme before exiting and reopens tty1, which greetd now owns as player
+# with mode 0600. Keep the frozen splash while exiting instead: no terminal
+# reopen, no console flash, and no need for SELinux dac_override permission.
+if plymouth quit --retain-splash; then
+    log "session back after $((reaped * 200))ms; plymouthd reaped"
+else
+    err "could not quit the deactivated plymouthd after restoring the session"
+    exit 1
+fi

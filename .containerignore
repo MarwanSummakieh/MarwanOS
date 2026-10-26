@@ -10,7 +10,8 @@
 .github/
 .claude/
 docs/
-scripts/
+scripts/*
+!scripts/build-gamescope-rpm.sh
 out/
 README.md
 LICENSE

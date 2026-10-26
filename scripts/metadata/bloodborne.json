@@ -1,0 +1,18 @@
+{
+  "title": "Bloodborne",
+  "source": "Emulated",
+  "provider": "PlayStation",
+  "provider_id": "CUSA03173",
+  "metadata_url": "https://www.playstation.com/en-us/games/bloodborne/",
+  "store_url": "https://store.playstation.com/en-us/product/UP9000-CUSA00900_00-BLOODBORNE000000/",
+  "description": "Explore Yharnam, a gothic city afflicted by a mysterious plague. This action role-playing game from FromSoftware combines close-range combat, firearms and exploration as a hunter confronts beasts and uncovers the city's secrets.",
+  "release_date": "24 Mar, 2015",
+  "genres": ["Action", "Role-playing"],
+  "developers": ["FromSoftware"],
+  "publishers": ["Sony Interactive Entertainment"],
+  "platforms": ["PS4"],
+  "art_urls": {
+    "cover": "https://image.api.playstation.com/cdn/UP9000/CUSA00900_00/9EJsLXyKS0S1BRey5nwQBOuYr6EDRbGX.png",
+    "background": "https://image.api.playstation.com/cdn/UP9000/CUSA00900_00/8HNk4AVcNy1gEgXiRV9kkzAQ4WrLVVsy.jpg"
+  }
+}
